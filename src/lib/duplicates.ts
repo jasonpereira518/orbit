@@ -1,4 +1,8 @@
 import type { Contact } from "@/db/schema";
+import { ROLE_EMAIL_LOCALS } from "@/lib/names/classify";
+import { nameKey, nameSimilarity } from "@/lib/names/key";
+import { sameGivenName } from "@/lib/names/nicknames";
+import { formatPersonName } from "@/lib/names/parse";
 
 /**
  * The columns duplicate detection actually reads.
@@ -11,7 +15,7 @@ import type { Contact } from "@/db/schema";
 export type DuplicateSubject = Pick<
   Contact,
   "id" | "fullName" | "email" | "linkedinUrl" | "xHandle" | "company" | "title"
->;
+> & { phone?: string | null };
 
 /**
  * The line between "confident enough to merge on its own" and "ask a human".
@@ -42,45 +46,18 @@ function normalize(s: string | null | undefined) {
   return (s || "").trim().toLowerCase();
 }
 
-/** Strip punctuation/accents-ish noise for fuzzy name compares. */
-function normalizeName(s: string | null | undefined) {
-  return normalize(s)
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+/**
+ * The exact-name key: the name as it would be stored (`formatPersonName`), lower-cased. A row
+ * saved before names were formatted ("DOE, JANE") and the same person arriving formatted
+ * ("Jane Doe") meet on one key; otherwise a re-sync with no identifier makes a duplicate.
+ */
+function exactNameKey(s: string | null | undefined) {
+  return normalize(formatPersonName(s)?.fullName ?? s);
 }
 
-function levenshtein(a: string, b: string) {
-  if (a === b) return 0;
-  if (!a.length) return b.length;
-  if (!b.length) return a.length;
-  const prev = new Array(b.length + 1);
-  const curr = new Array(b.length + 1);
-  for (let j = 0; j <= b.length; j++) prev[j] = j;
-  for (let i = 1; i <= a.length; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
-    }
-    for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
-  }
-  return prev[b.length];
-}
-
-/** 0–1 similarity from edit distance; short names need near-exact match. */
-export function nameSimilarity(a: string | null | undefined, b: string | null | undefined) {
-  const left = normalizeName(a);
-  const right = normalizeName(b);
-  if (!left || !right) return 0;
-  if (left === right) return 1;
-  const maxLen = Math.max(left.length, right.length);
-  if (maxLen < 4) return 0;
-  const distance = levenshtein(left, right);
-  return Math.max(0, 1 - distance / maxLen);
-}
+/** Punctuation, accents and case folded away for fuzzy name compares. */
+const normalizeName = nameKey;
+export { nameSimilarity };
 
 /**
  * MUST stay equal to the `linkedin_slug` generated column in `src/db/index.ts`
@@ -147,47 +124,7 @@ export function normalizePhone(value: string | null | undefined) {
  * at Acme would collapse all three into one contact, and the unique index on
  * `contact_identities` would make that collapse mandatory rather than merely likely.
  */
-const ROLE_EMAIL_LOCALS = new Set([
-  "info",
-  "hello",
-  "hi",
-  "contact",
-  "contactus",
-  "admin",
-  "support",
-  "help",
-  "sales",
-  "team",
-  "office",
-  "mail",
-  "email",
-  "enquiries",
-  "inquiries",
-  "billing",
-  "accounts",
-  "accounting",
-  "finance",
-  "hr",
-  "jobs",
-  "careers",
-  "recruiting",
-  "press",
-  "media",
-  "marketing",
-  "legal",
-  "privacy",
-  "security",
-  "abuse",
-  "postmaster",
-  "webmaster",
-  "noreply",
-  "no-reply",
-  "donotreply",
-  "do-not-reply",
-  "notifications",
-  "newsletter",
-  "subscriptions",
-]);
+// `ROLE_EMAIL_LOCALS` lives in `@/lib/names/classify`, FROZEN there.
 
 /** True when an address identifies a mailbox rather than a person. */
 export function isRoleEmail(value: string | null | undefined) {
@@ -271,6 +208,7 @@ export type DuplicateIndex = {
   byLinkedin: Map<string, DuplicateSubject[]>;
   byX: Map<string, DuplicateSubject[]>;
   byEmail: Map<string, DuplicateSubject[]>;
+  byPhone: Map<string, DuplicateSubject[]>;
   byNameCompany: Map<string, DuplicateSubject[]>;
   byNameTitle: Map<string, DuplicateSubject[]>;
   byName: Map<string, DuplicateSubject[]>;
@@ -317,6 +255,7 @@ function emptyIndex(): DuplicateIndex {
     byLinkedin: new Map(),
     byX: new Map(),
     byEmail: new Map(),
+    byPhone: new Map(),
     byNameCompany: new Map(),
     byNameTitle: new Map(),
     byName: new Map(),
@@ -332,7 +271,7 @@ function emptyIndex(): DuplicateIndex {
  * which silently under-merged mid-batch contacts. One body cannot drift from itself.
  */
 export function addToDuplicateIndex(index: DuplicateIndex, contact: DuplicateSubject) {
-  const name = normalize(contact.fullName);
+  const name = exactNameKey(contact.fullName);
   const email = normalize(contact.email);
   const linkedin = linkedinSlug(contact.linkedinUrl);
   const xHandle = normalizeXHandle(contact.xHandle);
@@ -342,10 +281,28 @@ export function addToDuplicateIndex(index: DuplicateIndex, contact: DuplicateSub
   if (linkedin) pushTo(index.byLinkedin, linkedin, contact);
   if (xHandle) pushTo(index.byX, xHandle, contact);
   if (email) pushTo(index.byEmail, email, contact);
+  const phone = normalizePhone(contact.phone);
+  if (phone) pushTo(index.byPhone, phone, contact);
   if (name && company) pushTo(index.byNameCompany, compositeKey(name, company), contact);
   if (name && title) pushTo(index.byNameTitle, compositeKey(name, title), contact);
   if (name) pushTo(index.byName, name, contact);
   for (const key of fuzzyBucketKeys(contact.fullName)) pushTo(index.fuzzyBuckets, key, contact);
+}
+
+/**
+ * File a contact under one more identifier it owns in `contact_identities` (a second email,
+ * a phone, an older LinkedIn URL), so a record carrying that identifier finds them. Values
+ * arrive already normalized by `identityKeysFor`.
+ */
+export function addIdentityToIndex(index: DuplicateIndex, key: { kind: string; value: string }, contact: DuplicateSubject) {
+  const map =
+    key.kind === "email" ? index.byEmail
+    : key.kind === "phone_e164" ? index.byPhone
+    : key.kind === "linkedin_slug" ? index.byLinkedin
+    : key.kind === "x_handle" ? index.byX
+    : null;
+  if (!map || map.get(key.value)?.includes(contact)) return;
+  pushTo(map, key.value, contact);
 }
 
 export function buildDuplicateIndex(existing: DuplicateSubject[]): DuplicateIndex {
@@ -359,6 +316,7 @@ export type DuplicateProbe = {
   email?: string | null;
   linkedinUrl?: string | null;
   xHandle?: string | null;
+  phone?: string | null;
   company?: string | null;
   title?: string | null;
 };
@@ -377,7 +335,7 @@ export function findDuplicateCandidatesIndexed(
   index: DuplicateIndex,
   incoming: DuplicateProbe
 ): DuplicateMatch[] {
-  const name = normalize(incoming.fullName);
+  const name = exactNameKey(incoming.fullName);
   const email = normalize(incoming.email);
   const linkedin = linkedinSlug(incoming.linkedinUrl);
   const xHandle = normalizeXHandle(incoming.xHandle);
@@ -400,7 +358,7 @@ export function findDuplicateCandidatesIndexed(
     const theirs = linkedin ? linkedinSlug(contact.linkedinUrl) : "";
     if (!theirs || theirs === linkedin) return { contact, reason, confidence, strong: false };
     const sameCompany = Boolean(company) && company === normalize(contact.company);
-    const exactName = Boolean(name) && name === normalize(contact.fullName);
+    const exactName = Boolean(name) && name === exactNameKey(contact.fullName);
     if (sameCompany && exactName) {
       return { contact, reason: `${reason} (LinkedIn profile changed)`, confidence, strong: false };
     }
@@ -428,6 +386,8 @@ export function findDuplicateCandidatesIndexed(
   if (linkedin) addAll(index.byLinkedin.get(linkedin), "Same LinkedIn URL", 0.98, true);
   if (xHandle) addAll(index.byX.get(xHandle), "Same X handle", 0.97, true);
   if (email) addAll(index.byEmail.get(email), "Same email", 0.95, true);
+  const phone = normalizePhone(incoming.phone);
+  if (phone) addAll(index.byPhone.get(phone), "Same phone", 0.95, true);
   if (name && company)
     addAll(
       index.byNameCompany.get(compositeKey(name, company)),
@@ -491,32 +451,6 @@ export function daysAgo(date: Date | string | null | undefined) {
 }
 
 // ── Loose name candidates (review cards) ──────────────────────────────────────────────
-
-/**
- * Common English nickname ↔ given-name pairs. Both directions are looked up.
- * ponytail: a short table, not a nickname database; add pairs as misses show up.
- */
-const NICKNAMES: Record<string, string[]> = {
-  alex: ["alexander", "alexandra", "alexis"], andy: ["andrew"], drew: ["andrew"],
-  ben: ["benjamin"], bill: ["william"], will: ["william"], liam: ["william"],
-  bob: ["robert"], rob: ["robert"], bobby: ["robert"], chris: ["christopher", "christina", "christine"],
-  dan: ["daniel"], danny: ["daniel"], dave: ["david"], ed: ["edward"], eddie: ["edward"],
-  jim: ["james"], jimmy: ["james"], jamie: ["james"], joe: ["joseph"], joey: ["joseph"],
-  jon: ["jonathan"], john: ["jonathan"], kate: ["katherine", "kathryn", "catherine"],
-  katie: ["katherine", "kathryn", "catherine"], liz: ["elizabeth"], beth: ["elizabeth"],
-  matt: ["matthew"], mike: ["michael"], mick: ["michael"], nick: ["nicholas"],
-  pat: ["patrick", "patricia"], pete: ["peter"], rich: ["richard"], rick: ["richard"],
-  sam: ["samuel", "samantha"], steve: ["steven", "stephen"], sue: ["susan"],
-  tom: ["thomas"], tony: ["anthony"], vic: ["victor", "victoria"], zach: ["zachary"],
-  jen: ["jennifer"], jenny: ["jennifer"], meg: ["megan", "margaret"], greg: ["gregory"],
-  jeff: ["jeffrey"], josh: ["joshua"], nate: ["nathan", "nathaniel"], tim: ["timothy"],
-  ken: ["kenneth"], larry: ["lawrence"], abby: ["abigail"], becky: ["rebecca"],
-};
-
-function sameGivenName(a: string, b: string): boolean {
-  if (a === b) return true;
-  return Boolean(NICKNAMES[a]?.includes(b) || NICKNAMES[b]?.includes(a));
-}
 
 export type LooseNameSubject = DuplicateSubject & {
   preferredName?: string | null;

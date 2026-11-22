@@ -102,6 +102,52 @@ Every plan includes AI, and your own AI key is optional on any plan. $5 packs of
 - **Events.** Remember the conferences and meetups you went to and the people you met there.
 - **Radar.** Every night, Orbit looks over your network and tells you who is worth a message this week, and why.
 
+## For developers
+
+Orbit is a Next.js 16 (App Router) + TypeScript app on Vercel, with Neon Postgres (or a local
+PGlite database), Clerk auth, Stripe billing and Gemini / OpenAI / Anthropic for AI.
+
+### Run it locally
+
+Requires **Node 24 and npm 11** (`nvm use` reads `.nvmrc`; `engine-strict` makes `npm ci` refuse
+other Node majors).
+
+```bash
+nvm use                 # Node 24 from .nvmrc
+npm ci
+npm run db:setup        # creates the local PGlite database in .data/pglite
+npm run dev             # http://localhost:3000, signed in as demo-user with a seeded workspace
+```
+
+No env file is needed for this. Add an AI key in **Settings → Integrations → AI provider**
+(or `GEMINI_API_KEY` in `.env.local`) to use Capture and Chat. See
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the other local modes.
+
+### Check your change
+
+```bash
+npm run typecheck && npm run lint
+npm test                # smoke suite on a throwaway PGlite (about 10 minutes; CI shards it)
+npm run test:unit       # node:test unit tests: src/**/*.test.ts and scripts/**/*.test.ts
+npm run test:e2e        # Playwright browser flows with a stub AI server
+```
+
+### Docs
+
+| | |
+|---|---|
+| [Architecture](docs/ARCHITECTURE.md) | layers, request flow, jobs, AI pipeline, data model, diagram |
+| [Development](docs/DEVELOPMENT.md) | local setup, demo modes, database commands |
+| [Environment](docs/ENVIRONMENT.md) | every env var: required?, default, where it's used |
+| [Deployment](docs/DEPLOYMENT.md) | how a merge reaches production, crons, backups, rollback |
+| [Runbook](docs/RUNBOOK.md) | alerts, kill switches, restore, secret rotation |
+| [Decisions](docs/adr/README.md) | why things are the way they are |
+| [Contributing](CONTRIBUTING.md) | where code goes, conventions, the schema-change checklist |
+| [MCP and chat tools](docs/MCP.md) | generated from the tool registry |
+| REST API | `GET /api/v1/openapi.json` on any deployment |
+
+The Chrome extension is a separate project in [`extension/`](extension/README.md).
+
 ---
 
 <p align="center">

@@ -7,7 +7,7 @@ import { getValidAccessToken as outlookToken, hasMailScope } from "@/lib/outlook
 
 /**
  * The newest message with a contact in the user's own mailbox, for Compose's "reply in thread"
- * (direct-email P5, dark behind feature.reply-inbox). Metadata only — Message-ID, subject,
+ * (direct-email P5, behind feature.reply-inbox). Metadata only — Message-ID, subject,
  * date, thread — read on demand and never stored except as the reply's In-Reply-To. Uses only
  * read scopes the user already granted (the recruiter scan's). Never throws: any failure is
  * "no target".

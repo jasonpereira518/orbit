@@ -556,7 +556,7 @@ async function chatThreadListSection() {
   check("newest first, ties broken by id", json(ids) === json(expectedOrder.map((r) => r.id)));
   check(
     "the rows carry exactly what the rail reads",
-    json(Object.keys(first.threads[0] ?? {}).sort()) === json(["createdAt", "id", "title", "updatedAt"])
+    json(Object.keys(first.threads[0] ?? {}).sort()) === json(["createdAt", "id", "pinnedAt", "title", "updatedAt"])
   );
   const bad = await listChatThreads("not-a-cursor").then(
     () => "returned",

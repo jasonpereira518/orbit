@@ -1,5 +1,6 @@
 import type { ContactsFileRowPayload } from "@/db/schema";
 import type { ImportAdapter } from "@/lib/import-engine";
+import { HOW_MET_LABEL } from "@/lib/contact-fields";
 
 /**
  * The `imports.import_type` value address-book file imports (vCard / contacts CSV) carry.
@@ -22,10 +23,8 @@ export const CONTACTS_FILE_IMPORT_TYPE = "contacts_file";
  * and it is what lets an address-book entry fold into the contact a LinkedIn import already
  * created for the same person.
  *
- * Phone is written but not probed — `findDuplicateCandidatesIndexed` has no phone tier, so an
- * existing contact that shares only a phone number with a card is not recognised here, exactly
- * as it isn't for the Google and Outlook imports. (Within one file, `parseContactsFile` does
- * collapse same-name-same-phone cards before any of this runs.)
+ * Phone is probed too (the "Same phone" tier, an identifier like email), so a card that shares
+ * only a phone number with an existing contact folds into them, as for Google and Outlook.
  */
 export const contactsFileAdapter: ImportAdapter<ContactsFileRowPayload> = {
   identity(payload) {
@@ -34,6 +33,7 @@ export const contactsFileAdapter: ImportAdapter<ContactsFileRowPayload> = {
       fullName: payload.fullName,
       email: payload.email,
       linkedinUrl: payload.linkedinUrl,
+      phone: payload.phone,
       company: payload.company,
       title: payload.title,
     };
@@ -57,7 +57,7 @@ export const contactsFileAdapter: ImportAdapter<ContactsFileRowPayload> = {
       // No statedCloseness and no relationshipScore, same as the LinkedIn adapter: nobody has
       // rated these people, and an address book of plumbers and old classmates is the last
       // place to guess. `contactInsertValues` still coalesces the legacy column to 2.
-      howMet: "Address book",
+      howMet: HOW_MET_LABEL.addressBook,
       // No metContext either. Google/Outlook say "online", which is at least where their
       // data lives; a phone's address book says nothing about where two people met.
       tagNames: ["address-book"],

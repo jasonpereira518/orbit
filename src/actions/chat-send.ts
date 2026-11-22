@@ -24,6 +24,7 @@ import { getDb } from "@/db";
 import { chatMessages, contacts, emailSends, interactions } from "@/db/schema";
 import { getCurrentUserProfile } from "@/lib/auth";
 import { requireUserForSurface } from "@/lib/plan-guards";
+import { draftContactIdsIn } from "@/lib/chat-draft-block";
 import { UNDO_DELAY_MS } from "@/lib/email/config";
 import { ENQUEUE_COPY, enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
@@ -105,16 +106,18 @@ async function loadTarget(userId: string, messageId: string, contactId: string) 
   const db = await getDb();
   const message = await db.query.chatMessages.findFirst({
     where: and(eq(chatMessages.id, messageId), eq(chatMessages.userId, userId), eq(chatMessages.role, "assistant")),
-    columns: { id: true, recommendations: true, proposedActions: true },
+    columns: { id: true, content: true, recommendations: true, proposedActions: true },
   });
   if (!message) return null;
-  // A person the answer recommended, or one its `draft_email` card names (@/lib/tools/
-  // chat-writes-features) — that card opens this same dialog, whose Send is the only send.
+  // A person the answer recommended, one its `draft_email` card names (@/lib/tools/
+  // chat-writes-features), or the addressee of an editable draft block in its text
+  // (@/lib/chat-draft-block) — each opens this same dialog, whose Send is the only send.
   const recommended = (message.recommendations ?? []).some((r) => r.contact_id === contactId);
   const drafted = (message.proposedActions ?? []).some(
     (a) => a.args.tool === "draft_email" && a.args.input?.contactId === contactId
   );
-  if (!recommended && !drafted) return null;
+  const written = draftContactIdsIn(message.content ?? "").includes(contactId.toLowerCase());
+  if (!recommended && !drafted && !written) return null;
   const contact = await db.query.contacts.findFirst({
     where: and(eq(contacts.id, contactId), eq(contacts.userId, userId)),
     columns: { id: true, fullName: true, preferredName: true, email: true },
@@ -200,6 +203,10 @@ export async function sendChatDraftViaGmail(input: {
   const userId = await requireUserForSurface("page.chat");
   const contact = await loadTarget(userId, input.messageId, input.contactId);
   if (!contact) return fail("invalid");
+  // A draft Orbit Voice proposed obeys the voice kill switch, as its card's commit already does.
+  // Loaded lazily: the voice session module must stay out of this action's static graph.
+  const { guardVoiceProposal } = await import("@/lib/voice/sessions");
+  await guardVoiceProposal(userId, input.messageId);
   const recipient = checkRecipient(contact.email);
   if (!recipient.ok) return fail(recipient.reason === "placeholder" ? "placeholder" : recipient.reason);
   if (recipient.email.toLowerCase() !== (input.shownTo ?? "").trim().toLowerCase()) return fail("changed_recipient");

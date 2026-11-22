@@ -43,7 +43,7 @@ const CONTACTS_API = "https://graph.microsoft.com/v1.0/me/contacts";
 
 /** The same fields the one-shot import reads, so a synced person matches an imported one. */
 const CONTACT_FIELDS =
-  "displayName,givenName,surname,companyName,jobTitle,emailAddresses,businessPhones,mobilePhone";
+  "displayName,givenName,surname,companyName,jobTitle,emailAddresses,businessPhones,mobilePhone,homeAddress,businessAddress";
 
 const PAGE_SIZE = 200;
 
@@ -71,6 +71,8 @@ type GraphContact = {
   emailAddresses?: Array<{ address?: string }>;
   businessPhones?: string[];
   mobilePhone?: string;
+  homeAddress?: { city?: string; state?: string };
+  businessAddress?: { city?: string; state?: string };
 };
 
 type GraphContactsPage = {
@@ -114,12 +116,20 @@ export function toPersonRecord(contact: GraphContact): PersonRecord | null {
     contact.displayName?.trim() ||
     [contact.givenName, contact.surname].filter(Boolean).join(" ").trim();
   if (!fullName) return null;
+  const emails = (contact.emailAddresses ?? []).map((e) => e.address?.trim()).filter((v): v is string => Boolean(v));
+  const phones = [...(contact.businessPhones ?? []), contact.mobilePhone].map((p) => p?.trim()).filter((v): v is string => Boolean(v));
+  const place = contact.businessAddress?.city ? contact.businessAddress : contact.homeAddress;
   return {
     fullName,
-    email: contact.emailAddresses?.find((e) => e.address?.trim())?.address?.trim() || null,
-    phone: contact.businessPhones?.find((p) => p?.trim())?.trim() || contact.mobilePhone?.trim() || null,
+    email: emails[0] ?? null,
+    phone: phones[0] ?? null,
     company: contact.companyName?.trim() || null,
     title: contact.jobTitle?.trim() || null,
+    // A city, never a street.
+    location: [place?.city, place?.state].map((v) => v?.trim()).filter(Boolean).join(", ") || null,
+    // Every other address and number is still theirs: kept as identifiers for matching.
+    otherEmails: emails.slice(1),
+    otherPhones: phones.slice(1),
   };
 }
 

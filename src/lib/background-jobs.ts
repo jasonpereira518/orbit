@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { createExternalStore } from "@/lib/create-external-store";
 
 export type BackgroundJobStatus = "running" | "completed" | "failed" | "cancelled";
 
@@ -35,7 +36,6 @@ export type BackgroundJob = {
 const AUTO_REMOVE_MS = 6000;
 
 const jobs = new Map<string, BackgroundJob>();
-const listeners = new Set<() => void>();
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
 let cachedList: BackgroundJob[] = [];
@@ -46,7 +46,7 @@ function recompute() {
 
 function emit() {
   recompute();
-  for (const listener of listeners) listener();
+  store.emit();
 }
 
 function clearAutoRemove(id: string) {
@@ -123,24 +123,16 @@ export function getBackgroundJob(id: string) {
   return jobs.get(id) ?? null;
 }
 
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-function getSnapshot() {
-  return cachedList;
-}
-
 const EMPTY_JOBS: BackgroundJob[] = [];
 
-function getServerSnapshot(): BackgroundJob[] {
-  return EMPTY_JOBS;
-}
+const store = createExternalStore<BackgroundJob[]>({
+  getSnapshot: () => cachedList,
+  getServerSnapshot: () => EMPTY_JOBS,
+});
 
 /** All tracked jobs (running + recently finished), newest first. */
 export function useBackgroundJobs(): BackgroundJob[] {
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot);
 }
 
 export function useActiveBackgroundJobCount(): number {

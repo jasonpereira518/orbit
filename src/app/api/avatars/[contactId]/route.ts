@@ -7,15 +7,15 @@ import { requireUserId } from "@/lib/auth";
 import { isTourExampleSource } from "@/lib/onboarding-examples/marker";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
-import { resolveLinkedInPhotoCached, type ProfileImageSource } from "@/lib/shared-avatars";
+import { resolveGravatarCached, resolveLinkedInPhotoCached, type ProfileImageSource } from "@/lib/shared-avatars";
 import {
   downloadAndPersistAvatar,
-  fetchGravatarPhotoUrl,
   isDurableAvatarUrl,
   isUnusableAvatarUrl,
   AvatarSourceRateLimitError,
   parseImageDataUrl,
 } from "@/lib/contact-avatar";
+import { AVATAR_NO_VERSION } from "@/lib/contact-avatar-url";
 import { isUuid } from "@/lib/input/ids";
 
 type Params = { params: Promise<{ contactId: string }> };
@@ -35,14 +35,15 @@ function dataUrlResponse(dataUrl: string) {
  * A miss the browser is allowed to remember.
  *
  * List rows resolve on demand, so an uncacheable 404 is re-requested on every render and
- * every scroll pass — which costs more than the on-demand resolution saves. An hour is
- * short enough to pick up a later backfill, and `orbit:avatars-updated` appends a
- * cache-busting `?t=` the moment one actually resolves.
+ * every scroll pass — which costs more than the on-demand resolution saves (each one is an
+ * authenticated function call). Six hours: a photo found later moves the caller's URL (its
+ * `?v=` is a hash of the stored photo), and `orbit:avatars-updated` appends a cache-busting
+ * `?t=` the moment one resolves in this tab, so the cached miss is never what hides it.
  */
 function miss(status: 404) {
   return new NextResponse(null, {
     status,
-    headers: { "Cache-Control": "private, max-age=3600" },
+    headers: { "Cache-Control": "private, max-age=21600" },
   });
 }
 
@@ -54,15 +55,19 @@ function miss(status: 404) {
  * tier for that contact, and the free ones (Unavatar, Gravatar) are not the exhausted
  * ones and may well succeed on the next pass. Caching the full Retry-After would mute a
  * contact for a whole afternoon over a quota that never applied to it.
+ *
+ * The floor matters as much as the cap: the per-user bucket refills in a minute, and a 60 s
+ * cache sent every throttled avatar of a 70-row page back to the function each minute.
  */
-const MAX_RETRY_CACHE_SEC = 600;
+const MIN_RETRY_CACHE_SEC = 300;
+const MAX_RETRY_CACHE_SEC = 1800;
 
 function retryLater(retryAfterSec: number) {
   return new NextResponse(null, {
     status: 429,
     headers: {
       "Retry-After": String(retryAfterSec),
-      "Cache-Control": `private, max-age=${Math.min(retryAfterSec, MAX_RETRY_CACHE_SEC)}`,
+      "Cache-Control": `private, max-age=${Math.min(Math.max(retryAfterSec, MIN_RETRY_CACHE_SEC), MAX_RETRY_CACHE_SEC)}`,
     },
   });
 }
@@ -71,7 +76,8 @@ function retryLater(retryAfterSec: number) {
  * A redirect to the photo. Cacheable for a day only when the caller versioned the URL
  * (`avatarRouteUrl` adds `?v=`, a hash of the photo URL it can see): a changed photo is then
  * a new URL, so a cached redirect can never point at an old one. `private` keeps it out of
- * any shared cache: the route is per user. An unversioned request stays uncached as before.
+ * any shared cache: the route is per user. A request with no real version (`?v=0`, or none)
+ * stays uncached as before.
  */
 function photoRedirect(url: string, versioned: boolean) {
   const res = NextResponse.redirect(url);
@@ -110,7 +116,10 @@ async function serve(req: Request, { params }: Params) {
     return new NextResponse(null, { status: 401 });
   }
   const { contactId } = await params;
-  const versioned = new URL(req.url).searchParams.has("v");
+  // `?v=0` is the "no photo URL to hash" version (inline / on-demand): the redirect behind it
+  // can change with no change of URL, so only a real hash makes a redirect cacheable.
+  const v = new URL(req.url).searchParams.get("v");
+  const versioned = Boolean(v) && v !== AVATAR_NO_VERSION;
   // A malformed id would reach Postgres as a failed uuid cast — a 500 for "no such contact".
   if (!isUuid(contactId)) return miss(404);
   const db = await getDb();
@@ -188,7 +197,11 @@ async function serve(req: Request, { params }: Params) {
       // Same ladder as the backfill: an email-only contact must resolve here too,
       // or on-demand rows would silently never fill in for them.
       if (!photoUrl && email) {
-        photoUrl = await fetchGravatarPhotoUrl(contactId, email);
+        const gravatar = await resolveGravatarCached(contactId, email);
+        if (gravatar && typeof gravatar === "object") {
+          return NextResponse.redirect(gravatar.sharedUrl);
+        }
+        photoUrl = gravatar;
         source = "gravatar";
       }
 

@@ -13,18 +13,21 @@ import {
   date,
   bigint,
 } from "drizzle-orm/pg-core";
+import type { VoiceConfig, VoiceHealthMap, VoiceProvider } from "@/lib/voice/config";
 import { relations, sql } from "drizzle-orm";
 import type {
   ContactSignalKind,
   ContactSignalPayload,
-  ExternalSourceKind,
   RadarAiNote,
   RadarAutopilot,
   RadarAutopilotAction,
+  RadarCalendarInvite,
   RadarDraft,
   RadarEvidence,
   RadarFeedbackAction,
   RadarModel,
+  RadarOpportunityKind,
+  RadarOpportunityStatus,
   RadarReason,
   RadarRunStatus,
   RadarRunTrigger,
@@ -36,6 +39,7 @@ import type { AimKind, Field, Timeline } from "@/lib/about-you";
 // Type-only, and that file imports nothing at all — so the wire shape and the stored shape
 // cannot drift, without the schema dragging any runtime dependency behind it.
 import type { ChatStep as ChatStepRecord } from "@/lib/chat-stream-protocol";
+import type { ChatAttachment } from "@/lib/chat-attachments";
 import type { EvidenceSource as EvidenceSourceRecord } from "@/lib/chat-evidence";
 import type { StoredProposedAction as StoredProposedActionRecord } from "@/lib/chat-proposed-actions";
 import type {
@@ -45,6 +49,7 @@ import type {
   ThreadDecision,
 } from "@/lib/email-intel/types";
 import type { MemorySourceKind } from "@/lib/memory-chunks";
+import type { FeedbackTriage } from "@/lib/feedback-report";
 
 /** Orbit ring a contact sits in. Mirrors `ClosenessBreakdown["tier"]` in `@/lib/closeness`. */
 export type ClosenessTier = "inner" | "mid" | "outer";
@@ -84,13 +89,19 @@ export type ClosenessCohortSnapshot = {
    * recalibrated. Making it required would break every stored cohort at once.
    */
   calendarConnected?: boolean;
+  /**
+   * LinkedIn deep read was on when this distribution was built, so a single-contact rescore
+   * scores with depth and overlap too (`rescoreContact`). Optional for the same reason as
+   * `calendarConnected`; absent reads as off.
+   */
+  deepRead?: boolean;
 };
 
 /**
  * Structural mirror of `ClosenessBreakdown` in `@/lib/closeness`.
  *
  * Declared here rather than imported so `schema.ts` keeps no dependency on the lib layer —
- * drizzle-kit loads this file directly and cannot resolve the `@/` alias. A compile-time
+ * drizzle-kit (since removed) loaded this file directly and could not resolve the `@/` alias. A compile-time
  * assertion in `@/lib/closeness-materialize` keeps the two in step.
  */
 export type StoredClosenessBreakdown = {
@@ -120,6 +131,7 @@ import type {
 import type { CaptureParseHints } from "@/lib/ai";
 import type { MentionPick } from "@/lib/mentions/mention-picks";
 import type { NameGuess } from "@/lib/contact-name-guess";
+import type { FieldSources } from "@/lib/contact-fields";
 
 export const userSettings = pgTable("user_settings", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -150,6 +162,23 @@ export const userSettings = pgTable("user_settings", {
    * redacts those by name).
    */
   writingInstructions: text("writing_instructions"),
+  /**
+   * How the user writes, distilled from their recent sent mail (`@/lib/writing-style-profile`):
+   * sentence length, greetings, sign-offs, words they use. Style only, never names or content;
+   * the raw mail is never stored. NULL = never built (built lazily); "" = the user cleared it,
+   * which also means "don't learn". Content like `writingInstructions`: a preferences purge
+   * clears it, and it takes no `_hash`/`_token`/`_secret` suffix.
+   */
+  writingStyleProfile: text("writing_style_profile"),
+  writingStyleProfileUpdatedAt: timestamp("writing_style_profile_updated_at", { withTimezone: true }),
+  /**
+   * Changes the user keeps making to Orbit's drafts, as short rules ("cuts the closing
+   * pleasantry"), distilled from `draft_edits` (`@/lib/draft-edits`). Same states as the style
+   * profile: NULL = none learned yet, "" = turned off (never relearned on its own), text = rules.
+   * Content: a preferences purge clears it.
+   */
+  writingEditLessons: text("writing_edit_lessons"),
+  writingEditLessonsUpdatedAt: timestamp("writing_edit_lessons_updated_at", { withTimezone: true }),
   /** Appended to email sent from Orbit (direct email). Plain text, and a sanitized HTML twin. */
   emailSignatureText: text("email_signature_text"),
   emailSignatureHtml: text("email_signature_html"),
@@ -206,6 +235,8 @@ export const userSettings = pgTable("user_settings", {
    */
   estimatedMonthlyChurnPct: real("estimated_monthly_churn_pct"),
   apolloApiKeyEncrypted: text("apollo_api_key_encrypted"),
+  brightDataApiKeyEncrypted: text("bright_data_api_key_encrypted"),
+  brightDataZone: text("bright_data_zone"),
   resendApiKeyEncrypted: text("resend_api_key_encrypted"),
   twilioAccountSidEncrypted: text("twilio_account_sid_encrypted"),
   twilioAuthTokenEncrypted: text("twilio_auth_token_encrypted"),
@@ -678,6 +709,26 @@ export const userSettings = pgTable("user_settings", {
   /** ISO week ("2026-W40") of the last digest sent, claimed in one statement before sending. */
   radarDigestLastWeek: text("radar_digest_last_week"),
   radarDigestUnsubTokenHash: text("radar_digest_unsub_token_hash"),
+  /** 1 = the daily 5:00 AM local-time pass is enabled. Integer, per house convention. */
+  radarDailyEnabled: integer("radar_daily_enabled").default(1).notNull(),
+  /** 1 = automatically extract active projects from Gmail, calendar, notes. */
+  radarAutoProjects: integer("radar_auto_projects").default(1).notNull(),
+  /** When Radar's web lane (events, people to meet, programs) is next due for this account. */
+  radarWebNextAt: timestamp("radar_web_next_at", { withTimezone: true }),
+  /** Local day ("2026-11-11") of the last same-day Radar email, claimed before sending. */
+  radarMomentLastDay: text("radar_moment_last_day"),
+  /** 1 = email the person the day something on Radar won't keep (at most one a day). */
+  radarMomentEmailEnabled: integer("radar_moment_email_enabled").default(1).notNull(),
+  /**
+   * When the person first pressed "Turn on Radar". Null = never: Radar is off by default and
+   * spends nothing until then. On = set AND `radarPaused` = 0 (`radarIsOn` in run.ts).
+   */
+  radarEnabledAt: timestamp("radar_enabled_at", { withTimezone: true }),
+  /**
+   * When the person last opened the Radar page. Suggestions created after it are "new": the
+   * nav's Radar icon pulses green while there are any (`countNewRadarSuggestions`).
+   */
+  radarOpenedAt: timestamp("radar_opened_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [
@@ -734,6 +785,11 @@ export const contacts = pgTable(
      * See `@/lib/contact-name-guess`.
      */
     nameGuess: jsonb("name_guess").$type<NameGuess>(),
+    /**
+     * Where each sourced field's value came from and when that fact was true (schema 240).
+     * Null or a missing key = written before sources existed. See `@/lib/contact-fields`.
+     */
+    fieldSources: jsonb("field_sources").$type<FieldSources>(),
     company: text("company"),
     companyId: uuid("company_id").references(() => companies.id, {
       onDelete: "set null",
@@ -790,6 +846,11 @@ export const contacts = pgTable(
      * streak stops applying by itself — no contact writer has to remember to reset it.
      */
     workHistoryMissSlug: text("work_history_miss_slug"),
+    /**
+     * When Jev last skipped this contact's re-check or vetoed its verify search (schema 220).
+     * Set, the next run asks neither gate — never two in a row — and any real search clears it.
+     */
+    workHistoryJevSkippedAt: timestamp("work_history_jev_skipped_at", { withTimezone: true }),
     relationshipScore: integer("relationship_score").default(2).notNull(),
     /**
      * Closeness the user actually asserted, 1–5. NULL means never rated —
@@ -896,7 +957,7 @@ export const contacts = pgTable(
      * the weight classes and why the config is 'simple'.
      */
     sortKey: text("sort_key").generatedAlwaysAs(
-      sql`lower(coalesce(nullif(trim(last_name), ''), split_part(trim(full_name), ' ', -1)))`
+      sql`lower(coalesce(nullif(trim(last_name), ''), nullif(split_part(trim(regexp_replace(full_name, '\\([^)]*\\)', '', 'g')), ' ', -1), ''), split_part(trim(full_name), ' ', -1)))`
     ),
     linkedinSlug: text("linkedin_slug").generatedAlwaysAs(
       sql`lower(nullif(split_part(split_part(split_part(split_part(coalesce(linkedin_url, ''), '/in/', 2), '?', 1), '#', 1), '/', 1), ''))`
@@ -1087,6 +1148,66 @@ export const duplicateSuggestions = pgTable(
 );
 
 /**
+ * What Orbit changed on a contact, and what it would change if asked (schema 240): the
+ * "Changed by Orbit" list with undo, and field suggestions waiting for a yes. `kind` is
+ * "field" here; the names plan adds "rename" / "remove". Blank fills from imports and address
+ * books are not logged (import revert covers them).
+ */
+/**
+ * What Orbit drafted next to what the user actually sent or copied, so the changes they keep
+ * making can be learned (`@/lib/draft-edits`). Only pairs that differ are kept, and only the
+ * newest 30 per user: these are messages to other people. A preferences purge deletes them.
+ */
+export const draftEdits = pgTable(
+  "draft_edits",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** Where the draft was edited: chat | compose | follow_up | outreach. */
+    surface: text("surface").notNull(),
+    /** email | linkedin | other. */
+    kind: text("kind").notNull(),
+    aiText: text("ai_text").notNull(),
+    finalText: text("final_text").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    /** Set once a learning pass has read it; unread pairs are what triggers the next pass. */
+    learnedAt: timestamp("learned_at", { withTimezone: true }),
+  },
+  (t) => [index("draft_edits_user_idx").on(t.userId, t.createdAt.desc())]
+);
+
+export const contactChanges = pgTable(
+  "contact_changes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    contactId: uuid("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").default("field").notNull(),
+    /** `FieldKey` for kind "field". */
+    field: text("field"),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    /** `FieldSource` that made or offered the change. */
+    source: text("source"),
+    status: text("status")
+      .$type<"applied" | "suggested" | "undone" | "accepted" | "dismissed">()
+      .default("applied")
+      .notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("contact_changes_user_idx").on(t.userId, t.createdAt.desc()),
+    uniqueIndex("contact_changes_open_suggestion_uidx")
+      .on(t.contactId, t.field)
+      .where(sql`status = 'suggested'`),
+  ]
+);
+
+/**
  * The per-user closeness distribution that `contacts.closeness*` was applied against.
  *
  * `snapshot` holds a fixed-size quantile sketch rather than the full sorted score array, so
@@ -1125,10 +1246,110 @@ export const userGoals = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     userId: text("user_id").notNull(),
     text: text("text").notNull(),
+    progress: text("progress"),
+    category: text("category"),
     active: integer("active").default(1).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("user_goals_user_idx").on(t.userId)]
+);
+
+export const userProjects = pgTable(
+  "user_projects",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    title: text("title").notNull(),
+    summary: text("summary"),
+    topics: jsonb("topics").$type<string[]>().default([]).notNull(),
+    status: text("status").$type<"active" | "dormant" | "completed">().default("active").notNull(),
+    detectedFrom: text("detected_from").$type<"gmail" | "calendar" | "notes" | "manual">().notNull(),
+    sourceRefs: jsonb("source_refs").$type<Array<{ type: string; id: string; snippet?: string }>>().default([]),
+    confidence: integer("confidence").default(80).notNull(),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("user_projects_user_status_idx").on(t.userId, t.status),
+    index("user_projects_user_activity_idx").on(t.userId, t.lastActivityAt),
+  ]
+);
+
+/**
+ * Radar's Opportunities lane: events near the person, people to meet, openings and programs.
+ * No contact row on purpose: nothing here enters `contacts` until the person saves it.
+ * `related_contact_ids` are people they already know who connect to it (who is going, who can
+ * introduce, who works there). One row per (user, dedupe_key), so a search that finds the same
+ * thing again updates it. See docs/superpowers/specs/2026-11-10-radar-analyst-design.md.
+ */
+export const radarOpportunities = pgTable(
+  "radar_opportunities",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    kind: text("kind").$type<RadarOpportunityKind>().notNull(),
+    title: text("title").notNull(),
+    url: text("url"),
+    why: text("why"),
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    evidence: jsonb("evidence").$type<RadarEvidence[]>().default([]).notNull(),
+    relatedContactIds: uuid("related_contact_ids").array().notNull().default(sql`'{}'`),
+    score: integer("score").default(0).notNull(),
+    status: text("status").$type<RadarOpportunityStatus>().default("found").notNull(),
+    dismissReason: text("dismiss_reason"),
+    dedupeKey: text("dedupe_key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("radar_opportunities_user_dedupe_uidx").on(t.userId, t.dedupeKey),
+    index("radar_opportunities_user_status_idx").on(t.userId, t.status),
+  ]
+);
+
+/**
+ * Web push subscriptions, one per browser or installed app the person allowed notifications
+ * on. `endpoint` is the push service URL and is unique; `p256dh` and `auth` are the browser's
+ * public keys for encrypting a message to it. A subscription the push service rejects for good
+ * (404/410) is deleted; `failure_count` counts other failures in a row.
+ */
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    endpoint: text("endpoint").notNull(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    userAgent: text("user_agent"),
+    failureCount: integer("failure_count").default(0).notNull(),
+    lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("push_subscriptions_endpoint_uidx").on(t.endpoint),
+    index("push_subscriptions_user_idx").on(t.userId),
+  ]
+);
+
+/**
+ * Things the person asked Orbit to keep in mind across chats. Read into every chat prompt
+ * (fenced as data). See `@/lib/chat-memory` for the only two ways one is written.
+ */
+export const chatMemories = pgTable(
+  "chat_memories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    text: text("text").notNull(),
+    /** The chat it was saved from, when it came from a card. Not a foreign key: the memory outlives the chat. */
+    sourceThreadId: uuid("source_thread_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("chat_memories_user_idx").on(t.userId, t.createdAt)]
 );
 
 export const tags = pgTable(
@@ -1246,6 +1467,13 @@ export type ReminderActionKind =
   | "task"
   | "follow_up";
 
+export type ReminderPriority = "critical" | "high" | "normal" | "low";
+export type ReminderCategory =
+  | "action_item"
+  | "next_step"
+  | "waiting_on"
+  | "cadence_followup";
+
 export const reminderLists = pgTable(
   "reminder_lists",
   {
@@ -1287,6 +1515,16 @@ export const reminders = pgTable(
       .$type<ReminderActionKind>()
       .default("task")
       .notNull(),
+    priority: text("priority")
+      .$type<ReminderPriority>()
+      .default("normal")
+      .notNull(),
+    category: text("category")
+      .$type<ReminderCategory>()
+      .default("action_item")
+      .notNull(),
+    timingRationale: text("timing_rationale"),
+    importanceReason: text("importance_reason"),
     createdBy: text("created_by").default("user").notNull(),
     /** Set when the reminder came out of a note paste; links to the results page and drives "From notes". */
     noteBatchId: uuid("note_batch_id"),
@@ -1333,6 +1571,7 @@ export const reminders = pgTable(
   },
   (t) => [
     index("reminders_user_status_idx").on(t.userId, t.status),
+    index("reminders_user_priority_idx").on(t.userId, t.priority, t.status),
     index("reminders_due_idx").on(t.userId, t.dueDate),
     index("reminders_list_idx").on(t.userId, t.listId),
     uniqueIndex("reminders_user_item_hash_uidx").on(t.userId, t.itemHash),
@@ -1379,6 +1618,16 @@ export const suggestedReminders = pgTable(
       .$type<ReminderActionKind>()
       .default("task")
       .notNull(),
+    priority: text("priority")
+      .$type<ReminderPriority>()
+      .default("normal")
+      .notNull(),
+    category: text("category")
+      .$type<ReminderCategory>()
+      .default("action_item")
+      .notNull(),
+    timingRationale: text("timing_rationale"),
+    importanceReason: text("importance_reason"),
     /** 0-100, matching aiSuggestions.confidenceScore's scale. */
     confidenceScore: integer("confidence_score"),
     /** pending | confirmed | discarded */
@@ -1393,6 +1642,7 @@ export const suggestedReminders = pgTable(
   },
   (t) => [
     index("suggested_reminders_user_status_idx").on(t.userId, t.status),
+    index("suggested_reminders_user_priority_idx").on(t.userId, t.priority, t.status),
     index("suggested_reminders_batch_idx").on(t.captureBatchId),
     uniqueIndex("suggested_reminders_user_item_uidx").on(t.userId, t.itemHash),
   ]
@@ -1419,7 +1669,19 @@ export type NoteBatchResult = {
   mentions: { interactionId: string; contactId: string; text: string; confidence: number; matchedBy: string }[];
   unresolvedMentions: { text: string; context: string | null }[];
   actionItems: { id: string; contactId: string; text: string; reminderId: string | null }[];
-  reminders: { id: string; contactId: string | null; title: string; dueIso: string; dateBasis: ReminderDateBasis; rawDatePhrase: string | null; sourceExcerpt: string | null }[];
+  reminders: {
+    id: string;
+    contactId: string | null;
+    title: string;
+    dueIso: string;
+    dateBasis: ReminderDateBasis;
+    rawDatePhrase: string | null;
+    sourceExcerpt: string | null;
+    priority?: ReminderPriority;
+    category?: ReminderCategory;
+    timingRationale?: string | null;
+    importanceReason?: string | null;
+  }[];
   /**
    * Typed opportunities the batch opened.
    *
@@ -1847,6 +2109,34 @@ export type RelationshipRunFlag = {
 
 export type RelationshipRunStatus = "queued" | "running" | "waiting_key" | "done" | "failed" | "undone";
 
+export const RELATIONSHIP_KINDS = [
+  "coworker", "classmate", "friend", "family", "mentor", "mentee",
+  "recruiter", "client", "investor", "collaborator", "acquaintance",
+] as const;
+export type RelationshipKind = (typeof RELATIONSHIP_KINDS)[number];
+export type DatePrecision = "day" | "month" | "year";
+/** How you met, from one quoted message. `date` is YYYY-MM-DD; for month/year precision it is the 1st. */
+export type RelationshipOrigin = {
+  text: string;
+  date: string | null;
+  precision: DatePrecision | null;
+  /** One of the six `met_context` values, or null. */
+  context: string | null;
+  excerpt: string;
+  interactionId: string;
+  runId: string;
+  /** What the contact's met fields held before this run wrote them; null when it wrote nothing. */
+  replaced: {
+    howMet: string | null;
+    dateMet: string | null;
+    metContext: string | null;
+    /** Set only when the run moved first_interaction_at: what it was, and what the run set. */
+    firstInteractionAt?: string | null;
+    widenedTo?: string;
+  } | null;
+};
+export type RelationshipKindRecord = { kind: RelationshipKind; excerpt: string; interactionId: string; removed?: true };
+
 /**
  * The relationship engine's memory of one relationship. "Pending" is NOT stored here: a
  * contact is pending when it has message interactions newer than the watermark (see
@@ -1873,6 +2163,10 @@ export const relationshipDigests = pgTable(
     batchJobId: uuid("batch_job_id"),
     batchPendingUntil: timestamp("batch_pending_until", { withTimezone: true }),
     runId: uuid("run_id"),
+    /** Deep read: how you met, from one quoted message. The first one found wins. */
+    origin: jsonb("origin").$type<RelationshipOrigin>(),
+    /** Deep read: the kind of relationship, quoted. `removed` sticks. */
+    relationship: jsonb("relationship").$type<RelationshipKindRecord>(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("relationship_digests_user_idx").on(t.userId)]
@@ -1935,7 +2229,7 @@ export type CareerProfile = {
   profile?: { headline?: string; summary?: string; industry?: string; location?: string };
   role?: { title: string; company: string };
   skills?: string[];
-  /** Job titles from saved job alerts, de-duplicated. */
+  /** Job titles from saved job alerts and the export's job-seeker preferences, de-duplicated. */
   roleKeywords?: string[];
   /** What the person said they want, from the onboarding About you step. */
   aim?: {
@@ -1946,7 +2240,43 @@ export type CareerProfile = {
   };
   /** The confirm screen's "Your major(s)", at most 3. A jsonb key, so no DDL. */
   majors?: string[];
+  /** The city the person typed in Settings (Radar's events near you). Beats `profile.location`, which an import sets; kept when imports are removed. */
+  city?: string;
+  /** The hashtags the person uses most in their own LinkedIn posts (Shares.csv), at most 8. Imported, so "Remove imported details" clears it. */
+  postTopics?: string[];
+  /** Certifications, honors, projects, volunteering, organizations, publications. Display only. */
+  background?: CareerBackgroundEntry[];
+  /** Every role in Positions.csv, in LinkedIn's order (newest first). Deep read only. */
+  positions?: CareerPosition[];
+  /** Every school in Education.csv with degree and years. Deep read only. */
+  education?: CareerEducation[];
   importedAt?: string;
+  /** The deep read's launch catch-up looked at this person's kept export for their history (deep-read-catch-up.ts). Kept by "Remove imported details", so the catch-up never writes it back. */
+  historyCheckedAt?: string;
+};
+
+/** A LinkedIn date cell: "May 2026" or "2020". `month` is 1–12. */
+export type CareerYearMonth = { year: number; month?: number };
+
+export type CareerPosition = {
+  title: string;
+  company: string;
+  start?: CareerYearMonth;
+  /** Absent means the role is current. */
+  end?: CareerYearMonth;
+  location?: string;
+  description?: string;
+};
+
+export type CareerEducation = { school: string; degree?: string; start?: CareerYearMonth; end?: CareerYearMonth };
+
+export type CareerBackgroundEntry = {
+  kind: "certification" | "honor" | "project" | "volunteering" | "organization" | "publication";
+  title: string;
+  org?: string;
+  /** As LinkedIn writes it: "Mar 2024". */
+  start?: string;
+  end?: string;
 };
 
 export type ProfileSkill = { name: string };
@@ -2153,6 +2483,8 @@ export type ImportStats = {
    */
   scanAfter?: string;
   scanIsFull?: boolean;
+  /** Recruiting cycle mode requested for the scan. */
+  cycle?: "current" | "july" | "august" | "january";
   /**
    * Job start, used to advance the watermark on completion. Deliberately the start and not
    * the finish — mail that arrived mid-scan was never in this job's result set.
@@ -2491,7 +2823,26 @@ export type ChatConversationRowPayload = {
   sessions: { startAt: string; endAt: string; messageCount: number; direction: "in" | "out" | null; transcript: string }[];
 };
 
+/**
+ * One per-person note from a kept LinkedIn export (`import_type = 'linkedin_export'`): a
+ * connection-request message, a note the user wrote in LinkedIn, or a recommendation. Matched
+ * to someone already in Orbit and never creates anyone — see `linkedinSignalsAdapter`.
+ */
+export type LinkedInSignalRowPayload = {
+  kind: "linkedin_signal";
+  signal: "invitation_sent" | "invitation_received" | "note" | "recommendation_received" | "recommendation_given";
+  /** Stable across re-uploads of the same export; the interaction's dedupe key. */
+  externalKey: string;
+  date: string | null;
+  fullName: string;
+  linkedinUrl: string | null;
+  company: string | null;
+  title: string | null;
+  text: string;
+};
+
 export type ImportJobRowPayload =
+  | LinkedInSignalRowPayload
   | LinkedInImportRowPayload
   | GmailSenderRowPayload
   | OutlookSenderRowPayload
@@ -2628,6 +2979,13 @@ export type ImportRevertSnapshot = {
   dateMet: string | null;
   firstInteractionAt: string | null;
   lastInteractionAt: string | null;
+  /** The sourced fields merges may fill since schema 240. Absent on older snapshots = leave alone. */
+  location?: string | null;
+  school?: string | null;
+  xHandle?: string | null;
+  website?: string | null;
+  industry?: string | null;
+  fieldSources?: FieldSources | null;
 };
 
 export const calendarSubscriptions = pgTable(
@@ -2708,6 +3066,8 @@ export const recommendations = pgTable(
     draft: jsonb("draft").$type<RadarDraft>(),
     /** What autopilot scheduled for this card, so Undo can reverse exactly that. */
     autopilot: jsonb("autopilot").$type<RadarAutopilotAction>(),
+    /** A suggested calendar invite, prepared ahead of time so the user can send/confirm in 1 click. */
+    suggestedCalendarInvite: jsonb("suggested_calendar_invite").$type<RadarCalendarInvite>(),
     /** Impressions: stamped when the card is rendered on /radar or in the briefing. */
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
@@ -2744,8 +3104,12 @@ export const radarRuns = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     durationMs: integer("duration_ms"),
-    stats: jsonb("stats").$type<Record<string, number | boolean>>().default({}).notNull(),
+    stats: jsonb("stats").$type<Record<string, number | boolean | string>>().default({}).notNull(),
     error: text("error"),
+    /** Where a running run is: the stage's label, 0-100 (monotonic), and "3 of 5" when the stage counts. */
+    stage: text("stage"),
+    progress: integer("progress").default(0).notNull(),
+    detail: text("detail"),
   },
   (t) => [index("radar_runs_user_started_idx").on(t.userId, t.startedAt.desc())]
 );
@@ -2804,69 +3168,6 @@ export const contactSignals = pgTable(
   (t) => [
     uniqueIndex("contact_signals_dedupe_uidx").on(t.userId, t.dedupeHash),
     index("contact_signals_user_occurred_idx").on(t.userId, t.occurredAt.desc()),
-  ]
-);
-
-/**
- * Public news feeds Radar reads (global, no `user_id`), beside `job_feed_sources`. Adding or
- * disabling a source is a row, not a deploy.
- */
-export const externalSources = pgTable("external_sources", {
-  id: text("id").primaryKey(),
-  label: text("label").notNull(),
-  url: text("url").notNull(),
-  kind: text("kind").$type<ExternalSourceKind>().notNull(),
-  enabled: boolean("enabled").default(true).notNull(),
-  etag: text("etag"),
-  lastModified: text("last_modified"),
-  lastFetchedAt: timestamp("last_fetched_at", { withTimezone: true }),
-  lastStatus: text("last_status"),
-  lastError: text("last_error"),
-  consecutiveFailures: integer("consecutive_failures").default(0).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
-
-/** One headline from one source (global). Pruned after 30 days. */
-export const externalItems = pgTable(
-  "external_items",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    sourceId: text("source_id")
-      .notNull()
-      .references(() => externalSources.id, { onDelete: "cascade" }),
-    externalId: text("external_id").notNull(),
-    title: text("title").notNull(),
-    summary: text("summary"),
-    url: text("url"),
-    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
-    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (t) => [
-    uniqueIndex("external_items_source_external_uidx").on(t.sourceId, t.externalId),
-    index("external_items_published_idx").on(t.publishedAt),
-  ]
-);
-
-/**
- * The companies a headline may be about, keyed by `jobCompanyBucketKey` so the per-user
- * probe is one indexed lookup with the account's own company keys. Candidates, not
- * verdicts: `companiesMatch` confirms each hit before a signal is written.
- */
-export const externalItemCompanies = pgTable(
-  "external_item_companies",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    itemId: uuid("item_id")
-      .notNull()
-      .references(() => externalItems.id, { onDelete: "cascade" }),
-    companyKey: text("company_key").notNull(),
-    companyName: text("company_name").notNull(),
-    publishedAt: timestamp("published_at", { withTimezone: true }).notNull(),
-  },
-  (t) => [
-    uniqueIndex("external_item_companies_item_key_uidx").on(t.itemId, t.companyKey),
-    index("external_item_companies_key_published_idx").on(t.companyKey, t.publishedAt.desc()),
   ]
 );
 
@@ -2975,6 +3276,15 @@ export const outreachMessages = pgTable(
     /** Resend's email id for an email send (Twilio's SID for SMS). The Resend webhook matches on it. */
     deliveryId: text("delivery_id"),
     /**
+     * The sent email's RFC Message-ID when Orbit knows it (it sets its own for Gmail sends), and
+     * Gmail's thread id: a sequence's later steps reply to them so they land in the same thread.
+     * A Resend send keeps neither here; the follow-up asks Resend for it by `deliveryId`.
+     */
+    rfcMessageId: text("rfc_message_id"),
+    /** The body as Orbit drafted it, before any edit: a send compares against it (`draft_edits`). */
+    aiBody: text("ai_body"),
+    providerThreadId: text("provider_thread_id"),
+    /**
      * Resend engagement for an email sent on Orbit's Resend account, from the webhook
      * (`email.delivered` / `email.opened` / `email.clicked`). First timestamp wins; NULL means
      * not (yet) seen, or the account's own Resend key sent it (its webhooks never reach Orbit).
@@ -3007,7 +3317,8 @@ export const outreachMessages = pgTable(
  *
  * The same warning as `contactEmbeddings` applies to `embedding_vector`: it is created and
  * indexed at runtime by `migratePgvector`, is deliberately absent from this declaration, and
- * `drizzle-kit push` would drop it. Migrations here are hand-written SQL on purpose.
+ * a schema-diffing tool (`drizzle-kit push`, since removed) would drop it. Migrations here are
+ * hand-written SQL on purpose.
  */
 export const memoryChunks = pgTable(
   "memory_chunks",
@@ -3082,11 +3393,10 @@ export const contactEmbeddings = pgTable(
      * `scripts/migrate-embedding-stale.ts`. All four must agree on name AND column list.
      *
      * Nothing at runtime reads this declaration — Orbit's migrations are hand-written SQL,
-     * deliberately, because `drizzle-kit push` drops the runtime-managed
-     * `embedding_vector` column. But `drizzle.config.ts` points `schema` at this file and
-     * `package.json` still ships `db:push`/`db:generate`, so a stale declaration here is a
-     * loaded gun: running either would recreate whatever this says against whatever
-     * `DATABASE_URL` resolves to.
+     * deliberately, because a schema-diffing tool (`drizzle-kit push`, since
+     * removed) drops the runtime-managed `embedding_vector` column. A stale declaration here
+     * would be a loaded gun if such a tool were ever reintroduced: it would recreate whatever
+     * this says against whatever `DATABASE_URL` resolves to.
      *
      * `source_id` is in the key because that is the real uniqueness contract.
      * `upsertContactEmbedding` (`src/lib/search.ts`) keys its existence check on all four
@@ -3214,6 +3524,8 @@ export const userRecruiterLinks = pgTable(
     aiSummary: text("ai_summary"),
     companiesMentioned: jsonb("companies_mentioned").$type<string[]>().default([]),
     rolesDiscussed: jsonb("roles_discussed").$type<string[]>().default([]),
+    /** Specific role being interviewed for, extracted from recruiter threads or manually logged. */
+    roleInterviewingFor: text("role_interviewing_for"),
     firstEmailAt: timestamp("first_email_at", { withTimezone: true }),
     lastEmailAt: timestamp("last_email_at", { withTimezone: true }),
     emailCount: integer("email_count").default(0).notNull(),
@@ -3280,6 +3592,31 @@ export const recruiterMessages = pgTable(
     index("recruiter_messages_recruiter_idx").on(t.recruiterId),
     // Backs the daily send cap, which counts this user's sends since midnight.
     index("recruiter_messages_sent_idx").on(t.userId, t.sentAt),
+  ]
+);
+
+/**
+ * Tracks credit-based contact reveals for shared community recruiters.
+ * When unlocked, contact details (email, LinkedIn) remain permanently viewable by this user.
+ */
+export const recruiterContactUnlocks = pgTable(
+  "recruiter_contact_unlocks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    recruiterId: uuid("recruiter_id")
+      .notNull()
+      .references(() => recruiters.id, { onDelete: "cascade" }),
+    costCredits: integer("cost_credits").default(1).notNull(),
+    unlockedAt: timestamp("unlocked_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("recruiter_contact_unlocks_user_idx").on(t.userId),
+    index("recruiter_contact_unlocks_recruiter_idx").on(t.recruiterId),
+    uniqueIndex("recruiter_contact_unlocks_user_recruiter_uidx").on(
+      t.userId,
+      t.recruiterId
+    ),
   ]
 );
 
@@ -3391,6 +3728,12 @@ export type ProviderSyncCursor = {
   } | null;
   /** Google: when the contacts lane last finished a pass, for the Google page's "synced X ago". */
   contactsSyncedAt?: string | null;
+  /**
+   * Google: when the Email activity pass last STARTED and finished cleanly. Its own key because
+   * `last_synced_at` is stamped by the calendar/contacts lane before the mailbox pass runs, so
+   * reading it there made every pass search for mail newer than "right now" and find none.
+   */
+  mailboxSyncedAt?: string | null;
   /** Same nullability rule as `calendar` above — a cleared cursor is a real state. */
   luma?: EventProviderSyncCursor | null;
   eventbrite?: EventProviderSyncCursor | null;
@@ -3733,6 +4076,11 @@ export type ChatRecommendation = {
   reason: string;
   suggested_action: string;
   draft_message: string | null;
+  /**
+   * The draft as the person last left it on the card: written on demand, edited or rewritten.
+   * Shown in place of `draft_message`, which stays the model's original. See `saveDraftEdit`.
+   */
+  edited_draft?: string | null;
 };
 
 export const chatThreads = pgTable(
@@ -3749,6 +4097,14 @@ export const chatThreads = pgTable(
      * apart: only a stopped turn's question is discarded. See `markTurnStopped`.
      */
     stoppedTurnId: text("stopped_turn_id"),
+    /**
+     * Messages the person sent to steer the answer being written, keyed by its client turn
+     * id. The running turn reads them between lookup rounds (`readTurnSteers`); a new turn's
+     * first steer replaces the last turn's. See `addTurnSteer`.
+     */
+    pendingSteer: jsonb("pending_steer").$type<{ turnId: string; notes: { id: string; text: string }[] }>(),
+    /** When the person pinned this conversation to the top of their history; null when not pinned. */
+    pinnedAt: timestamp("pinned_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -3757,6 +4113,29 @@ export const chatThreads = pgTable(
     index("chat_threads_user_updated_idx").on(t.userId, t.updatedAt),
   ]
 );
+
+export const orbitVoiceSessions = pgTable("orbit_voice_sessions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: text("user_id").notNull(),
+  threadId: uuid("thread_id").notNull().references(() => chatThreads.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
+  toolCalls: integer("tool_calls").default(0).notNull(),
+  scope: jsonb("scope").$type<Record<string, Array<[string, string]>>>().default({}).notNull(),
+  timeZone: text("time_zone").default("UTC").notNull(),
+  provider: text("provider").$type<VoiceProvider>().default("elevenlabs").notNull(),
+  fallback: boolean("fallback").default(false).notNull(),
+  connectedAt: timestamp("connected_at", { withTimezone: true }),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  outcome: text("outcome").$type<"starting" | "connected" | "ended" | "failed">().default("starting").notNull(),
+  /** Started as a Cosmo call (feature.cosmo released for this person then): it may apply small changes. */
+  cosmo: boolean("cosmo").default(false).notNull(),
+  /** Why this call may not apply anything more (an injection signal in a lookup). Sticky. */
+  taintedBy: text("tainted_by"),
+  /** Changes this call applied without a click; capped by VOICE_AUTO_APPLY_CAP. */
+  autoApplied: integer("auto_applied").default(0).notNull(),
+}, (t) => [index("orbit_voice_sessions_user_idx").on(t.userId), index("orbit_voice_sessions_thread_idx").on(t.threadId)]);
 
 export const chatMessages = pgTable(
   "chat_messages",
@@ -3823,9 +4202,16 @@ export const chatMessages = pgTable(
     /**
      * The id the client minted for the turn that wrote this question, so a Stop that reaches
      * the server after the question was saved can find and discard it. Null on assistant rows,
-     * versioned turns and every row from before SCHEMA_VERSION 174.
+     * versioned turns and every row from before SCHEMA_VERSION 174. Assistant proposal
+     * rows may carry chat/voice origin markers; finalized voice turns carry their session
+     * and transcript revision so late retries cannot overwrite a correction.
      */
-    clientTurnId: text("client_turn_id"),
+/**
+     * Files attached to this question: their names and the text read from them (never the
+     * bytes). Only on user rows. See `@/lib/chat-attachments`.
+     */
+    attachments: jsonb("attachments").$type<ChatAttachment[]>(),
+        clientTurnId: text("client_turn_id"),
     /**
      * Groups the versions of one turn — a user row and its assistant reply share a `slot`.
      * Every row created from SCHEMA_VERSION 80 onward gets one at insert; a row from before
@@ -4755,6 +5141,11 @@ export const feedback = pgTable(
     score: integer("score"),
     text: text("text"),
     /**
+     * The subject line someone gives a new message. Required from the in-app form; older
+     * reports, PMF and churn answers have none, and readers fall back to the text.
+     */
+    subject: text("subject"),
+    /**
      * Which part of Orbit this is about, prefilled from the route and confirmable by the
      * person writing. A column rather than a `context` key because the two are different
      * things: `context` is what the SERVER observed, this is what the PERSON asserted, and
@@ -4784,6 +5175,30 @@ export const feedback = pgTable(
     statusChangedBy: text("status_changed_by"),
     /** What was done about it. Operator prose, not the user's. */
     resolutionNote: text("resolution_note"),
+    /**
+     * The AI triage pass's reading of the report — one-line summary, severity, and an earlier
+     * open report it repeats. Null until the pass has run, and for good if it never could
+     * (no operator account, AI unavailable). See `src/lib/feedback-triage.ts`.
+     */
+    triage: jsonb("triage").$type<FeedbackTriage>(),
+    /**
+     * Bonus AI credits the operator has thanked them with on this report, added up across
+     * every thank-you (each its own `adj:feedback:<id>:<uuid>` grant).
+     */
+    thanksCredits: integer("thanks_credits"),
+    /** When the reporter last opened the conversation. Operator messages after it are unread. */
+    userReadAt: timestamp("user_read_at", { withTimezone: true }),
+    /** When the operator last opened it. The reporter's messages after it are unread. */
+    operatorReadAt: timestamp("operator_read_at", { withTimezone: true }),
+    /** When the reporter last unwrapped a thank-you. Gifts sent after it are still wrapped. */
+    thanksSeenAt: timestamp("thanks_seen_at", { withTimezone: true }),
+    /**
+     * Each side's last keystroke in the conversation, for the typing dots. A row column rather
+     * than server memory because a serverless deploy has none shared between requests; "typing"
+     * means within the last few seconds (`TYPING_FRESH_MS` in feedback-thread.ts).
+     */
+    userTypingAt: timestamp("user_typing_at", { withTimezone: true }),
+    operatorTypingAt: timestamp("operator_typing_at", { withTimezone: true }),
     /** Where they were when they said it — route, plan, contact count. */
     context: jsonb("context").$type<Record<string, unknown>>().default({}).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -4825,6 +5240,12 @@ export const feedbackScreenshots = pgTable(
      * only discovers tables that carry `user_id` — a cascade alone would leave this table
      * permanently outside the leak sweep.
      */
+    /**
+     * The conversation message it was sent with; null for the opening report's screenshots.
+     * No foreign key: the messages table is created after this one, and a message only goes
+     * away with its report, whose delete already cascades here.
+     */
+    messageId: uuid("message_id"),
     userId: text("user_id").notNull(),
     /** 0-based, the order they were attached in. The gallery renders in this order. */
     position: integer("position").notNull().default(0),
@@ -4853,6 +5274,37 @@ export const feedbackScreenshots = pgTable(
   (t) => [
     index("feedback_screenshots_feedback_idx").on(t.feedbackId, t.position),
     index("feedback_screenshots_user_idx").on(t.userId),
+  ]
+);
+
+/**
+ * The conversation on one feedback report, between the reporter and the operator.
+ *
+ * Opens when the operator first replies — the report itself is the opening message and stays
+ * on `feedback.text`. See `src/lib/feedback-thread.ts`.
+ */
+export const feedbackMessages = pgTable(
+  "feedback_messages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    feedbackId: uuid("feedback_id")
+      .notNull()
+      .references(() => feedback.id, { onDelete: "cascade" }),
+    /**
+     * The REPORTER, whoever wrote this message — denormalised so the purge finds every row of
+     * a deleted account's conversations, operator replies included, and the smoke-purge sweep
+     * (which only discovers tables with `user_id`) covers the table.
+     */
+    userId: text("user_id").notNull(),
+    author: text("author").$type<"user" | "operator">().notNull(),
+    body: text("body").notNull(),
+    /** Bonus credits this operator reply carried as a thank-you; the gift card renders under it. */
+    credits: integer("credits"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("feedback_messages_feedback_idx").on(t.feedbackId, t.createdAt),
+    index("feedback_messages_user_idx").on(t.userId),
   ]
 );
 
@@ -5392,6 +5844,22 @@ export const linkedinAvatars = pgTable(
 );
 
 /**
+ * Cross-user photo cache for people found by email (`src/lib/shared-avatars.ts`), the email
+ * twin of `linkedinAvatars`: keyed by sha256 of the lowercased, trimmed address, never the
+ * address itself. Public lookups (Gravatar) only; never a Google/Outlook mailbox photo, an
+ * extension capture or an upload. `imageUrl` null = looked and found nothing. Deleted once no
+ * contact in any account has the address; `blockedAt` rows stay (admin takedown).
+ */
+export const emailAvatars = pgTable("email_avatars", {
+  emailHash: text("email_hash").primaryKey(),
+  imageUrl: text("image_url"),
+  source: text("source").$type<"gravatar">().notNull(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }).defaultNow().notNull(),
+  blockedAt: timestamp("blocked_at", { withTimezone: true }),
+  blockedBy: text("blocked_by"),
+});
+
+/**
  * Work history found by a public web search (`src/lib/public-work-history.ts`), shared across
  * accounts by LinkedIn profile slug like `linkedinAvatars`: only confident web answers, never
  * an extension capture, a typed field or an import. A blocked row (admin takedown) has no answer
@@ -5426,6 +5894,11 @@ export const siteSettings = pgTable("site_settings", {
    * any key (`src/lib/web-search-budget.ts`). Null = never set, which reads as running.
    */
   webSearchPaused: boolean("web_search_paused"),
+  /** Orbit Voice is opt-in, including for admins. No row/null means off. */
+  orbitVoiceEnabled: boolean("orbit_voice_enabled").default(false),
+  orbitVoiceChangedAt: timestamp("orbit_voice_changed_at", { withTimezone: true }),
+  orbitVoiceConfig: jsonb("orbit_voice_config").$type<VoiceConfig>(),
+  orbitVoiceHealth: jsonb("orbit_voice_health").$type<VoiceHealthMap>(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   /** The admin who last changed it. Kept for the audit trail's benefit, not read by the app. */
   updatedBy: text("updated_by"),
@@ -6374,6 +6847,7 @@ export type ChatMessage = typeof chatMessages.$inferSelect;
 export type Recruiter = typeof recruiters.$inferSelect;
 export type UserRecruiterLink = typeof userRecruiterLinks.$inferSelect;
 export type RecruiterMessage = typeof recruiterMessages.$inferSelect;
+export type RecruiterContactUnlock = typeof recruiterContactUnlocks.$inferSelect;
 export type RecruiterScanState = typeof recruiterScanState.$inferSelect;
 export type GmailConnection = typeof gmailConnections.$inferSelect;
 export type UsageEvent = typeof usageEvents.$inferSelect;
@@ -6835,3 +7309,5 @@ export type SiteInvite = typeof siteInvites.$inferSelect;
 export type NewSiteInvite = typeof siteInvites.$inferInsert;
 export type ProductEvent = typeof productEvents.$inferSelect;
 export type NewProductEvent = typeof productEvents.$inferInsert;
+export type UserProject = typeof userProjects.$inferSelect;
+export type NewUserProject = typeof userProjects.$inferInsert;

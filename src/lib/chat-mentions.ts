@@ -28,13 +28,13 @@ export type ChatMention = {
  */
 function opensHere(text: string, at: number): boolean {
   if (at === 0) return true;
-  return /[\s([{"'‘“–—]/.test(text[at - 1]!);
+  return /[\s([{"'‘“–—]/.test(text[at - 1]);
 }
 
 /** A mention ends at a boundary: the next character may not continue a word. */
 function closesHere(text: string, at: number): boolean {
   if (at >= text.length) return true;
-  return !/[\p{L}\p{N}]/u.test(text[at]!);
+  return !/[\p{L}\p{N}]/u.test(text[at]);
 }
 
 /**
@@ -77,7 +77,7 @@ export function findMentions(text: string, names?: readonly string[]): ChatMenti
       );
       if (!hit) continue;
       found.push({ start: i, end: i + 1 + hit.length, name: rest.slice(0, hit.length) });
-      i = found[found.length - 1]!.end - 1;
+      i = found[found.length - 1].end - 1;
       continue;
     }
 
@@ -85,7 +85,7 @@ export function findMentions(text: string, names?: readonly string[]): ChatMenti
     if (!m) continue;
     const name = m[0];
     found.push({ start: i, end: i + 1 + name.length, name });
-    i = found[found.length - 1]!.end - 1;
+    i = found[found.length - 1].end - 1;
   }
   return found;
 }
@@ -192,7 +192,7 @@ export function mentionQueryAt(text: string, caret: number): MentionQuery | null
   // Walk back from the caret to the nearest plausible `@`. Bounded by the query limits,
   // so this is a handful of characters however long the box gets.
   for (let i = caret - 1; i >= 0 && caret - i <= MENTION_QUERY_MAX_LEN + 1; i--) {
-    const ch = text[i]!;
+    const ch = text[i];
     if (ch === "\n") return null;
     if (ch === "@") {
       if (!opensHere(text, i)) return null;

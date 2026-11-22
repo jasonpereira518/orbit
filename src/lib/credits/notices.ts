@@ -17,7 +17,7 @@ import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_CENTS } from "@/lib/stripe-confi
  * notices (`plan.credits_near` / `credits_on_packs` / `credits_out` in account-alerts.ts) say
  * the same thing to someone who is looking; these reach someone who is not.
  *
- *  - Driven by the ten-minute schedule (`/api/credits/notices`, .github/workflows/ops.yml): it
+ *  - Driven by the ten-minute schedule (`/api/credits/notices`, scripts/qstash-schedules.ts): it
  *    looks at allowance grants, never at the AI call path, so no request waits on an email.
  *  - At most once per level per allowance cycle. Each send is CLAIMED first, in one UPDATE
  *    that records the cycle and level, so overlapping runs cannot double-send; a send Resend
@@ -212,7 +212,7 @@ const resendDeliver: CreditEmailDeliver = async (message) => {
   }
 };
 
-type Candidate = {
+export type Candidate = {
   user_id: string;
   email: string;
   period_start: Date | string;
@@ -255,19 +255,10 @@ async function release(userId: string, periodStart: Date, level: NoticeLevel, pr
   `);
 }
 
-export type CreditNoticeStats = { candidates: number; sent: number; skipped: number; failed: number };
-
-/**
- * One run: every account whose current allowance has crossed a level it has not been emailed
- * for this cycle. `deliver` and `now` are injectable for the smoke.
- */
-export async function sendCreditNotices(
-  opts: { deliver?: CreditEmailDeliver; now?: Date; limit?: number; pauseMs?: number } = {}
-): Promise<CreditNoticeStats> {
-  const deliver = opts.deliver ?? resendDeliver;
-  const now = opts.now ?? new Date();
+/** Accounts at 80% or more of their allowance that want email and have not yet been told about their current level. */
+export async function loadCreditNoticeCandidates(now: Date, limit = 150): Promise<Candidate[]> {
   const db = await getDb();
-  const candidates = rowsOf<Candidate>(
+  return rowsOf<Candidate>(
     await db.execute(sql`
       SELECT s.user_id, s.email, g.period_start, g.period_end,
              g.micros_granted AS granted, g.micros_remaining AS remaining,
@@ -280,10 +271,28 @@ export async function sendCreditNotices(
          AND (g.micros_granted - g.micros_remaining) * 5 >= g.micros_granted * 4
          AND s.credit_email_enabled = 1
          AND coalesce(trim(s.email), '') <> ''
+         -- Not yet told about this level this cycle (the per-account check below stays as the guard),
+         -- so an empty result means the run has nothing to do. Mirrors noticeLevelFor.
+         AND (s.credit_notice_period_start IS DISTINCT FROM g.period_start
+              OR s.credit_notice_level < CASE WHEN g.micros_remaining <= 0 THEN 100 ELSE 80 END)
        ORDER BY g.period_start
-       LIMIT ${opts.limit ?? 150}
+       LIMIT ${limit}
     `)
   );
+}
+
+export type CreditNoticeStats = { candidates: number; sent: number; skipped: number; failed: number };
+
+/**
+ * One run: every account whose current allowance has crossed a level it has not been emailed
+ * for this cycle. `deliver` and `now` are injectable for the smoke.
+ */
+export async function sendCreditNotices(
+  opts: { deliver?: CreditEmailDeliver; now?: Date; limit?: number; pauseMs?: number; candidates?: Candidate[] } = {}
+): Promise<CreditNoticeStats> {
+  const deliver = opts.deliver ?? resendDeliver;
+  const now = opts.now ?? new Date();
+  const candidates = opts.candidates ?? (await loadCreditNoticeCandidates(now, opts.limit));
 
   const stats: CreditNoticeStats = { candidates: candidates.length, sent: 0, skipped: 0, failed: 0 };
   for (const c of candidates) {

@@ -99,7 +99,7 @@ function NotionPickerDialog({ onClose, onQueued }: { onClose: () => void; onQueu
 
   const load = useCallback((q: string, cursor: string | null) => {
     setLoading(true);
-    getNotionPickable(q, cursor)
+    void getNotionPickable(q, cursor)
       .catch(() => null)
       .then((res) => {
         if (!res || !res.ok) {
@@ -130,7 +130,7 @@ function NotionPickerDialog({ onClose, onQueued }: { onClose: () => void; onQueu
     let i = 0;
     const worker = async () => {
       while (i < picked.length) {
-        const page = picked[i++]!;
+        const page = picked[i++];
         try {
           const res = await queueNotionPage({ pageId: page.id, batchGroupId });
           if (!res.ok) failures.push(`${page.title}: ${res.error}`);
@@ -152,7 +152,7 @@ function NotionPickerDialog({ onClose, onQueued }: { onClose: () => void; onQueu
     } else if (duplicates) {
       toast.info(duplicates === 1 ? "That page is already in Orbit" : "Those pages are already in Orbit");
     }
-    if (failures.length) toast.error(failures[0]!, failures.length > 1 ? { description: `and ${failures.length - 1} more` } : undefined);
+    if (failures.length) toast.error(failures[0], failures.length > 1 ? { description: `and ${failures.length - 1} more` } : undefined);
     if (!failures.length) onClose();
   }
 

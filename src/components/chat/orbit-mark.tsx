@@ -1,28 +1,35 @@
 "use client";
 
-import { motion } from "motion/react";
+import { useId } from "react";
 import { cn } from "@/lib/utils";
 
+/** The orbit's ellipse and tilt, in the -50..50 viewBox. */
+const RX = 40;
+const RY = 13;
+const SQUASH = RY / RX;
+const TILT = -20;
+const MOON_R = 8.5;
+/** Where reduced motion parks the moon: front right, clear of the planet's face. */
+const PARK_DEG = 35;
+
 /**
- * The one brand touch: a dot on an orbit, rather than a generic spinner.
+ * Chat's "the model is working" mark: a planet with one moon on a tilted orbit.
  *
- * Originally local to `ChatActivity`'s live step list; pulled out so every place chat shows
- * "the model is working" — the pre-first-token "Starting…" state and the ask bar's own send
- * button while a request is in flight — uses the same orbit-themed glyph instead of some of
- * them falling back to lucide's generic `Loader2`.
+ * The moon dips behind the planet and swings back round in front. That takes two copies of the
+ * same moon on the same lap: one drawn under the planet, and one over it, clipped to the orbit's
+ * near half. The lap is CSS (`.orbit-mark-lap` in theme.css), using the onboarding mark's spin
+ * inside a squashed group, with a counter-spin so the moon stays round.
  *
- * Reduced motion gets a static ring instead of stopping at a random frame — the decision is
- * made at render time because `usePrefersReducedMotion` reports false on its first render,
- * and an effect that hid this and bailed would strand the indicator entirely.
+ * Reduced motion parks the moon instead of letting the global clamp stop it on a random frame
+ * (the clamp would leave it at the back, behind the planet). That is decided at render time,
+ * because `usePrefersReducedMotion` reports false on its first render.
  */
 export function OrbitMark({
   reduceMotion,
   className,
   /**
-   * "primary" (default) is always brand-primary, for the muted-foreground text this started
-   * on. "current" inherits `currentColor` instead — for a spot like the ask bar's send
-   * button, which sits ON a primary-colored background and needs the mark drawn in
-   * `text-primary-foreground` to stay visible rather than disappearing into it.
+   * "primary" (default) is a teal planet, for the muted text this sits beside. "current" draws
+   * the planet in `currentColor`, for a spot on a primary fill like the ask bar's send button.
    */
   tone = "primary",
 }: {
@@ -30,25 +37,75 @@ export function OrbitMark({
   className?: string;
   tone?: "primary" | "current";
 }) {
-  const ring = tone === "current" ? "border-current/30" : "border-primary/30";
-  const dot = tone === "current" ? "bg-current" : "bg-primary";
+  const id = useId();
+  const gradient = `${id}-planet`;
+  const nearHalf = `${id}-near`;
+  const planetFill = tone === "current" ? "currentColor" : `url(#${gradient})`;
+  const orbitStroke = tone === "current" ? "currentColor" : "var(--gold)";
+
+  const moon = (
+    <g transform={`scale(1 ${SQUASH})`}>
+      <g className="orbit-mark-lap">
+        <g transform={`translate(${RX} 0)`}>
+          <g className="orbit-mark-unlap">
+            <circle r={MOON_R} transform={`scale(1 ${1 / SQUASH})`} fill="var(--gold)" />
+          </g>
+        </g>
+      </g>
+    </g>
+  );
+  const rad = (PARK_DEG * Math.PI) / 180;
+
   return (
-    <span
-      className={cn("relative inline-flex size-3.5 shrink-0 items-center justify-center", className)}
+    <svg
+      viewBox="-50 -50 100 100"
       aria-hidden="true"
+      focusable="false"
+      className={cn("size-5 shrink-0 overflow-visible", className)}
     >
-      <span className={cn("absolute inset-0 rounded-full border", ring)} />
-      {reduceMotion ? (
-        <span className={cn("absolute right-0 top-1/2 size-1 -translate-y-1/2 rounded-full", dot)} />
-      ) : (
-        <motion.span
-          className="absolute inset-0"
-          animate={{ rotate: 360 }}
-          transition={{ duration: 1.6, ease: "linear", repeat: Infinity }}
-        >
-          <span className={cn("absolute right-0 top-1/2 size-1 -translate-y-1/2 rounded-full", dot)} />
-        </motion.span>
+      <defs>
+        <radialGradient id={gradient} cx="35%" cy="32%" r="70%">
+          <stop offset="0" style={{ stopColor: "color-mix(in oklab, var(--primary) 70%, white)" }} />
+          <stop offset="0.7" style={{ stopColor: "var(--primary)" }} />
+          <stop offset="1" style={{ stopColor: "color-mix(in oklab, var(--primary) 78%, black)" }} />
+        </radialGradient>
+        <clipPath id={nearHalf} clipPathUnits="userSpaceOnUse">
+          <rect x={-60} y={0} width={120} height={60} />
+        </clipPath>
+      </defs>
+
+      {/* Far side: the back of the orbit, and a moon the planet hides. */}
+      <g transform={`rotate(${TILT})`}>
+        <path
+          d={`M${RX} 0A${RX} ${RY} 0 0 0 ${-RX} 0`}
+          fill="none"
+          stroke={orbitStroke}
+          strokeWidth={2.5}
+          opacity={0.35}
+        />
+        {!reduceMotion && moon}
+      </g>
+
+      <circle r={21} fill={planetFill} />
+      {tone === "primary" && (
+        <path d="M-15 -7c9-4 21-4 30 2" stroke="#fff" strokeOpacity={0.2} strokeWidth={3} fill="none" strokeLinecap="round" />
       )}
-    </span>
+
+      {/* Near side: the front of the orbit, and the moon passing in front of the planet. */}
+      <g transform={`rotate(${TILT})`}>
+        <path
+          d={`M${-RX} 0A${RX} ${RY} 0 0 0 ${RX} 0`}
+          fill="none"
+          stroke={orbitStroke}
+          strokeWidth={2.5}
+          opacity={0.5}
+        />
+        {reduceMotion ? (
+          <circle cx={RX * Math.cos(rad)} cy={RY * Math.sin(rad)} r={MOON_R} fill="var(--gold)" />
+        ) : (
+          <g clipPath={`url(#${nearHalf})`}>{moon}</g>
+        )}
+      </g>
+    </svg>
   );
 }

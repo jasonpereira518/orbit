@@ -40,6 +40,7 @@ import { loadRadarAutopilot } from "../src/lib/radar/autopilot";
 import type { StoredProposedAction } from "../src/lib/chat-proposed-actions";
 import { listSchools, setSchools } from "../src/lib/events/target-companies";
 import { setSurfaceComingSoon } from "../src/lib/surface-visibility";
+import { DEFAULT_COMING_SOON_KEYS } from "../src/lib/surfaces";
 import { createProposalSink, proposerTools, type ProposalSink } from "../src/lib/tools/chat-proposals";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import { isToolError, runTool } from "../src/lib/tools/registry";
@@ -222,7 +223,8 @@ async function main() {
       JSON.stringify({ sched, status: (await recNow())?.status, reminders: followUps.map((r) => [r.title, r.status]) })
     );
     check("…and offers no undo, since the reminder would stay", !(await undoProposedAction(messageId, card("schedule_recommendation").id)).ok);
-    await setSurfaceComingSoon("smoke-chat-writes-features", "page.radar", true);
+    // Back to the shipped default (it may be released), so no override is left for later smokes.
+    await setSurfaceComingSoon("smoke-chat-writes-features", "page.radar", DEFAULT_COMING_SOON_KEYS.has("page.radar"));
   }
 
   console.log("\nOutreach — wording, drafts and outcomes, never a send");
@@ -403,7 +405,7 @@ async function main() {
     check("set_radar_autopilot: on for follow-up cards", (await loadRadarAutopilot(USER)).follow_up === true);
     await undoProposedAction(messageId, card("set_radar_autopilot").id);
     check("…undo turns it back off", (await loadRadarAutopilot(USER)).follow_up === false);
-    await setSurfaceComingSoon("smoke-chat-writes-features", "page.radar", true);
+    await setSurfaceComingSoon("smoke-chat-writes-features", "page.radar", DEFAULT_COMING_SOON_KEYS.has("page.radar"));
   }
 
   await clear();

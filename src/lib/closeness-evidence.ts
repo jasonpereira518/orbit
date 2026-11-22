@@ -150,6 +150,9 @@ export const PRIOR_MAX = 0.6;
  * `age` can't silently erode it further. If you raise `age` again, re-check
  * that section, not just the cold-orbit histogram.
  */
+/** Deep read: the weights real overlap takes in place of the two concentration terms. Starting values. */
+const OVERLAP_PRIOR_WEIGHTS = { work: 0.2, school: 0.1 } as const;
+
 const PRIOR_WEIGHTS = {
   age: 0.7,
   emailDomain: 0.15,
@@ -196,6 +199,12 @@ export type PriorInput = {
   schoolConcentration?: number;
   /** Reuse of the existing goal-relevance component, 0–1. */
   goalRelevance?: number;
+  /**
+   * LinkedIn deep read: real overlap with the user's own jobs and schools (`overlapAffinity`),
+   * when the user's history is known. It replaces the two orbit-relative concentration guesses,
+   * with more weight, because it is a fact rather than an inference from the orbit's shape.
+   */
+  historyOverlap?: { work: number; school: number } | null;
 };
 
 /**
@@ -215,18 +224,26 @@ function ageComponent(input: PriorInput): number {
 }
 
 export function computePrior(input: PriorInput): number {
+  const overlap = input.historyOverlap ?? null;
+  // Where you have been together: known history (deep read) or, without it, the orbit's shape.
+  const affinityTerms = overlap
+    ? OVERLAP_PRIOR_WEIGHTS.work * clamp01(overlap.work) + OVERLAP_PRIOR_WEIGHTS.school * clamp01(overlap.school)
+    : PRIOR_WEIGHTS.companyConcentration * clamp01(input.companyConcentration ?? 0) +
+      PRIOR_WEIGHTS.schoolConcentration * clamp01(input.schoolConcentration ?? 0);
+  const affinityWeight = overlap
+    ? OVERLAP_PRIOR_WEIGHTS.work + OVERLAP_PRIOR_WEIGHTS.school
+    : PRIOR_WEIGHTS.companyConcentration + PRIOR_WEIGHTS.schoolConcentration;
+
   const terms =
     PRIOR_WEIGHTS.age * ageComponent(input) +
     PRIOR_WEIGHTS.emailDomain * (input.emailDomainMatchesUser ? 1 : 0) +
-    PRIOR_WEIGHTS.companyConcentration * clamp01(input.companyConcentration ?? 0) +
-    PRIOR_WEIGHTS.schoolConcentration * clamp01(input.schoolConcentration ?? 0) +
+    affinityTerms +
     PRIOR_WEIGHTS.goalRelevance * clamp01(input.goalRelevance ?? 0);
 
   const totalWeight =
     PRIOR_WEIGHTS.age +
     PRIOR_WEIGHTS.emailDomain +
-    PRIOR_WEIGHTS.companyConcentration +
-    PRIOR_WEIGHTS.schoolConcentration +
+    affinityWeight +
     PRIOR_WEIGHTS.goalRelevance;
 
   const normalised = clamp01(terms / totalWeight);

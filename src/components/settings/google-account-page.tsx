@@ -52,7 +52,7 @@ import { useViewerPlan } from "@/components/viewer-plan";
 import { availableOn } from "@/lib/plans/plan-config";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import {
   BriefcaseBusiness,
   CalendarClock,
@@ -243,7 +243,7 @@ export function GoogleAccountPage({
         provider: "gmail",
         hasDeletableData,
         onConfirm: (opts) =>
-          connection.disconnect(opts).then(
+          void connection.disconnect(opts).then(
             () => contacts.reset(),
             (err) => toast.error(friendlyError(err, "Couldn’t disconnect that account — try again?"))
           ),
@@ -266,7 +266,7 @@ export function GoogleAccountPage({
             status.contactsSyncEnabled
               ? `New and changed Google contacts come in on their own.${
                   panel?.contactsSyncedAt
-                    ? ` Synced ${formatDistanceToNow(new Date(panel.contactsSyncedAt), { addSuffix: true })}.`
+                    ? ` Synced ${longRelativeLabel(new Date(panel.contactsSyncedAt))}.`
                     : ""
                 }`
               : "Off — only the contacts you import yourself come in."
@@ -632,7 +632,7 @@ function meetingsLine(
   if (capability?.state !== "on") return base;
   const logged = meetingsLogged ? ` ${meetingsLogged.toLocaleString()} logged.` : "";
   const checked = lastCheckedAt
-    ? ` Checked ${formatDistanceToNow(new Date(lastCheckedAt), { addSuffix: true })}.`
+    ? ` Checked ${longRelativeLabel(new Date(lastCheckedAt))}.`
     : "";
   return `${base}${logged}${checked}`;
 }

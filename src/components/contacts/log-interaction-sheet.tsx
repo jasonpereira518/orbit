@@ -1,7 +1,8 @@
 "use client";
 
 import { emitTourEvent } from "@/lib/tour/tour-events";
-import { useRef, useState, useTransition } from "react";
+import { useRef, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { Sparkles } from "lucide-react";
@@ -96,7 +97,7 @@ export function LogInteractionSheet({
       ? { top: r.top, left: r.left, width: r.width, height: r.height }
       : null;
   }
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [stage, setStage] = useState<"idle" | "reading" | "saving">("idle");
   const [type, setType] = useState<InteractionTypeValue>("meeting");
   const [date, setDate] = useState(todayYmd);

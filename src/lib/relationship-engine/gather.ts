@@ -6,10 +6,10 @@
  * MAX_CHUNKS windows is cut from the OLD end — what is open now lives in recent messages —
  * and the cut is recorded so the run summary can say "older history not read".
  */
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { contacts } from "@/db/schema";
-import { MESSAGE_INTERACTION_SQL, WATERMARK_AFTER_SQL } from "@/lib/relationship-engine/pending";
+import { contacts, relationshipDigests } from "@/db/schema";
+import { WATERMARK_AFTER_SQL, messageRowSql } from "@/lib/relationship-engine/pending";
 import type { MessageWindow, WindowMessage } from "@/lib/relationship-engine/types";
 
 export const WINDOW_CHARS = 20_000;
@@ -29,6 +29,27 @@ export function speakerFor(
   return "?";
 }
 
+/**
+ * Who said a LinkedIn-export signal row (`li-export:<signal>:…`, linkedinSignalsAdapter). Read
+ * from the id, so rows imported before the deep read speak correctly with no backfill. Null for
+ * anything that is not a signal row.
+ */
+export function signalSpeaker(externalId: string | null, firstName: string): string | null {
+  const signal = /^li-export:([a-z_]+):/.exec(externalId ?? "")?.[1];
+  switch (signal) {
+    case "invitation_sent":
+    case "recommendation_given":
+      return "Me";
+    case "invitation_received":
+    case "recommendation_received":
+      return firstName || "Them";
+    case "note":
+      return "My note";
+    default:
+      return null;
+  }
+}
+
 export function formatMessageLine(m: WindowMessage): string {
   const day = m.at.toISOString().slice(0, 10);
   return `[${day} ${m.speaker}] ${m.text.replace(/\s+/g, " ").trim()}`;
@@ -39,7 +60,12 @@ export function buildWindow(
   rows: WindowMessage[],
   sources: string[],
   /** True when older unread rows exist beyond `rows` (the read was cut at the row limit). */
-  olderUnread = false
+  olderUnread = false,
+  /**
+   * Deep read, first pass: read from the very first message instead of cutting the oldest. The
+   * start is where "great meeting you at…" lives; later passes walk forward from the watermark.
+   */
+  opts: { keepStart?: boolean } = {}
 ): MessageWindow | null {
   if (rows.length === 0) return null;
   const lines = rows.map(formatMessageLine);
@@ -47,13 +73,13 @@ export function buildWindow(
   // Drop the oldest rows until the backlog fits MAX_CHUNKS windows (always keep the newest).
   let start = 0;
   let total = lines.reduce((n, l) => n + l.length + 1, 0);
-  while (total > MAX_CHUNKS * WINDOW_CHARS && start < rows.length - 1) {
+  while (!opts.keepStart && total > MAX_CHUNKS * WINDOW_CHARS && start < rows.length - 1) {
     total -= lines[start].length + 1;
     start += 1;
   }
   // The first KEPT message's date: history before this date was not read (cut by the char
   // budget here, or by the row limit upstream — either way rows[start] is the first kept row).
-  const truncatedBefore = start > 0 || olderUnread ? rows[start].at : null;
+  const truncatedBefore = opts.keepStart ? null : start > 0 || olderUnread ? rows[start].at : null;
 
   // The window is the oldest kept rows up to WINDOW_CHARS; a single over-long message is clipped.
   const kept: WindowMessage[] = [];
@@ -79,7 +105,7 @@ export function buildWindow(
 }
 
 function sourceLabel(interactionType: string, source: string | null): string {
-  if (interactionType === "linkedin_message") return "linkedin";
+  if (interactionType === "linkedin_message" || source === "linkedin_export") return "linkedin";
   return source ?? "messages";
 }
 
@@ -94,13 +120,28 @@ export type WindowBound = { at: Date; interactionId: string };
 export async function loadMessageWindows(
   userId: string,
   contactIds: string[],
-  opts: { until?: Map<string, WindowBound>; rowLimit?: number } = {}
+  opts: { until?: Map<string, WindowBound>; rowLimit?: number; deepRead?: boolean } = {}
 ): Promise<Map<string, MessageWindow>> {
   const windows = new Map<string, MessageWindow>();
   const rowLimit = opts.rowLimit ?? ROW_LIMIT;
   const ids = [...new Set(contactIds)];
   if (!ids.length) return windows;
   const db = await getDb();
+  const deepRead = opts.deepRead ?? false;
+  const rowSql = messageRowSql({ deepRead, signals: "context" });
+  // Deep read: a contact never read before is read from its first message (see buildWindow).
+  const firstPass = new Set<string>();
+  if (deepRead) {
+    const read = new Set(
+      (
+        await db
+          .select({ id: relationshipDigests.contactId })
+          .from(relationshipDigests)
+          .where(and(eq(relationshipDigests.userId, userId), inArray(relationshipDigests.contactId, ids), isNotNull(relationshipDigests.watermarkAt)))
+      ).map((r) => r.id)
+    );
+    for (const id of ids) if (!read.has(id)) firstPass.add(id);
+  }
 
   const people = await db
     .select({ id: contacts.id, fullName: contacts.fullName })
@@ -114,43 +155,48 @@ export async function loadMessageWindows(
     interaction_date: Date | string;
     direction: "in" | "out" | null;
     raw_notes: string | null;
+    external_id: string | null;
   };
 
   for (const p of people) {
     const bound = opts.until?.get(p.id);
+    const fromStart = firstPass.has(p.id);
     // Same row predicate and watermark clause the pending query uses (pending.ts), so a
     // claimed contact always has a window.
     const result = await db.execute(sql`
-      SELECT m.id, m.interaction_type, m.source, m.interaction_date, m.direction, m.raw_notes
+      SELECT m.id, m.interaction_type, m.source, m.interaction_date, m.direction, m.raw_notes, m.external_id
         FROM interactions m
         LEFT JOIN relationship_digests d ON d.contact_id = m.contact_id
        WHERE m.user_id = ${userId}
          AND m.contact_id = ${p.id}::uuid
-         AND ${MESSAGE_INTERACTION_SQL}
+         AND ${rowSql}
          AND ${WATERMARK_AFTER_SQL}
          ${
            bound
              ? sql`AND (date_trunc('milliseconds', m.interaction_date), m.id) <= (${bound.at.toISOString()}::timestamptz, ${bound.interactionId}::uuid)`
              : sql``
          }
-       ORDER BY m.interaction_date DESC, m.id DESC
+       ORDER BY ${fromStart ? sql`m.interaction_date ASC, m.id ASC` : sql`m.interaction_date DESC, m.id DESC`}
        LIMIT ${rowLimit + 1}
     `);
     // One extra row says exactly whether older unread rows exist; drop it, then flip the
-    // newest rowLimit rows back to oldest-first for the window.
+    // newest rowLimit rows back to oldest-first for the window. Read from the start, the rows
+    // are already oldest-first and the extra row is a NEWER one, which simply waits.
     const fetched = rowsOf<Row>(result);
-    const olderUnread = fetched.length > rowLimit;
-    const rows = (olderUnread ? fetched.slice(0, rowLimit) : fetched).reverse();
+    const olderUnread = !fromStart && fetched.length > rowLimit;
+    const kept = fetched.length > rowLimit ? fetched.slice(0, rowLimit) : fetched;
+    const rows = fromStart ? kept : kept.reverse();
+    const firstName = p.fullName.trim().split(/\s+/)[0] || "Them";
 
     const messages: WindowMessage[] = rows.map((r) => ({
       interactionId: r.id,
       at: new Date(r.interaction_date),
       direction: r.direction ?? null,
-      speaker: speakerFor(r.direction ?? null, p.fullName, r.interaction_type),
+      speaker: signalSpeaker(r.external_id, firstName) ?? speakerFor(r.direction ?? null, p.fullName, r.interaction_type),
       text: r.raw_notes ?? "",
     }));
     const sources = [...new Set(rows.map((r) => sourceLabel(r.interaction_type, r.source)))];
-    const window = buildWindow(p.id, messages, sources, olderUnread);
+    const window = buildWindow(p.id, messages, sources, olderUnread, { keepStart: fromStart });
     if (window) windows.set(p.id, window);
   }
   return windows;

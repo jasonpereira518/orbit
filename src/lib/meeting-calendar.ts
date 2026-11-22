@@ -8,8 +8,10 @@
  *
  * Nothing in here is stored: a suggestion exists for as long as the setup card is on screen.
  */
-import { counterpartsOf, nameFromEmail } from "@/lib/calendar-classify";
+import { counterpartsOf } from "@/lib/calendar-classify";
+import { displayNameFor } from "@/lib/names/from-identifier";
 import {
+  agendaFrom,
   conferenceOf,
   selfEmailsFrom,
   toParsedEvent,
@@ -34,6 +36,12 @@ export type MeetingCandidate = {
   seriesId: string | null;
   /** The provider's per-instance id — what a recording and its reminders link to. */
   eventKey: string | null;
+  /** The invite's description/agenda as plain text, when present. */
+  agenda?: string | null;
+  /** Location (meeting room or physical location), when present. */
+  location?: string | null;
+  /** Direct URL to join the call, when present. */
+  conferenceUrl?: string | null;
 };
 
 /** More people than this on a call is an audience, not a meeting. */
@@ -46,7 +54,7 @@ const MAX_ATTENDEES = 50;
 function prettyName(name: string, email: string): string {
   const clean = name.trim();
   if (clean && !(email && clean === email.split("@")[0])) return clean;
-  return nameFromEmail(email) || clean;
+  return displayNameFor({ email }) || clean;
 }
 
 /**
@@ -91,6 +99,9 @@ export function meetingCandidatesFrom(items: RawGoogleEvent[], now: Date, max = 
         webinar: Boolean(conference) && (parsed.guestsVisible === false || guests === 0 || guests >= WEBINAR_CROWD),
         seriesId: raw.recurringEventId ?? null,
         eventKey: raw.id ?? null,
+        agenda: agendaFrom(raw.description) ?? null,
+        location: parsed.location?.trim() || null,
+        conferenceUrl: conference?.url || null,
       },
       rank: start <= nowMs && nowMs <= end ? 0 : start > nowMs ? 1 : 2,
       distance: Math.abs(start - nowMs),
@@ -103,7 +114,12 @@ export function meetingCandidatesFrom(items: RawGoogleEvent[], now: Date, max = 
     .map((r) => r.c);
 }
 
-type MirroredEvent = { conferenceKind: string | null } & Pick<
+type MirroredEvent = {
+  conferenceKind: string | null;
+  location?: string | null;
+  agenda?: string | null;
+  conferenceUrl?: string | null;
+} & Pick<
   StoredCalendarEvent,
   | "providerEventId"
   | "icalUid"
@@ -141,6 +157,9 @@ export function meetingCandidatesFromRows(rows: MirroredEvent[], now: Date, max 
           webinar: Boolean(e.conferenceKind) && (e.guestsHidden || e.attendeeCount === 0 || e.attendeeCount >= WEBINAR_CROWD),
           seriesId: e.seriesId,
           eventKey: e.providerEventId,
+          agenda: e.agenda ?? null,
+          location: e.location?.trim() || null,
+          conferenceUrl: e.conferenceUrl || null,
         },
         rank: start <= nowMs && nowMs <= end ? 0 : start > nowMs ? 1 : 2,
         distance: Math.abs(start - nowMs),

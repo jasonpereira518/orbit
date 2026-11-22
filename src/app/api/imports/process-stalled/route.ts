@@ -19,11 +19,13 @@ import { kickCaptureJob, resumeStalledCaptureJobs } from "@/lib/capture-jobs";
 import { pruneUnattachedCapturePhotos } from "@/lib/capture-photos";
 import { hasBlobStorage } from "@/lib/contact-avatar";
 import { fillSharedAvatars, sweepOrphanedSharedAvatars } from "@/lib/shared-avatar-upkeep";
+import { isLinkedInPhotoQueueRunning, resumeLinkedInPhotoQueueIfDue } from "@/lib/linkedin-photo-queue";
 import { sweepPublicWorkHistory } from "@/lib/public-work-history";
 import { sweepEmailAttachments } from "@/lib/email/attachments";
 import { runRetentionSweeps } from "@/lib/retention";
 import { backfillInterestListTokens } from "@/lib/interest-list-tokens";
 import {
+  cronTrigger,
   finishCronRun,
   startCronRun,
   type CronRunStatus,
@@ -42,6 +44,8 @@ import { isInternalRequest } from "@/lib/internal-auth";
 import { reportAndContinue, reportError } from "@/lib/report-error";
 import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
 import { usersWithPendingRelationshipWork } from "@/lib/relationship-engine/pending";
+import { deepReadLaunched } from "@/lib/deep-read";
+import { runDeepReadCatchUp } from "@/lib/deep-read-catch-up";
 
 export const maxDuration = 300;
 
@@ -107,7 +111,7 @@ const ERROR_EVENT_RETENTION_DAYS = 30;
 const ROUTE_BUDGET_MS = 180_000;
 
 /**
- * The hourly backstop, scheduled by `.github/workflows/ops.yml` (the only scheduler):
+ * The hourly backstop, scheduled by `scripts/qstash-schedules.ts` (the only scheduler):
  * resumes server-owned import and capture jobs whose invocation died mid-run. The primary
  * resumption path is still each job's own self-continuation; this is the last resort.
  *
@@ -125,7 +129,7 @@ export async function GET(request: Request) {
     return new NextResponse(null, { status: 401 });
   }
 
-  const run = await startCronRun("imports.process-stalled");
+  const run = await startCronRun("imports.process-stalled", cronTrigger(request));
 
   let status: CronRunStatus = "ok";
   let error: unknown = null;
@@ -164,6 +168,8 @@ export async function GET(request: Request) {
     sharedAvatarsMissed: 0,
     sharedAvatarFillDeferred: false,
     sharedAvatarsSwept: 0,
+    /** The admin LinkedIn photo queue was kicked: its pause ended or its chain was lost. */
+    linkedinPhotoQueueResumed: false,
     publicWorkHistorySwept: 0,
     cohortsRecalibrated: 0,
     embeddingsBackfilled: 0,
@@ -175,6 +181,12 @@ export async function GET(request: Request) {
     timelineBackfillsKicked: 0,
     /** Users handed to the relationship engine runner (the cron backstop). */
     relationshipKicks: 0,
+    /** LinkedIn deep read catch-up (`runDeepReadCatchUp`): users whose kept export was checked
+     *  for their history, export notes staged, cohorts marked for a redraw, origin-pass kicks. */
+    deepHistoryCaughtUp: 0,
+    deepSignalsRestaged: 0,
+    deepCohortsMarked: 0,
+    deepOriginKicks: 0,
     /** Deletion runs picked up, finished, still failing, and given up after 5 attempts. */
     purgesFound: 0,
     purgesFinished: 0,
@@ -269,7 +281,8 @@ export async function GET(request: Request) {
       // Email attachments: kept a week after the send settles (for a retry), and uploads the
       // composer never sent.
       if (hasBlobStorage()) {
-        const swept = await sweepEmailAttachments();
+        // The Blob listing for never-sent uploads is daily (the 03:30 UTC run); the DB half is hourly.
+        const swept = await sweepEmailAttachments(new Date(), 200, { listOrphans: new Date().getUTCHours() === 3 });
         stats.emailAttachmentsSwept = swept.settled + swept.orphans;
       }
       // Abandoned meeting transcripts. The per-user sweep only runs when that user records
@@ -347,6 +360,16 @@ export async function GET(request: Request) {
       }
     } catch {
       status = "partial";
+    }
+
+    if (stage("deep-read-catch-up")) try {
+      // LinkedIn deep read: what people who imported before it are owed (their history, the
+      // export's notes, closeness marked for the redraw just below, origin-pass kicks).
+      // Admins only until the surface is released.
+      Object.assign(stats, await runDeepReadCatchUp());
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.deep-read-catch-up" });
     }
 
     if (stage("recalibrate")) try {
@@ -449,7 +472,8 @@ export async function GET(request: Request) {
     if (stage("relationship-kicks")) try {
       // Backstop only — import finalize and the batch applier kick the runner directly. This
       // catches lost kicks, expired leases, and runs parked in waiting_key whose key came back.
-      for (const pendingUser of await usersWithPendingRelationshipWork(TIMELINE_BACKFILL_USERS)) {
+      const pendingUsers = await usersWithPendingRelationshipWork(TIMELINE_BACKFILL_USERS, new Date(), { deepRead: await deepReadLaunched() });
+      for (const pendingUser of pendingUsers) {
         await kickRelationshipRun(pendingUser);
         stats.relationshipKicks += 1;
       }
@@ -458,10 +482,20 @@ export async function GET(request: Request) {
       reportError(err, { where: "job.process-stalled.relationship-kicks" });
     }
 
+    if (stage("linkedin-photo-queue")) try {
+      stats.linkedinPhotoQueueResumed = await resumeLinkedInPhotoQueueIfDue();
+    } catch (err) {
+      status = "partial";
+      reportError(err, { where: "job.process-stalled.linkedin-photo-queue" });
+    }
+
     if (stage("shared-avatar-fill")) try {
       // A little of the shared photo pool each hour, most-shared slugs first. Last, with the
       // orphan sweep: lookups are slow, and must never push the stages above past maxDuration.
-      const fill = await fillSharedAvatars();
+      // Skipped while the admin photo queue runs: it covers the same slugs and allowances.
+      const fill = (await isLinkedInPhotoQueueRunning())
+        ? { found: 0, missed: 0, deferred: false }
+        : await fillSharedAvatars();
       stats.sharedAvatarsFilled = fill.found;
       stats.sharedAvatarsMissed = fill.missed;
       stats.sharedAvatarFillDeferred = fill.deferred;

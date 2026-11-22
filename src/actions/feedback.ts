@@ -1,18 +1,41 @@
 "use server";
 
 import { headers } from "next/headers";
+import { z } from "zod";
+import { after } from "next/server";
 import { requireUserId } from "@/lib/auth";
+import { eq } from "drizzle-orm";
+import { getDb } from "@/db";
+import { userSettings } from "@/db/schema";
+import { MICROS_PER_CREDIT } from "@/lib/credits/grants";
+import { getCreditBalance } from "@/lib/credits/ledger";
 import { getEntitlements } from "@/lib/entitlements";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import {
+  MAX_SCREENSHOTS,
   MAX_SUBMISSION_BYTES,
+  attachMessageScreenshots,
   createFeedbackSubmission,
   decodeScreenshot,
   feedbackSubmissionSchema,
   sanitizePath,
+  screenshotSchema,
   type FeedbackScreenshotInput,
   type FeedbackSubmissionInput,
 } from "@/lib/feedback-submission";
+import { notifyFeedbackReply, notifyFeedbackSubmitted } from "@/lib/feedback-notify";
+import { MAX_THREAD_MESSAGE } from "@/lib/feedback-report";
+import {
+  listMyFeedback,
+  loadThread,
+  markThreadRead,
+  postThreadMessage,
+  setTyping,
+  unwrapThanks,
+  type FeedbackThread,
+  type MyFeedbackRow,
+} from "@/lib/feedback-thread";
+import { triageFeedback } from "@/lib/feedback-triage";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 
 export type FeedbackSubmitResult =
@@ -119,10 +142,28 @@ export async function submitFeedback(
     const created = await createFeedbackSubmission({
       userId,
       text: data.text,
+      subject: data.subject,
       area: data.area ?? null,
       category: data.category ?? null,
       context,
       screenshots,
+    });
+    // After the response: the person's Send has already landed. Triage first so the DM can
+    // lead with the summary line; a triage that fails returns null and the DM goes without it.
+    after(async () => {
+      const triage = await triageFeedback(created.id);
+      await notifyFeedbackSubmitted({
+        id: created.id,
+        userId,
+        plan,
+        area: data.area ?? null,
+        category: triage?.category ?? data.category ?? null,
+        text: data.text,
+        subject: data.subject,
+        path: sanitizePath(data.path),
+        screenshotCount: created.screenshotCount,
+        triage,
+      });
     });
     return { ok: true, id: created.id };
   } catch (err) {
@@ -135,4 +176,115 @@ export async function submitFeedback(
     });
     return { ok: false, message: "That didn’t save — try again in a moment" };
   }
+}
+
+/**
+ * The reporter's side of a feedback conversation: read it (which marks it read), and reply.
+ *
+ * Read once when the feedback panel opens a conversation (the live stream takes over from
+ * there, see `/api/feedback/[id]/stream`). Null when the report
+ * isn't theirs — the page shows a 404 for that, never a "not yours".
+ */
+export async function getMyFeedbackThread(feedbackId: string): Promise<FeedbackThread | null> {
+  const userId = await requireUserId();
+  const thread = await loadThread(feedbackId, { userId });
+  if (!thread) return null;
+  // Only when there is something of the operator's to have seen, so opening a report nobody
+  // has answered yet doesn't hide the NEXT reply's notification behind an early read stamp.
+  if (thread.open) await markThreadRead(feedbackId, "user", userId);
+  return thread;
+}
+
+export async function sendFeedbackMessage(
+  feedbackId: string,
+  body: string,
+  /** Screenshots sent with this message — the same shape and limits as the opening report's. */
+  screenshots: unknown[] = []
+): Promise<{ ok: true; thread: FeedbackThread } | { ok: false; message: string }> {
+  const userId = await requireUserId();
+  const text = body.trim();
+  const shotsParsed = z.array(screenshotSchema).max(MAX_SCREENSHOTS).safeParse(screenshots);
+  if (!shotsParsed.success) return { ok: false, message: `Up to ${MAX_SCREENSHOTS} screenshots per message` };
+  if (!text && shotsParsed.data.length === 0) return { ok: false, message: "Write something before sending." };
+  if (text.length > MAX_THREAD_MESSAGE) {
+    return { ok: false, message: `Keep it under ${MAX_THREAD_MESSAGE} characters.` };
+  }
+
+  // Decode every screenshot before writing anything, exactly as the opening report does: a
+  // message must never land with one of its pictures silently missing.
+  const decoded: FeedbackScreenshotInput[] = [];
+  let totalBytes = 0;
+  for (const [index, shot] of shotsParsed.data.entries()) {
+    const image = decodeScreenshot(shot.dataUrl);
+    if (!image) return { ok: false, message: `Screenshot ${index + 1} isn’t a readable image — remove it and try again` };
+    totalBytes += image.buf.byteLength;
+    if (totalBytes > MAX_SUBMISSION_BYTES) {
+      return { ok: false, message: "Those screenshots are too large together — remove one and try again" };
+    }
+    decoded.push({ ...image, note: shot.note?.trim() || null, width: shot.width ?? null, height: shot.height ?? null });
+  }
+
+  try {
+    await consumeBucket("feedbackChat", userId, RATE_LIMITS.feedbackChat);
+  } catch (err) {
+    if (isRateLimitedError(err)) return { ok: false, message: err.message };
+    throw err;
+  }
+
+  const posted = await postThreadMessage({ feedbackId, author: "user", body: text, userId });
+  if (!posted) return { ok: false, message: "This conversation isn’t open yet." };
+  try {
+    await attachMessageScreenshots({ feedbackId, messageId: posted.messageId, userId, screenshots: decoded });
+  } catch (err) {
+    await recordErrorEvent({
+      source: ERROR_SOURCES.feedbackSubmit,
+      kind: "chat_screenshot_failed",
+      userId,
+      message: err instanceof Error ? err.message : String(err),
+      context: { screenshotCount: decoded.length, totalBytes },
+    });
+    return { ok: false, message: "Your message sent, but a screenshot didn’t — try attaching it again" };
+  }
+  const dmBody = text || `(${decoded.length} screenshot${decoded.length === 1 ? "" : "s"})`;
+  after(() => notifyFeedbackReply({ feedbackId, userId, body: dmBody }));
+
+  const thread = await loadThread(feedbackId, { userId });
+  return thread ? { ok: true, thread } : { ok: false, message: "That conversation is gone." };
+}
+
+/** The caller's own reports, for the feedback panel's "Your feedback" tab. */
+export async function listMyFeedbackAction(): Promise<MyFeedbackRow[]> {
+  const userId = await requireUserId();
+  return listMyFeedback(userId);
+}
+
+/**
+ * Unwrap the credit thank-you on one of your reports. Returns what it carried and your balance
+ * after it, for the gift card's reveal. Idempotent; null when there's nothing to unwrap.
+ */
+export async function unwrapFeedbackThanks(
+  feedbackId: string
+): Promise<{ credits: number; balance: number | null } | null> {
+  const userId = await requireUserId();
+  const credits = await unwrapThanks(feedbackId, userId);
+  if (credits == null) return null;
+  // The same read the credits card makes (`getCreditsOverview`). A balance that can't be read
+  // just isn't shown — the gift itself has already landed.
+  let balance: number | null = null;
+  try {
+    const { plan } = await getEntitlements(userId);
+    const db = await getDb();
+    const row = await db.query.userSettings.findFirst({ where: eq(userSettings.userId, userId) });
+    const b = await getCreditBalance(userId, plan, row, new Date(), { ensure: false });
+    balance = Math.floor(b.spendable / MICROS_PER_CREDIT);
+  } catch {
+    balance = null;
+  }
+  return { credits, balance };
+}
+
+/** The reporter is typing in one of their conversations — for the dots on the other side. */
+export async function markFeedbackTyping(feedbackId: string): Promise<void> {
+  const userId = await requireUserId();
+  await setTyping(feedbackId, "user", userId);
 }

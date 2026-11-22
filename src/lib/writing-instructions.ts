@@ -26,6 +26,16 @@
 
 export const MAX_WRITING_INSTRUCTIONS = 1500;
 
+/**
+ * The learned style's cap (`@/lib/writing-style-profile`). Here, not there, because the
+ * settings box (a client component) needs it and that module reads mail. It shares the
+ * 1500-character preferences block with the user's own notes (`withStyleProfile`).
+ */
+export const STYLE_PROFILE_MAX = 600;
+
+/** The cap on rules learned from the user's own edits (`@/lib/draft-edits`): 5 short lines. */
+export const EDIT_LESSONS_MAX = 400;
+
 /** Zero-width and bidirectional-control code points: text that renders as nothing. */
 function isInvisible(code: number): boolean {
   return (
@@ -68,6 +78,28 @@ export function sanitizeWritingInstructions(input: string | null | undefined): s
   return (chars.length > MAX_WRITING_INSTRUCTIONS
     ? chars.slice(0, MAX_WRITING_INSTRUCTIONS).join("").trim()
     : cleaned) || null;
+}
+
+/**
+ * The user's own notes with the style Orbit learned from their sent mail
+ * (`@/lib/writing-style-profile`) appended below them, as one block: their notes come first and
+ * say so, so they win where the two disagree. Either alone when the other is empty.
+ */
+export function withStyleProfile(
+  own: string | null | undefined,
+  profile: string | null | undefined,
+  lessons?: string | null
+): string | null {
+  const notes = sanitizeWritingInstructions(own);
+  const blocks = [notes];
+  const learned = profile?.trim();
+  if (learned) blocks.push(`How they write, learned from their own sent mail (their notes above win where they differ):\n${learned}`);
+  // Edits they made again and again to Orbit's drafts: more specific than the style above, so
+  // they come after it (`@/lib/draft-edits`).
+  const edits = lessons?.trim();
+  if (edits) blocks.push(`Changes they keep making to Orbit's drafts, so make them already:\n${edits}`);
+  const joined = blocks.filter(Boolean).join("\n\n");
+  return joined === notes ? notes : sanitizeWritingInstructions(joined);
 }
 
 const HEADING =

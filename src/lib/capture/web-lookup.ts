@@ -7,8 +7,9 @@
  * what the notes say about them, nothing more.
  */
 import type { BulkNotePersonPreview } from "@/lib/capture/types";
-import { foldName } from "@/lib/capture/person-cleanup";
+import { nameKey } from "@/lib/names/key";
 import { linkedinSlug } from "@/lib/duplicates";
+import { citedLinkedInUrl } from "@/lib/profile-match";
 import { researchPerson, type PersonDossier, type PersonResearcher } from "@/lib/web-research";
 
 const CONCURRENCY = 3;
@@ -46,14 +47,17 @@ export function fillFromDossier(item: BulkNotePersonPreview, dossier: PersonDoss
   set("company", dossier.current?.organization, "company");
   set("role", dossier.current?.title, "role");
   set("location", dossier.location, "location");
-  const linkedin =
-    dossier.subject.linkedinUrl ?? dossier.sources.find((s) => linkedinSlug(s.url))?.url ?? null;
-  set("linkedin_url", linkedin, "LinkedIn");
+  // A profile the search cited, and only when it cited exactly one: "the first LinkedIn page
+  // cited" was often a namesake's when a common name brought up several (profile-match.ts).
+  // The card is reviewed before anything is saved.
+  const cited = [...new Set(dossier.sources.map((s) => linkedinSlug(s.url)).filter(Boolean))];
+  const onlyProfile = cited.length === 1 ? `https://www.linkedin.com/in/${cited[0]}` : null;
+  set("linkedin_url", citedLinkedInUrl(dossier.subject.linkedinUrl, dossier.sources) ?? onlyProfile, "LinkedIn");
   // "Priya" → "Priya Raman", never a different person's name: same first name, longer.
   const full = dossier.name?.trim();
   if (full && p.name) {
-    const mine = foldName(p.name).split(" ");
-    const theirs = foldName(full).split(" ");
+    const mine = nameKey(p.name).split(" ");
+    const theirs = nameKey(full).split(" ");
     if (theirs.length > mine.length && theirs[0] === mine[0]) {
       p.name = full;
       filled.push("name");

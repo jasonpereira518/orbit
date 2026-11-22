@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { ChevronDown, Clock, Loader2, Send } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -42,7 +43,7 @@ export function ScheduleMenu({
 
   return (
     <div className="flex items-center">
-      <Button type="button" size="sm" onClick={onSendNow} disabled={disabled} className="rounded-r-none">
+      <Button {...tourAnchor("compose.send")} type="button" size="sm" onClick={onSendNow} disabled={disabled} className="rounded-r-none">
         {sending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
         Send
       </Button>

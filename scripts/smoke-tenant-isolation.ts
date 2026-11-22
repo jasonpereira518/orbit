@@ -46,6 +46,7 @@ import {
   webhookEndpoints,
 } from "../src/db/schema";
 import { setSurfaceComingSoon } from "../src/lib/surface-visibility";
+import { DEFAULT_COMING_SOON_KEYS } from "../src/lib/surfaces";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import { isToolError, runTool, type ToolSurface } from "../src/lib/tools/registry";
 import { createAgentSendRequest } from "../src/lib/agent-sends";
@@ -311,8 +312,9 @@ run(async () => {
         isToolError(await call("update_recruiter_link", { recruiterId: aRecruiter.id, status: "archived" }))
       );
     } finally {
-      await setSurfaceComingSoon("smoke-tenant-isolation", "page.radar", true);
-      await setSurfaceComingSoon("smoke-tenant-isolation", "page.outreach", true);
+      // Back to the shipped defaults, so no override is left behind for later smokes.
+      await setSurfaceComingSoon("smoke-tenant-isolation", "page.radar", DEFAULT_COMING_SOON_KEYS.has("page.radar"));
+      await setSurfaceComingSoon("smoke-tenant-isolation", "page.outreach", DEFAULT_COMING_SOON_KEYS.has("page.outreach"));
     }
     const [vOppAfter, vRecAfter, vCampaignAfter, vLinkAfter] = await Promise.all([
       db.query.contactOpportunities.findFirst({ where: eq(contactOpportunities.id, vOpportunity.id) }),

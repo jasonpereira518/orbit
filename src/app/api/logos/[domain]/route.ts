@@ -42,7 +42,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ domain:
     const res = await fetch(`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    const type = (res.headers.get("content-type") ?? "").split(";")[0]!.trim();
+    const type = (res.headers.get("content-type") ?? "").split(";")[0].trim();
     // An unknown domain comes back 404 with a generic globe, which is not its logo. Raster
     // only: an SVG served from our origin could carry script.
     if (res.ok && RASTER.test(type)) {

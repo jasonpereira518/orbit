@@ -412,7 +412,7 @@ export async function loadSuggestionSignals(
             keyFacts: c.keyFacts,
             sharedInterests: [],
             tags: [],
-          } as Parameters<typeof goalRelevanceComponent>[0],
+          },
           [goal]
         );
         if (score > 0 && (!best || score > best.score)) {

@@ -22,16 +22,26 @@ import {
   loadFeedbackList,
   type FeedbackFilter,
 } from "@/lib/admin-feedback";
+import { FeedbackInboxLive } from "@/components/admin/feedback-inbox-live";
+import { LogFeedbackDialog } from "@/components/admin/log-feedback-dialog";
+import { SOURCE_LABELS, isFeedbackSource } from "@/lib/feedback-report";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Admin · Feedback" };
 
 const FILTERS: Array<{ value: FeedbackFilter; label: string }> = [
   { value: "all", label: "All" },
+  { value: "needs", label: "Needs reply" },
   { value: "new", label: "New" },
   { value: "triaged", label: "Triaged" },
   { value: "resolved", label: "Resolved" },
 ];
+
+const SEVERITY_CLASS: Record<string, string> = {
+  high: "bg-destructive/15 text-destructive",
+  medium: "bg-accent/20 text-accent-foreground",
+  low: "bg-muted text-muted-foreground",
+};
 
 const STATUS_CLASS: Record<string, string> = {
   new: "bg-accent/20 text-accent-foreground",
@@ -77,6 +87,7 @@ export default async function AdminFeedbackPage({
     new: summary.new,
     triaged: summary.triaged,
     resolved: summary.resolved,
+    needs: summary.needs,
   };
 
   const query = (over: Record<string, string | number>) => {
@@ -104,6 +115,8 @@ export default async function AdminFeedbackPage({
         title="Feedback"
         subtitle="What users told us about Orbit, newest first."
         action={
+          <div className="flex items-center gap-2">
+          <LogFeedbackDialog />
           <a
             href={`/api/admin/export?dataset=feedback&filter=${filter}`}
             className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 px-3 py-1.5 text-sm text-muted-foreground transition-colors duration-fast hover:text-primary"
@@ -111,9 +124,11 @@ export default async function AdminFeedbackPage({
             <Download className="size-3.5" aria-hidden />
             Export CSV
           </a>
+          </div>
         }
       />
       <FeedbackTabs />
+      <FeedbackInboxLive />
 
       <div className="mb-6 grid gap-3 sm:grid-cols-2">
         <MetricTile
@@ -280,12 +295,58 @@ export default async function AdminFeedbackPage({
                     {row.contactOk && <span className="ml-1 text-[0.625rem] text-accent-foreground" title="Said we may contact them">✉</span>}
                   </Td>
                   <Td>
+                    {/* The triage line when there is one: a sentence someone wrote for
+                        reading at a glance beats the first 180 characters of a report. */}
                     <Link
                       href={`/admin/feedback/${row.id}`}
                       className="underline underline-offset-2 hover:text-primary"
                     >
-                      {row.excerpt?.trim() || <span className="text-muted-foreground">(no text)</span>}
+                      {row.subject ? (
+                        <span className="font-medium">{row.subject}</span>
+                      ) : (
+                        row.triage?.summary ||
+                        row.excerpt?.trim() || <span className="text-muted-foreground">(no text)</span>
+                      )}
                     </Link>
+                    {row.subject && row.triage?.summary && (
+                      <span className="block text-xs text-muted-foreground">{row.triage.summary}</span>
+                    )}
+                    {row.needsYou && !row.unreadReply && (
+                      <span className="ml-2 rounded-full bg-accent/20 px-1.5 py-0.5 align-middle text-[0.625rem] font-medium text-accent-foreground">
+                        needs reply
+                      </span>
+                    )}
+                    {isFeedbackSource(row.source) && (
+                      <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 align-middle text-[0.625rem] text-muted-foreground">
+                        via {SOURCE_LABELS[row.source]}
+                      </span>
+                    )}
+                    {row.unreadReply && (
+                      <span className="ml-2 rounded-full bg-primary/15 px-1.5 py-0.5 align-middle text-[0.625rem] font-medium text-primary">
+                        new reply
+                      </span>
+                    )}
+                    {row.triage && (
+                      <span className="ml-2 inline-flex items-center gap-1.5 align-middle">
+                        <span
+                          className={cn(
+                            "rounded-full px-1.5 py-0.5 text-[0.625rem] font-medium",
+                            SEVERITY_CLASS[row.triage.severity]
+                          )}
+                        >
+                          {row.triage.severity}
+                        </span>
+                        {row.triage.duplicateOf && (
+                          <Link
+                            href={`/admin/feedback/${row.triage.duplicateOf}`}
+                            className="text-[0.625rem] text-muted-foreground underline-offset-2 hover:underline"
+                            title="Looks like an earlier open report"
+                          >
+                            ↳ dup
+                          </Link>
+                        )}
+                      </span>
+                    )}
                   </Td>
                   <Td
                     numeric

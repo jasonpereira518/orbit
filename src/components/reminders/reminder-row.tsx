@@ -220,14 +220,31 @@ export const ReminderRow = memo(function ReminderRow({
           </button>
 
           <div className="min-w-0 flex-1">
-            <p
-              className={cn(
-                "truncate text-sm font-medium leading-6 text-foreground",
-                isDone && "text-muted-foreground line-through decoration-muted-foreground/50"
+            <div className="flex items-center gap-1.5">
+              {item.priority === "critical" && (
+                <span className="shrink-0 rounded px-1.5 py-px text-3xs font-semibold uppercase tracking-wide bg-rose-500/15 text-rose-700 dark:text-rose-300">
+                  Critical
+                </span>
               )}
-            >
-              {item.title}
-            </p>
+              {item.priority === "high" && (
+                <span className="shrink-0 rounded px-1.5 py-px text-3xs font-semibold uppercase tracking-wide bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                  High
+                </span>
+              )}
+              {item.category === "waiting_on" && (
+                <span className="shrink-0 rounded px-1.5 py-px text-3xs font-medium bg-sky-500/15 text-sky-700 dark:text-sky-300">
+                  Waiting on them
+                </span>
+              )}
+              <p
+                className={cn(
+                  "truncate text-sm font-medium leading-6 text-foreground",
+                  isDone && "text-muted-foreground line-through decoration-muted-foreground/50"
+                )}
+              >
+                {item.title}
+              </p>
+            </div>
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
               {due && (
                 <span
@@ -241,9 +258,15 @@ export const ReminderRow = memo(function ReminderRow({
                   {item.dueTime && `, ${item.dueTime}`}
                 </span>
               )}
+              {item.timingRationale && (
+                <span className="hidden sm:inline-block text-3xs italic text-muted-foreground-subtle">
+                  {due && <span aria-hidden className="mr-1.5 text-border">·</span>}
+                  {item.timingRationale}
+                </span>
+              )}
               {item.contactName && (
                 <span className="min-w-0 truncate">
-                  {due && <span aria-hidden className="mr-2 text-border">·</span>}
+                  <span aria-hidden className="mr-2 text-border">·</span>
                   {item.contactName}
                 </span>
               )}

@@ -11,8 +11,8 @@
  *
  * ## Why regexes rather than a DOM parser
  *
- * `linkedom` sits in devDependencies but is imported nowhere in this repo, so reaching for it
- * would mean promoting a dependency (and probably adding it to `serverExternalPackages`) to
+ * A DOM parser such as `linkedom` is not a dependency of this repo, so reaching for one
+ * would mean adding it (and probably adding it to `serverExternalPackages`) to
  * read three meta tags out of an input that `fetch-page.ts` has already capped at 512 KB.
  * The scope here is genuinely small — OpenGraph tags, a `theme-color`, and any JSON-LD blocks,
  * which are parsed with `JSON.parse` rather than pattern-matched. Everything below is anchored

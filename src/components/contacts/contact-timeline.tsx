@@ -651,7 +651,7 @@ export function ContactTimeline({
     },
     ...INTERACTION_FAMILIES.filter((f) => (familyCounts.get(f.value) ?? 0) > 0).map(
       (f) => ({
-        value: f.value as FilterValue,
+        value: f.value,
         label: f.label,
         count: familyCounts.get(f.value) ?? 0,
         active: f.chip,

@@ -9,10 +9,15 @@ import {
   deleteGoalForUser,
   listActiveGoalTextsForUser,
   restoreGoalForUser,
+  updateGoalProgressForUser,
+  MAX_GOAL_CATEGORY_CHARS,
+  MAX_PROGRESS_CHARS,
   type GoalSnapshot,
 } from "@/lib/user-goals";
+import { z } from "zod";
+import { parseInput } from "@/lib/action";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
-import { asActionResult } from "@/lib/errors";
+import { UserFacingError, asActionResult } from "@/lib/errors";
 
 export async function listGoals() {
   const userId = await requireUserId();
@@ -28,9 +33,30 @@ export async function listActiveGoalTexts() {
 }
 
 /** Validation comes back as data — see `asActionResult` in lib/errors.ts. */
-export async function addGoal(text: string) {
+/** Caps the client can't skip: progress as `addGoalForUser` checks it, and a short category. */
+const addGoalOptionsSchema = z
+  .object({
+    progress: z.string().max(MAX_PROGRESS_CHARS).nullish(),
+    category: z.string().trim().max(MAX_GOAL_CATEGORY_CHARS).nullish(),
+  })
+  .optional();
+
+export async function addGoal(
+  text: string,
+  options?: { progress?: string | null; category?: string | null }
+) {
   return asActionResult(async () => {
-    const row = await addGoalForUser(await requireUserId(), text);
+    const parsed = parseInput(addGoalOptionsSchema, options, "goals.add");
+    if (!parsed.ok) throw new UserFacingError(parsed.error);
+    const row = await addGoalForUser(await requireUserId(), text, parsed.value);
+    revalidateGoalPaths();
+    return row;
+  });
+}
+
+export async function updateGoalProgress(id: string, progress: string | null) {
+  return asActionResult(async () => {
+    const row = await updateGoalProgressForUser(await requireUserId(), id, progress);
     revalidateGoalPaths();
     return row;
   });

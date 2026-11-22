@@ -52,9 +52,7 @@ export const ROUTE_PATTERNS: readonly string[] = [
   // Account states
   "/suspended",
   "/onboarding",
-  "/onboarding/wizard",
   "/settings",
-  "/settings/plan-activation-preview",
   // Product
   "/dashboard",
   "/capture",
@@ -66,6 +64,7 @@ export const ROUTE_PATTERNS: readonly string[] = [
   "/contacts/[id]",
   "/events",
   "/events/[id]",
+  "/feedback/[feedbackId]",
   "/graph",
   "/imports",
   "/knowledge",

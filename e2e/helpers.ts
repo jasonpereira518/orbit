@@ -62,8 +62,11 @@ export async function createContact(page: Page, fullName: string): Promise<void>
       await create.click();
     },
     () =>
+      // 45 s, not 10: on a cold `next dev` the first /contacts/[id] compile can take longer than
+      // that, and a failed check makes untilHydrated fill and click "Create contact" AGAIN while
+      // the first request is still in flight. The wait ends as soon as the URL matches.
       expect(page).toHaveURL((url) => /^\/contacts\/[^/]+$/.test(url.pathname) && !url.pathname.endsWith("/new"), {
-        timeout: 10_000,
+        timeout: 45_000,
       })
   );
   await expect(page.getByRole("heading", { level: 1, name: fullName })).toBeVisible();
@@ -83,5 +86,10 @@ export async function skipAboutStep(page: Page) {
 export async function skipConnectIfShown(page: Page, next: Locator) {
   const connect = page.getByRole("heading", { name: "Bring in the people you email" });
   await expect(connect.or(next)).toBeVisible({ timeout: 30_000 });
-  if (await connect.isVisible()) await page.getByRole("button", { name: /Skip for now/ }).click();
+  if (!(await connect.isVisible())) return;
+  // The About step has its own "Skip for now" and stays mounted while it animates out, so an
+  // immediate click can match both and fail strict mode. Wait for the outgoing step to go.
+  const skip = page.getByRole("button", { name: /Skip for now/ });
+  await expect(skip).toHaveCount(1, { timeout: 10_000 });
+  await skip.click();
 }

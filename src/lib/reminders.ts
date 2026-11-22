@@ -22,6 +22,8 @@ import {
   getDashboardCounts,
   getGoalAlignedContactIds,
 } from "@/lib/dashboard-aggregates";
+import { getDueCounts } from "@/lib/due-counts";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { ensureStoredScoresCurrent, type ClosenessScalars } from "@/lib/closeness-cohort";
 import {
   closenessScalarExtras,
@@ -222,7 +224,7 @@ async function buildOutreachSuggestions(userId: string) {
       return;
     }
     const existingPri =
-      AUTO_TYPE_PRIORITY[existing.suggestionType as keyof typeof AUTO_TYPE_PRIORITY] ?? 0;
+      AUTO_TYPE_PRIORITY[existing.suggestionType] ?? 0;
     const nextPri =
       AUTO_TYPE_PRIORITY[candidate.suggestionType] ?? 0;
     if (
@@ -824,7 +826,15 @@ export async function loadDashboardReminders(userId: string, now: Date) {
         )`
       )
     )
-    .orderBy(asc(reminders.dueDate))
+    .orderBy(
+      sql`case
+        when ${reminders.priority} = 'critical' then 0
+        when ${reminders.priority} = 'high' then 1
+        when ${reminders.priority} = 'normal' then 2
+        else 3
+      end asc`,
+      asc(reminders.dueDate)
+    )
     .limit(REMINDER_CAP);
   const total = rows[0]?.total ?? 0;
   return {
@@ -902,7 +912,7 @@ export async function getDashboardData(
   userId: string,
   // userName may be a promise so the Clerk profile fetch can run concurrently
   // with the DB queries below (its only consumer is graphPreview.summary).
-  options?: { userName?: string | Promise<string | undefined> }
+  options?: { userName?: string | Promise<string | undefined>; tz?: string }
 ) {
   const db = await getDb();
 
@@ -933,6 +943,7 @@ export async function getDashboardData(
     suggestions,
     goals,
     counts,
+    due,
     goalAlignedIds,
     clusterTallies,
     chartGroups,
@@ -949,6 +960,7 @@ export async function getDashboardData(
     // Aggregates Postgres answers better than a pass over the network would. See
     // dashboard-aggregates.ts.
     getDashboardCounts(userId),
+    (options?.tz ? Promise.resolve(options.tz) : viewerTimeZone(userId)).then((tz) => getDueCounts(userId, tz, now)),
     getGoalAlignedContactIds(userId, GOAL_ALIGNED_CAP),
     loadClusterTallies(userId),
     // Who may be drawn, grouped by what their cluster depends on. Eligibility is decided in
@@ -1140,6 +1152,7 @@ export async function getDashboardData(
       preferredName: d.preferredName,
       company: light.company ?? null,
       title: d.title,
+      profileImageUrl: d.profileImageUrl,
       goalRelevance,
       reason,
       companyName,
@@ -1218,9 +1231,11 @@ export async function getDashboardData(
       totalContacts: counts.totalContacts,
       // The count of everyone due, not the length of the capped list below — the stat and
       // the card answer different questions and the card only ever showed twelve.
-      dueFollowUps: counts.dueFollowUpCount,
+      dueFollowUps: due.followUps,
       strongConnections: strongTies,
       pendingReminders: pendingReminders.total,
+      // Due, not all pending: the tile says "Due reminders" and agrees with the rail and the bell.
+      dueReminders: due.reminders,
       topCompany: null as { name: string; count: number } | null,
     },
     recentContacts,
@@ -1400,9 +1415,13 @@ export async function unsnoozeReminder(
 
   const reminder = await db.query.reminders.findFirst({
     where: and(eq(reminders.id, snap.reminderId), eq(reminders.userId, userId)),
-    columns: { dueDate: true },
+    columns: { dueDate: true, status: true },
   });
   if (!reminder || reminder.dueDate?.getTime() !== snoozedTo) {
+    return { restored: false };
+  }
+  // A reminder finished since the snooze must not come back to life.
+  if (snap.previousStatus === "pending" && reminder.status !== "pending") {
     return { restored: false };
   }
 

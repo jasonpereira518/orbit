@@ -1,12 +1,12 @@
 /**
- * Connecting and managing an iCloud (Apple) calendar account — `src/lib/apple.ts` and
- * `src/actions/apple.ts`.
+ * Connecting and managing an iCloud (Apple) calendar account — `src/lib/apple.ts`. (The
+ * `src/actions/apple.ts` wrappers had no UI and were removed; the lib functions the sync path
+ * and this smoke use remain.)
  *
  * Every DB-touching function under test takes `userId` directly rather than going through
  * `requireUserId()`, so this never needs a Clerk session or demo-mode auth (see
  * `src/lib/apple.ts`'s own header comment) — it calls `connectAppleAccount` /
- * `disconnectAppleAccount` / `readAppleConnectionStatus` themselves, the exact functions
- * `src/actions/apple.ts`'s "use server" wrappers delegate to after `requireUserId()`.
+ * `disconnectAppleAccount` / `readAppleConnectionStatus` themselves.
  *
  * What matters most, in order:
  *   1. A wrong password comes back as DATA (`asActionResult`'s `{ ok: false }`), never a
@@ -16,8 +16,7 @@
  *   3. The plaintext app-specific password never round-trips: not in the stored row (it is
  *      AES-GCM ciphertext), and not anywhere in the status payload — not even the ciphertext.
  *   4. Connecting costs nothing — no sync entitlement is required, unlike a pasted
- *      ICS/webcal URL, and `src/actions/apple.ts` cannot reach the gate that would require
- *      one even transitively (an import-graph check, not a source grep — see below).
+ *      ICS/webcal URL.
  *   5. A reconnect clears every calendar's cursor rather than inheriting one from a
  *      possibly-dead connection, and the connection is armed only once its calendars land.
  *   6. Toggling a calendar is scoped to the caller's OWN Apple calendars.
@@ -28,11 +27,9 @@
 import "./smoke/_env";
 import { run } from "./smoke/_env";
 import { eq } from "drizzle-orm";
-import { relative, resolve } from "node:path";
 import { getDb } from "../src/db";
 import { appleConnections, calendarSources, userSettings } from "../src/db/schema";
 import { CalDavAuthError, type CalDavCalendar } from "../src/lib/caldav/client";
-import { serverImportGraph } from "./lib/import-graph";
 import {
   BAD_PASSWORD_MESSAGE,
   UNREACHABLE_MESSAGE,
@@ -57,26 +54,6 @@ let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
   console.log(`  ${ok ? "ok  " : "FAIL"}  ${label}${detail ? ` — ${detail}` : ""}`);
   if (!ok) failures++;
-}
-
-// ---------------------------------------------------------------------------------------
-// Import-graph check for "connecting is free" — see the check below for why this exists
-// instead of a plain source grep, or a behavioral call through requireUserId()/demo mode.
-// ---------------------------------------------------------------------------------------
-
-/**
- * Whether `entryFile`'s transitive import graph (following relative and `@/` module
- * specifiers only — bare package imports are not part of this repo's own source graph)
- * ever reaches `bannedFile`.
- *
- * A plain text grep for "requireSyncUser" in `src/actions/apple.ts` would miss the same
- * regression the moment that call moved one file away — this repo has been bitten by
- * exactly that shape of guard before (a source-scanning guard that kept passing after the
- * thing it guarded moved files). Walking the real, parsed import graph instead means the
- * gate is unreachable rather than merely absent from one file's text.
- */
-function importsReach(entryFile: string, bannedFile: string): boolean {
-  return serverImportGraph(entryFile).has(relative(resolve("."), resolve(bannedFile)));
 }
 
 const DISCOVERED = {
@@ -314,19 +291,6 @@ run(async () => {
       "connecting is free — no sync entitlement is required",
       connectedOnFreePlan.ok === true,
       connectedOnFreePlan.ok ? "" : connectedOnFreePlan.error
-    );
-
-    // `connectAppleAccount` itself (called just above) proves the CODE doesn't gate on an
-    // entitlement today. This proves it CAN'T reach the gate even after a refactor: walking
-    // `src/actions/apple.ts`'s real, parsed import graph — not a text grep, which would stay
-    // green even after the call moved to a file this check never looked at.
-    const reachesPlanGuards = importsReach(
-      resolve("src/actions/apple.ts"),
-      resolve("src/lib/plan-guards.ts")
-    );
-    check(
-      "src/actions/apple.ts's import graph never reaches src/lib/plan-guards.ts (requireSyncUser's home)",
-      !reachesPlanGuards
     );
 
     // --- Disconnect removes the connection and every calendar it seeded -------------------

@@ -358,8 +358,8 @@ export function SettingsSectionNav({ sections }: { sections: RailSection[] }) {
       className={cn(
         // `w-12` is the closed floor: `px-3` plus the full tick slot, so the
         // longer current tick is not clipped down to the inactive width.
-        "group fixed right-2 top-1/2 z-30 hidden w-12 -translate-y-1/2 touch-none select-none xl:block",
-        "transition-[width] duration-base ease-house",
+        "group fixed right-2 top-1/2 z-30 hidden w-12 -translate-y-1/2 touch-none select-none xl:right-[calc(0.5rem+var(--orbit-dock-w))] xl:block",
+        "transition-[width,right] duration-base ease-house",
         "hover:w-[var(--rail-open,11rem)] focus-within:w-[var(--rail-open,11rem)] data-[dragging=true]:w-[var(--rail-open,11rem)]",
       )}
     >

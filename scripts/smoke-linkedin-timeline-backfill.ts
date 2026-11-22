@@ -29,6 +29,7 @@ import {
   usersWithPendingTimelineEvents,
 } from "../src/lib/linkedin-timeline-backfill";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { withDeepReadOff } from "./smoke/deep-read";
 
 const DRAIN_USER = "smoke-li-timeline-drain-user";
 const SKIP_USER = "smoke-li-timeline-skip-user";
@@ -159,6 +160,16 @@ async function testDrainAndPendingPredicate() {
     "only the contact with real message text is pending",
     (await pendingTimelineContactCount(DRAIN_USER)) === 1,
     `count ${await pendingTimelineContactCount(DRAIN_USER)}`
+  );
+
+  // Deep read on: the relationship engine reads these threads now, so the old reader does nothing.
+  seen.length = 0;
+  const off = await runLinkedInTimelineBackfill(DRAIN_USER, stubExtract, undefined, { deepRead: true });
+  check(
+    "deep read on: the old reader makes no call and writes nothing",
+    seen.length === 0 && off.contactsProcessed === 0 && off.eventsCreated === 0 && off.remaining === 0 &&
+      (await pendingTimelineContactCount(DRAIN_USER)) === 1,
+    JSON.stringify(off)
   );
 
   const first = await runLinkedInTimelineBackfill(DRAIN_USER, stubExtract);
@@ -491,7 +502,7 @@ async function main() {
   console.log("\nTimeline backfill checks passed.");
 }
 
-main()
+withDeepReadOff(main)
   .then(() => process.exit(0))
   .catch(async (e) => {
     console.error("\nFAILED:", e);

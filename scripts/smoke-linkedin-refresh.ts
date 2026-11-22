@@ -28,6 +28,11 @@ import { checker } from "./smoke/check";
 
 delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 delete process.env.CLERK_SECRET_KEY;
+// Blob unconfigured, so a pooled photo keeps its raw https URL and no test ever writes to a
+// developer's real bucket. Matches CI, where `.env.local` (and its Blob token) does not exist.
+delete process.env.BLOB_READ_WRITE_TOKEN;
+delete process.env.BLOB_STORE_ID;
+delete process.env.VERCEL_OIDC_TOKEN;
 (process.env as Record<string, string>).NODE_ENV = "development";
 process.env.ORBIT_DEMO_DATA = "off";
 

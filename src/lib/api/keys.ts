@@ -29,7 +29,9 @@
  * There is no dictionary to slow down, so a KDF would add latency to every request and buy
  * nothing an attacker could have exploited.
  */
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
+import { safeEqual } from "@/lib/crypto";
 
 export type ApiKeyScope = "read" | "write";
 export type ApiKeyKind = "api" | "mcp_url";
@@ -61,7 +63,7 @@ export function generateApiKey(kind: ApiKeyKind = "api"): GeneratedApiKey {
 }
 
 export function hashApiKey(token: string): string {
-  return createHash("sha256").update(token, "utf8").digest("hex");
+  return sha256Hex(token);
 }
 
 /**
@@ -82,10 +84,7 @@ export function looksLikeApiKey(token: string | null | undefined): boolean {
  * into a context where it does matter.
  */
 export function hashesMatch(a: string, b: string): boolean {
-  const left = Buffer.from(a, "utf8");
-  const right = Buffer.from(b, "utf8");
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
+  return safeEqual(a, b);
 }
 
 /** Reads the bearer token out of an Authorization header. */

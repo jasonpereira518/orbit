@@ -1,3 +1,4 @@
+import { chatTitleReplySchema } from "@/lib/ai-reply-schemas";
 import { z } from "zod";
 import { completeJson, parseAiJson } from "@/lib/ai";
 
@@ -145,7 +146,7 @@ export async function generateChatTitle(
       TITLE_TIMEOUT_MS,
       callerSignal
     );
-    const parsed = parseAiJson<{ title?: unknown } | null>(content);
+    const parsed = parseAiJson(chatTitleReplySchema, content);
     return sanitizeChatTitle(parsed?.title);
   } catch {
     return null;

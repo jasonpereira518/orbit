@@ -27,14 +27,14 @@ import { deliverToSlack, type OpsDelivery } from "@/lib/ops-notify";
 import { prunePageViews } from "@/lib/page-views";
 import { loadProductOpsFacts } from "@/lib/product-ops";
 import { formatWeeklyCostReport, isoWeekKey, loadSpendOpsFacts, loadWeeklyCostReport, weeklyReportDue } from "@/lib/spend-ops";
-import { reportError } from "@/lib/report-error";
+import { reportAndContinue, reportError } from "@/lib/report-error";
 
 export type { OpsDelivery } from "@/lib/ops-notify";
 
 /**
  * The ten-minute known-condition sweep: load, evaluate, diff against what was already
- * said, deliver the difference, remember. Triggered by `POST /api/ops/sweep` from the
- * GitHub Actions scheduler (Hobby crons are daily) and by the admin "Run sweep now"
+ * said, deliver the difference, remember. Triggered by `POST /api/ops/sweep` from QStash
+ * every ten minutes, from the GitHub drift run every thirty (Hobby crons are daily), and by the admin "Run sweep now"
  * button. Records itself in `cron_runs` as `ops.sweep`.
  *
  * If the database itself is unreachable this throws before recording anything, and the
@@ -57,7 +57,6 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
     lastSyncRun,
     lastJobFeedRun,
     lastRadarRun,
-    lastRadarFeeds,
     lastRadarDigest,
     lastWorkHistoryRun,
     lastEmailIntelRun,
@@ -104,12 +103,6 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .select()
         .from(cronRuns)
         .where(eq(cronRuns.job, "radar.run"))
-        .orderBy(desc(cronRuns.startedAt))
-        .limit(1),
-      db
-        .select()
-        .from(cronRuns)
-        .where(eq(cronRuns.job, "radar.feeds"))
         .orderBy(desc(cronRuns.startedAt))
         .limit(1),
       db
@@ -199,8 +192,8 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
         .where(eq(dataPurgeRuns.status, "failed")),
       // Production only: PGlite and preview branches report Postgres's default of 0, which
       // would open this condition in every local sweep and smoke run.
-      process.env.VERCEL_ENV === "production" ? probeStatementTimeout().catch(() => null) : null,
-      oldestDueAgeMs("google", now).catch(() => null),
+      process.env.VERCEL_ENV === "production" ? probeStatementTimeout().catch(reportAndContinue({ where: "ops.sweep.statement-timeout-probe" }, null)) : null,
+      oldestDueAgeMs("google", now).catch(reportAndContinue({ where: "ops.sweep.oldest-due-age" }, null)),
       // `ai.security` events and the accounts they span — see AI_SECURITY_ALERT_EVENTS.
       db
         .select({
@@ -253,7 +246,6 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
   const drainRun = lastDrain[0];
   const jobFeedRun = lastJobFeedRun[0];
   const radarRun = lastRadarRun[0];
-  const radarFeeds = lastRadarFeeds[0];
   const radarDigest = lastRadarDigest[0];
   const workHistoryRun = lastWorkHistoryRun[0];
   const emailIntelRun = lastEmailIntelRun[0];
@@ -278,10 +270,6 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
       radarRun: {
         lastStartedAt: radarRun?.startedAt ?? null,
         lastState: radarRun ? deriveCronRunState(radarRun, now) : null,
-      },
-      radarFeeds: {
-        lastStartedAt: radarFeeds?.startedAt ?? null,
-        lastState: radarFeeds ? deriveCronRunState(radarFeeds, now) : null,
       },
       radarDigest: {
         lastStartedAt: radarDigest?.startedAt ?? null,
@@ -362,8 +350,9 @@ export type OpsSweepDeps = {
 };
 
 /**
- * Better Stack heartbeat: a GET the monitor expects every ten minutes. When it stops
- * arriving — a dead GitHub schedule, a broken deploy — the monitor pages. Best-effort;
+ * Better Stack heartbeat: a GET the monitor expects every thirty minutes (set its period to
+ * 30 min with a grace of 15 or more). When it stops arriving — a dead tick, a broken
+ * deploy — the monitor pages. Best-effort;
  * a slow heartbeat endpoint must not fail the sweep that just succeeded.
  */
 async function pingHeartbeat(): Promise<void> {
@@ -525,7 +514,11 @@ export async function runOpsSweep(options: {
         .where(inArray(opsAlertState.id, plan.unchanged.map((c) => c.id)));
     }
 
-    for (const row of plan.recover) {
+    // Only the GitHub sweep says where `main` is; the QStash sweeps in between carry no deploy
+    // facts, so they cannot judge drift. Without this they would close an open
+    // `deploy.drift` that the next GitHub sweep reopens — a Slack open/recover pair per cycle.
+    const recover = options.deploy ? plan.recover : plan.recover.filter((r) => r.id !== "deploy.drift");
+    for (const row of recover) {
       // Closed first and unconditionally: the page must stop showing a condition that is gone.
       // A recovery message lost to a Slack outage is not retried — the open did reach Slack,
       // and /admin/health shows it closed.
@@ -570,7 +563,7 @@ export async function runOpsSweep(options: {
     // the customer base. It rides along here because this is the only thing that already
     // runs on a schedule; a failed prune must not turn an alert sweep into a failed run,
     // so it is caught and reported as a count of zero.
-    const prunedViews = await prunePageViews(now).catch(() => 0);
+    const prunedViews = await prunePageViews(now).catch(reportAndContinue({ where: "ops.sweep.prune-page-views" }, 0));
 
     await finishCronRun(run, {
       status: result.status,

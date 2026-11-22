@@ -19,6 +19,8 @@ const OPERATION: Record<GateName, DecisionOperationId> = {
   starters: "extension.starters.gate",
   enrich: "import.enrich.gate",
   timeline: "import.linkedin.timeline.decide",
+  workHistoryRecheck: "contact.work_history.recheck.gate",
+  workHistoryVerify: "contact.work_history.verify.gate",
 };
 
 /**

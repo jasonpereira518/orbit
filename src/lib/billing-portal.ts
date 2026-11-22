@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { getAppBaseUrl } from "@/lib/app-url";
 import { getEntitlements } from "@/lib/entitlements";
+import { reportError } from "@/lib/report-error";
 import { getStripe } from "@/lib/stripe";
 import { resolvePortalConfigurationId } from "@/lib/stripe-prices";
 
@@ -60,7 +61,7 @@ export async function createBillingPortalUrl(
     });
     return session.url ? { url: session.url } : { error: BILLING_PORTAL_COPY.unavailable };
   } catch (err) {
-    console.error("Stripe billing portal session failed:", err);
+    reportError(err, { where: "lib.billing-portal.session", userId });
     return { error: BILLING_PORTAL_COPY.unavailable };
   }
 }

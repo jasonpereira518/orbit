@@ -134,8 +134,8 @@ export function fromWallClockInput(
 ): Date | null {
   const hit = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value.trim());
   if (!hit) return null;
-  const [, y, mo, d, h, mi] = hit.map(Number) as unknown as number[];
-  const asUtc = Date.UTC(y!, mo! - 1, d!, h!, mi!);
+  const [, y, mo, d, h, mi] = hit.map(Number);
+  const asUtc = Date.UTC(y, mo - 1, d, h, mi);
   if (Number.isNaN(asUtc)) return null;
   const estimate = new Date(asUtc - (offsetMinutes(timezone, new Date(asUtc)) ?? 0) * 60_000);
   const instant = new Date(asUtc - (offsetMinutes(timezone, estimate) ?? 0) * 60_000);

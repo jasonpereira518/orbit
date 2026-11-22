@@ -22,8 +22,9 @@ export const GOOGLE_SCOPES = {
   // Only files the person picks in the Google Picker. Non-sensitive.
   drive: "https://www.googleapis.com/auth/drive.file",
   // Cloud notes: list recent Docs and read their first lines to spot meeting notes. Restricted —
-  // production use needs Google's CASA assessment, so the surface ships as coming-soon and only
-  // the consent screen's test users can grant it until that passes.
+  // production use needs Google's CASA assessment. The surface is released so Google's reviewers
+  // can test it; until Google approves the scope, a grant shows the unverified-app screen and
+  // counts toward the 100-user cap.
   driveRead: "https://www.googleapis.com/auth/drive.readonly",
 } as const;
 

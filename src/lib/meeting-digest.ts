@@ -26,6 +26,7 @@ import type { AiOperationId } from "@/lib/ai-operations";
 import { z } from "zod";
 import type { MeetingDigest } from "@/db/schema";
 import { fenceUntrusted } from "@/lib/ai-security";
+import { nameKey } from "@/lib/names/key";
 
 /** Above this, one call is too slow and too lossy; split and merge instead. */
 export const MAP_THRESHOLD_CHARS = 30_000;
@@ -64,7 +65,7 @@ const list = <T extends z.ZodTypeAny>(item: T) =>
   z.unknown().optional().transform((v) =>
     (Array.isArray(v) ? v : []).flatMap((entry) => {
       const parsed = item.safeParse(entry);
-      return parsed.success ? [parsed.data as z.output<T>] : [];
+      return parsed.success ? [parsed.data] : [];
     })
   );
 
@@ -224,9 +225,6 @@ export type CaptureSelf = {
   linkedinUrl?: string | null;
 };
 
-function foldName(s: string): string {
-  return s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
-}
 
 function linkedinSlugOf(url: string | null | undefined): string | null {
   const m = url?.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
@@ -258,10 +256,10 @@ export function isSelf(
   // A different identifier is a different person, whatever their name.
   if ((email && email !== selfEmail) || (slug && slug !== selfSlug)) return false;
 
-  const n = foldName(name);
+  const n = nameKey(name);
   if (n === "me" || n === "i" || n === "myself") return true;
-  const first = self.firstName ? foldName(self.firstName) : "";
-  const last = self.lastName ? foldName(self.lastName) : "";
+  const first = self.firstName ? nameKey(self.firstName) : "";
+  const last = self.lastName ? nameKey(self.lastName) : "";
   if (!n || !first) return false;
   // A bare first name with a company attached ("Jason from Stripe") is someone else who
   // shares the user's first name. Callers pass `company` only where that reading holds.
@@ -437,6 +435,13 @@ export function formatTranscriptSegment(
 // The display helpers live in a client-safe module (this one reaches `node:crypto` through
 // `ai-security`), re-exported so server callers keep importing them from here.
 export { speakerDisplayNames, speakerNames } from "@/lib/speaker-display";
+export {
+  groupSegmentsIntoParagraphs,
+  formatTranscriptParagraph,
+  deduplicateSegments,
+  type TranscriptParagraph,
+  type RawSegment,
+} from "@/lib/transcript-paragraphs";
 
 const SHAPE = `{
   "title": string,                 // short meeting title; reuse the given one if there is one
@@ -456,7 +461,7 @@ function systemPrompt(input: AnalyzeInput, part: { index: number; total: number 
   const who = input.userName ? `${input.userName} (called "the user" below)` : "the user";
   return [
     `You are reading the transcript of a video call (Zoom or Google Meet) that ${who} recorded for their personal networking CRM.`,
-    `How the transcript was made — this matters: it is machine speech-to-text of the meeting's audio. Lines may be prefixed with a speaker: "You:" is the user; "Speaker 1:", "Speaker 2:" and so on are other people, identified by voice, and the same person may be renumbered after a line saying the recording reconnected. Unprefixed lines come from a stretch where speakers were not identified. Names may be misspelled.`,
+    `How the transcript was made — this matters: it is machine speech-to-text of the meeting's audio, organized by speaker turns and conversational paragraphs. Lines may be prefixed with a speaker: "You:" is the user sitting at the microphone; "Speaker 1:", "Speaker 2:" and named participants are other people on the call, identified by voice, and the same person may be renumbered after a line saying the recording reconnected. Unprefixed lines come from a stretch where speakers were not identified. Names may be misspelled.`,
     part
       ? `This is part ${part.index} of ${part.total} of the transcript. Extract only what is in this part.`
       : "",
@@ -475,11 +480,14 @@ function systemPrompt(input: AnalyzeInput, part: { index: number; total: number 
     "Return JSON of exactly this shape:",
     SHAPE,
     "Rules:",
-    `- action_items: concrete next steps someone committed to or was asked to do. "owner" is "me" when it is clear the user took it on — either it is spoken on a "You:" line, or (e.g. on an unprefixed line) they are addressed by name and agree; a person's name when it was said out loud; otherwise null. On a line with no speaker prefix, never guess an owner from who probably spoke.`,
+    `- summary: a clear, structured executive summary (3-6 sentences) synthesizing the core purpose, what happened, and outcomes. CRITICAL: Take the speakers and their roles into full context — explicitly capture who presented or proposed key ideas, who raised concerns or questions, what the user's ("You") stance was, and what mutual consensus or resolution was reached.`,
+    `- key_points: the most important substantive updates, insights, and facts shared during the meeting. Attribute each key point to the specific speaker who stated or contributed it (e.g. "Jason (You): ..." or "Sarah: ...").`,
+    `- decisions: concrete conclusions and choices mutually agreed upon during the call, not merely discussed or suggested. State who proposed the decision and that the participants concurred.`,
+    `- action_items: concrete next steps someone committed to or was asked to do. Always determine owner from the speaker context: "owner" is "me" when it is clear the user took it on — either spoken on a "You:" line ("I will...", "I can do that"), or they are addressed and agree; a participant's name when spoken on their line or agreed to by them; otherwise null. On a line with no speaker prefix, never guess an owner from who probably spoke.`,
     `- due_phrase: the exact words from the transcript that say when ("by Friday", "next week", "September 30"), or null.`,
-    `- blockers: things stopping progress or waiting on someone/something — an approval, a dependency, missing information.`,
-    `- open_questions: questions raised that were NOT answered by the end of the call.`,
-    `- participants: people who were on the call ("present": true — they spoke or were spoken to) and people only mentioned ("present": false). Include what you learned about each in "context" (role, company, what they talked about). Do not include the user.`,
+    `- blockers: things stopping progress or waiting on someone/something — an approval, a dependency, missing information. Identify the speaker who is blocked and what they need.`,
+    `- open_questions: unresolved questions raised that were NOT answered by the end of the call, identifying who asked them (asked_by) and their relevance.`,
+    `- participants: people who were on the call ("present": true — they spoke or were spoken to) and people only mentioned ("present": false). Include what you learned about each in "context" (role, company, what they talked about or proposed). Do not include the user.`,
     `- The attendee list below is who was INVITED, not who came. Mark someone "present": true only when the transcript shows them taking part; an invitee who never comes up, or who is said to be away, is "present": false.`,
     `- dated_quotes: sentences copied EXACTLY from the transcript that mention a date, day or deadline. At most ${LIST_CAPS.datedQuotes}.`,
     `- source_excerpt: a short quote (under 25 words) copied EXACTLY from the transcript, or null.`,
@@ -526,11 +534,12 @@ function reducePrompt(input: AnalyzeInput) {
     SHAPE,
     "Rules:",
     "- Merge duplicates (the same task, question or person named in several parts) into one entry, keeping the most specific wording.",
+    "- Preserve speaker attribution in key points, action items, blockers, and open questions across merged parts.",
     "- An open question answered in a later part is no longer open — drop it. A blocker resolved later is no longer a blocker.",
     "- Keep every source_excerpt, due_phrase and dated_quote exactly as given; do not rewrite quotes.",
     "- A participant who is present in any part is present.",
     "- agenda: keep the items in their original order; an item covered in any part is covered.",
-    "- Rewrite summary and notes to cover the whole call in order; notes stay in the user's first person, 200-700 words.",
+    "- Rewrite summary and notes to cover the whole call in order, taking the speaker who contributed each item into context; notes stay in the user's first person, 200-700 words.",
     "- Never add anything that is not in the partial analyses.",
   ]
     .filter(Boolean)
@@ -563,7 +572,7 @@ async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T, i: numb
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {
       const i = next++;
-      out[i] = await fn(items[i]!, i);
+      out[i] = await fn(items[i], i);
     }
   });
   await Promise.all(workers);

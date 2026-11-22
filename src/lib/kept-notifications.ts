@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { createExternalStore, listen } from "@/lib/create-external-store";
 
 /**
  * Toasts that outlive their four seconds.
@@ -42,7 +43,6 @@ const MAX_ENTRIES = 30;
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const entries = new Map<string, KeptNotification>();
-const listeners = new Set<() => void>();
 
 /**
  * Action callbacks, held separately because they are closures and cannot be
@@ -54,6 +54,7 @@ const liveActions = new Map<string, () => void>();
 
 let cachedList: KeptNotification[] = [];
 let hydrated = false;
+let stopStorage: (() => void) | null = null;
 
 const EMPTY: KeptNotification[] = [];
 
@@ -73,7 +74,7 @@ function persist() {
 function emit() {
   recompute();
   persist();
-  for (const listener of listeners) listener();
+  store.emit();
 }
 
 function prune() {
@@ -235,27 +236,24 @@ function onStorage(event: StorageEvent) {
   }
   // `hydrate` returns early when the other tab removed the key outright.
   recompute();
-  for (const l of listeners) l();
+  store.emit();
 }
 
-function subscribe(listener: () => void) {
-  hydrate();
-  if (listeners.size === 0) window.addEventListener("storage", onStorage);
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0) window.removeEventListener("storage", onStorage);
-  };
-}
-
-function getSnapshot() {
-  return cachedList;
-}
-
-function getServerSnapshot() {
-  return EMPTY;
-}
+const store = createExternalStore<KeptNotification[]>({
+  getSnapshot: () => cachedList,
+  getServerSnapshot: () => EMPTY,
+  beforeSubscribe: hydrate,
+  onSubscribe(count) {
+    if (count === 1) stopStorage = listen<StorageEvent>(window, "storage", onStorage);
+  },
+  onUnsubscribe(count) {
+    if (count === 0) {
+      stopStorage?.();
+      stopStorage = null;
+    }
+  },
+});
 
 export function useKeptNotifications() {
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot);
 }

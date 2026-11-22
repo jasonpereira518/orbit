@@ -1,0 +1,48 @@
+{
+  "label": "anthropic-claude-sonnet-4-5",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-5",
+  "date": "2026-11-17T22:38:07.027Z",
+  "commit": "702860db1",
+  "fixtures": "b628ac27fbdd",
+  "runs": 2,
+  "decisions": null,
+  "network": null,
+  "tasks": {
+    "relationship": {
+      "cases": 16,
+      "metrics": {
+        "factRecall": 1,
+        "commitmentRecall": 1,
+        "commitmentPrecision": 0.6696428571428572,
+        "dateAccuracy": 0.875,
+        "inventedItems": 0,
+        "silentOnTrivial": 1,
+        "planAccuracy": 1,
+        "originAccuracy": 1,
+        "kindAccuracy": 1,
+        "eventAccuracy": 1
+      },
+      "misses": [
+        "relative-date-old-message"
+      ],
+      "p50LatencyMs": 1541,
+      "costMicros": 5480,
+      "costPerCaseMicros": 342.5,
+      "usage": [
+        {
+          "operation": "relationship.digest",
+          "model": "claude-haiku-5-5",
+          "calls": 28,
+          "failures": 0,
+          "inputTokens": 44056,
+          "outputTokens": 13111,
+          "cachedInputTokens": 0,
+          "costMicros": 10960,
+          "unpriced": 0,
+          "p50Ms": 1533
+        }
+      ]
+    }
+  }
+}

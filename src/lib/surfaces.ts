@@ -71,16 +71,17 @@ const PAGES: Surface[] = [
     reason: "Onboarding and the app shell both redirect here.",
   },
   {
-    // Ships dark again: released in #380, put back the same day. The page, the nightly
-    // pass's spend, the Monday email and the dashboard briefing all follow the effective
-    // coming-soon set. An admin previews it from /admin/product, where a `live:page.radar`
-    // override releases it without a deploy; releasing in code is deleting the line below.
+    // Released for Google's verification review: Email insights (a gmail.readonly feature) only
+    // shows in Settings → Google once Radar is live, so reviewers could not reach it. Radar is
+    // still off for each account until its owner presses "Turn on", and the nightly pass's
+    // spend, the Monday email and the dashboard briefing all follow that per-account switch
+    // and the effective coming-soon set. An admin can put it back from /admin/product with a
+    // `soon:page.radar` override, or by restoring `comingSoon: true` below.
     key: "page.radar",
     kind: "page",
     label: "Radar",
     description: "Who to reach out to this week, and why, rebuilt every night.",
     href: "/radar",
-    comingSoon: true,
   },
   {
     key: "page.events",
@@ -270,13 +271,16 @@ export const CHAT_IMPORTS_SURFACE_KEY = "feature.chat-imports";
 export const CLOUD_NOTES_SURFACE_KEY = "feature.cloud-notes";
 /** Notion: the settings page, the Capture picker and the people-database sync. */
 export const NOTION_SURFACE_KEY = "feature.notion";
+/** Cosmo: the voice assistant orb on every page (docs/superpowers/specs/2026-11-12-cosmo-design.md). */
+export const COSMO_SURFACE_KEY = "feature.cosmo";
+/** Reading more of a LinkedIn export (docs/superpowers/specs/2026-11-15-linkedin-deep-read-design.md). */
+export const LINKEDIN_DEEP_READ_SURFACE_KEY = "feature.linkedin-deep-read";
 const FEATURES: Surface[] = [
   {
     key: COMPOSE_SURFACE_KEY,
     kind: "feature",
     label: "Compose email",
     description: "Write and send email to anyone from a contact's page or ⌘K, from your own mailbox.",
-    comingSoon: true,
   },
   {
     key: OUTLOOK_SEND_SURFACE_KEY,
@@ -291,8 +295,9 @@ const FEATURES: Surface[] = [
     kind: "feature",
     label: "Reply to inbox threads",
     description: "Compose can reply to the latest email with a contact found in your mailbox (Gmail read / Mail.Read).",
-    // Until the privacy page discloses this use of the read scopes (direct-email P5).
-    comingSoon: true,
+    // Released: /privacy now discloses it (the gmail.readonly row, "Replying in a thread"), and
+    // Google's verification review has to be able to test it. It reads only Message-ID, subject,
+    // date and thread, with read scopes the user already granted. Operators can still hide it.
   },
   {
     key: CHAT_IMPORTS_SURFACE_KEY,
@@ -308,8 +313,9 @@ const FEATURES: Surface[] = [
     label: "Cloud notes (Drive & OneDrive)",
     description:
       "Finds meeting notes in Google Drive or OneDrive, offers to extract them, and adds the Drive & OneDrive tab on Capture.",
-    // Google's drive.readonly is restricted: until CASA passes only consent-screen test users can grant it.
-    comingSoon: true,
+    // Released for Google's verification review, which has to be able to test drive.readonly
+    // (restricted). Until Google approves it, a Google grant shows the unverified-app screen and
+    // counts toward the 100-user cap; a new connection is opt-in from Capture.
   },
   {
     key: NOTION_SURFACE_KEY,
@@ -318,6 +324,19 @@ const FEATURES: Surface[] = [
     description: "Connect Notion: pick pages to capture on Capture, and sync a people database into contacts.",
     // Until /privacy says what Orbit reads from Notion and the public integration is approved.
     comingSoon: true,
+  },
+  {
+    key: COSMO_SURFACE_KEY,
+    kind: "feature",
+    label: "Cosmo",
+    description: "The voice assistant orb in the corner of every page: talk to Orbit from anywhere.",
+    // Hidden = the orb's off switch: no idle orb, and calls lose Cosmo's powers and metering.
+  },
+  {
+    key: LINKEDIN_DEEP_READ_SURFACE_KEY,
+    kind: "feature",
+    label: "LinkedIn deep read",
+    description: "Reads more of a LinkedIn export: your full history, how you met people, and who you are closest to.",
   },
 ];
 
@@ -541,7 +560,6 @@ export function orderNavItems<T extends { href: string }>(
  */
 export const COMING_SOON_COMPANIONS: Readonly<Record<string, readonly string[]>> = {
   "page.outreach": ["dashboard.outreach-performance", "settings.outreach"],
-  [COMPOSE_SURFACE_KEY]: ["settings.email"],
 };
 
 /** True when `href` is a page in `soon` (the effective set; defaults to the code defaults). */

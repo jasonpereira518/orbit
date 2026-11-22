@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { onReconnect, useConnectivity } from "@/lib/connectivity-store";
 import { isNetworkError } from "@/lib/errors";
+import { reportProblem, useFeedbackAvailable } from "@/lib/feedback-events";
 import { cn } from "@/lib/utils";
 import { reportClientError } from "@/lib/sentry-lazy";
 import { reportErrorShown } from "@/lib/client-events";
@@ -60,6 +61,8 @@ export function ErrorFallback({
     return onReconnect(retry);
   }, [offline, retry]);
 
+  const canReport = useFeedbackAvailable();
+
   return (
     <div
       role="alert"
@@ -94,6 +97,16 @@ export function ErrorFallback({
         <Link href={home.href} className={cn(buttonVariants({ variant: "outline" }))}>
           {home.label}
         </Link>
+        {/* Only inside the app, where the feedback panel lives to answer it. */}
+        {canReport && (
+          <button
+            type="button"
+            onClick={() => reportProblem(`Error screen on ${window.location.pathname}${error.digest ? ` (ref ${error.digest})` : ""}`)}
+            className={cn(buttonVariants({ variant: "ghost" }))}
+          >
+            Tell Jason
+          </button>
+        )}
       </div>
     </div>
   );

@@ -109,7 +109,7 @@ export function GoogleContactsImport({ returnTo = "/imports" }: { returnTo?: str
                 provider="gmail"
                 disabled={busy}
                 onConfirm={(opts) => {
-                  connection.disconnect(opts).then(() => {
+                  void connection.disconnect(opts).then(() => {
                     contacts.reset();
                   });
                 }}

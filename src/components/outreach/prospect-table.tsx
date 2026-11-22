@@ -201,7 +201,7 @@ export function ProspectTable({
           <tbody className="block md:table-row-group">
             {prospects.map((prospect) => {
               const message = prospect.message;
-              const channel = (message?.channel || defaultChannel) as OutreachChannel;
+              const channel = (message?.channel || defaultChannel);
               const isSelected = prospect.status === "selected";
               const awaiting =
                 message &&
@@ -226,7 +226,7 @@ export function ProspectTable({
                 prospect.fullName,
                 prospect.company
               );
-              const enrichment = (prospect.enrichment ?? {}) as Record<string, unknown>;
+              const enrichment = (prospect.enrichment ?? {});
               const avatarUrl = prospect.avatarUrl || (typeof enrichment.avatarUrl === "string" ? enrichment.avatarUrl : undefined);
               const summary = (typeof enrichment.summary === "string" ? enrichment.summary : undefined) || (typeof enrichment.headline === "string" ? enrichment.headline : undefined);
               const effectivenessScore = typeof enrichment.effectivenessScore === "number" ? enrichment.effectivenessScore : undefined;

@@ -267,28 +267,28 @@ export function RevenueCostChart({
           </span>
         ) : (
           <span className="flex flex-wrap gap-x-4 gap-y-1 tabular-nums">
-            <strong className="font-medium">{points[active]!.label}</strong>
-            <span>In {formatCents(points[active]!.inCents)}</span>
+            <strong className="font-medium">{points[active].label}</strong>
+            <span>In {formatCents(points[active].inCents)}</span>
             <span>
               Out{" "}
-              {points[active]!.costMissing
+              {points[active].costMissing
                 ? "not entered"
-                : formatCents(points[active]!.outCents)}
+                : formatCents(points[active].outCents)}
             </span>
-            {points[active]!.costMissing ? (
+            {points[active].costMissing ? (
               <span className="text-muted-foreground">
                 Contribution unknown until the bill is entered
               </span>
             ) : (
               <span
                 className={
-                  points[active]!.inCents - points[active]!.outCents >= 0
+                  points[active].inCents - points[active].outCents >= 0
                     ? "text-foreground"
                     : "text-destructive"
                 }
               >
                 Contribution{" "}
-                {formatCents(points[active]!.inCents - points[active]!.outCents)}
+                {formatCents(points[active].inCents - points[active].outCents)}
               </span>
             )}
           </span>

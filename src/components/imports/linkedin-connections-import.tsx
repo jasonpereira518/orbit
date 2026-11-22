@@ -59,9 +59,8 @@ export function LinkedInConnectionsImport({ bare = false }: { bare?: boolean } =
 
   function applyPreview(res: ConnectionsPreview) {
     setPeople(res.people);
-    setSelected(
-      new Set(res.people.filter((p) => !p.isRepeat).map((p) => p.id)),
-    );
+    // People already in Orbit too: merging refreshes what Orbit guessed, never what was typed.
+    setSelected(new Set(res.people.map((p) => p.id)));
     setWarnings(res.warnings ?? []);
   }
 

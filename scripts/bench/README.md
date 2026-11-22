@@ -65,6 +65,23 @@ node scripts/bench/constellation-interactions.mjs 100,500,1000,2500 --reps 5 --s
 node scripts/bench/constellation-report.mjs frame.json
 ```
 
+`--suite pan` scores drag-pans the same way: a circle at home, 1,200px at zoom 0.3 (cluster names
+showing), 1,800px at 0.5 and back. The open suite's pans report 60fps average and cannot see the
+20ms frames these do — see `docs/superpowers/plans/2026-11-11-constellation-pan-frames.md`.
+
+```bash
+node scripts/bench/constellation-interactions.mjs 2500,10000 --reps 3 --suite pan \
+  --ab before=…,after=… --out pan.json
+node scripts/bench/constellation-report.mjs pan.json
+```
+
+Below zoom 0.4, unnamed window stars are drawn on `WindowStarCanvas` rather than as DOM nodes
+(Nov 12, same doc): `pan-names` went from 1–5 vsync gaps a pan to ~0 at real 120Hz.
+
+`--headful` runs the same in a real Chrome window at the screen's top-left, paced by that
+display — on a ProMotion Mac, real 120Hz frames (headless is capped at 60). Each gesture also
+reports `gaps120` / `gaps60`: frame intervals that skipped a vsync at that rate.
+
 Headless Chrome stays at 60Hz on purpose: it keeps input rates realistic, and the cost per frame
 is what the budget needs. `--uncapped` lifts the cap, for diagnosis only (it inflates event rates).
 

@@ -31,8 +31,10 @@ export function threadsAfterAnswer<T extends LandedThread>(
   title: string | null | undefined,
   now: Date
 ): LandedThread[] {
+  // Spread first so what the row already carried (a pin) survives the move to the top.
+  const existing = prev.find((t) => t.id === answeredThreadId);
   return [
-    { id: answeredThreadId, title: title ?? null, createdAt: now, updatedAt: now },
+    { ...existing, id: answeredThreadId, title: title ?? null, createdAt: now, updatedAt: now },
     ...prev.filter((t) => t.id !== answeredThreadId),
   ];
 }

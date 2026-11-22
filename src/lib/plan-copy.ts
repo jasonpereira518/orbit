@@ -212,6 +212,11 @@ const TEMPLATE_COVERS: Record<Plan, FeatureKey[]> = {
   lifetime: ["recruiters", "extraConnections", "meetings", "api"],
 };
 
+/** The plan a template builds on ("Everything in …"), if any. */
+export function planBase(plan: Plan): Plan | undefined {
+  return TEMPLATES[plan].base;
+}
+
 /**
  * `plan`'s bullets under `config`. A listed feature appears on a plan iff the plan has it; the
  * numbers are the config's. Lines with no feature behind them (the map, reminders, the
@@ -343,6 +348,7 @@ export function comparisonRows(
       ),
     },
     { label: "Voice notes and chat mic", cells: each((plan) => hours(plan, config[plan].speech.shortformSeconds)) },
+    { label: "Talking with Cosmo, the voice assistant", cells: each((plan) => hours(plan, config[plan].speech.assistantSeconds)) },
     { label: "REST API and webhooks", cells: feature("api") },
   ];
 }

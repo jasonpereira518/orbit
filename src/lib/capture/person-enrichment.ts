@@ -46,7 +46,7 @@ function tolerantList<T extends z.ZodTypeAny>(item: T) {
     .transform((v): z.output<T>[] =>
       (v ?? []).flatMap((raw) => {
         const parsed = item.safeParse(raw);
-        return parsed.success ? [parsed.data as z.output<T>] : [];
+        return parsed.success ? [parsed.data] : [];
       })
     );
 }

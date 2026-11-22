@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { Check, Pencil, Plus, X } from "lucide-react";
 import { friendlyError } from "@/lib/errors";
@@ -50,7 +51,7 @@ export function EditableFactList({
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<string[]>(items);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   function beginEdit() {
     // Seed from the prop rather than from the last draft: a cancelled edit must not be the

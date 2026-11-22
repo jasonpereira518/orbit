@@ -431,7 +431,7 @@ export function personById(id: string | null | undefined): DemoPerson | undefine
 }
 
 export function firstName(p: DemoPerson) {
-  return p.name.split(" ")[0]!;
+  return p.name.split(" ")[0];
 }
 
 export function initials(p: DemoPerson) {
@@ -447,12 +447,6 @@ export type Tier = "inner" | "mid" | "outer";
 export function tierOf(closeness: number): Tier {
   return closeness >= 75 ? "inner" : closeness >= 50 ? "mid" : "outer";
 }
-
-/** 1–5, what the Strength filter compares against. */
-export function strengthOf(closeness: number) {
-  return Math.max(1, Math.min(5, Math.ceil(closeness / 20)));
-}
-
 export function daysLabel(days: number) {
   if (days <= 0) return "today";
   if (days === 1) return "yesterday";

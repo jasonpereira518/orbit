@@ -109,14 +109,14 @@ function routeQuestion(question: string): ChatAnswer {
     return {
       kind: "promise-all",
       text: `Open promises across your network:\n${owed.map((p) => `• ${p.name} — ${p.promise!.text}`).join("\n")}`,
-      sources: owed.slice(0, 3).map((p) => sourcesFor(p, 1)[0]!),
-      draft: draftFor(owed[0]!),
+      sources: owed.slice(0, 3).map((p) => sourcesFor(p, 1)[0]),
+      draft: draftFor(owed[0]),
     };
   }
 
   if (/should meet|\bintro/.test(q) && person) {
     const match = INTROS[person.id];
-    const other = personById(match?.to) ?? DEMO_PEOPLE.filter((p) => p.id !== person.id).sort(byCloseness)[0]!;
+    const other = personById(match?.to) ?? DEMO_PEOPLE.filter((p) => p.id !== person.id).sort(byCloseness)[0];
     return {
       kind: "intro",
       text: `${other.name} (${other.title}, ${other.company}). ${match?.why ?? `You're close to both, and ${firstName(other)} knows the space.`}\n\nYou're in touch with both — ${firstName(person)} ${daysLabel(person.lastTouchDays)}, ${firstName(other)} ${daysLabel(other.lastTouchDays)}.`,
@@ -129,9 +129,9 @@ function routeQuestion(question: string): ChatAnswer {
     const people = DEMO_SUGGESTIONS.slice(0, 3).map((s) => ({ p: personById(s.personId)!, why: s.why }));
     return {
       kind: "follow-up",
-      text: `Three people worth reaching out to this week:\n${people.map(({ p, why }) => `• ${p.name} — ${why.toLowerCase()}`).join("\n")}\n\nStart with ${firstName(people[0]!.p)}: you still owe her the offsite deck.`,
-      sources: people.map(({ p }) => sourcesFor(p, 1)[0]!),
-      draft: draftFor(people[0]!.p),
+      text: `Three people worth reaching out to this week:\n${people.map(({ p, why }) => `• ${p.name} — ${why.toLowerCase()}`).join("\n")}\n\nStart with ${firstName(people[0].p)}: you still owe her the offsite deck.`,
+      sources: people.map(({ p }) => sourcesFor(p, 1)[0]),
+      draft: draftFor(people[0].p),
     };
   }
 
@@ -139,11 +139,11 @@ function routeQuestion(question: string): ChatAnswer {
     const atCompany = DEMO_PEOPLE.filter(
       (p) => p.company === company || (company === CLUSTERS.michigan.label && p.cluster === "michigan")
     ).sort(byCloseness);
-    const top = atCompany[0]!;
+    const top = atCompany[0];
     return {
       kind: "company",
       text: `You know ${atCompany.length} ${atCompany.length === 1 ? "person" : "people"} ${company === CLUSTERS.michigan.label ? "from" : "at"} ${company}:\n${atCompany.map((p) => `• ${p.name} — ${p.title}, ${p.closeness}% closeness`).join("\n")}\n\n${firstName(top)} is your strongest tie there.`,
-      sources: atCompany.slice(0, 3).map((p) => sourcesFor(p, 1)[0]!),
+      sources: atCompany.slice(0, 3).map((p) => sourcesFor(p, 1)[0]),
       draft: draftFor(top),
     };
   }
@@ -154,7 +154,7 @@ function routeQuestion(question: string): ChatAnswer {
     return {
       kind: "company-none",
       text: `No one at ${unknownCompany.replace(/\b\w/g, (c) => c.toUpperCase())} yet. Your warmest paths in: ${paths.map((p) => `${p.name} (${p.company})`).join(" and ")} — both are well connected and close to you.`,
-      sources: paths.map((p) => sourcesFor(p, 1)[0]!),
+      sources: paths.map((p) => sourcesFor(p, 1)[0]),
     };
   }
 
@@ -173,8 +173,8 @@ function routeQuestion(question: string): ChatAnswer {
     return {
       kind: "tag",
       text: `From your notes, these people fit:\n${list.map((p) => `• ${p.name} — ${p.title}, ${p.company}`).join("\n")}`,
-      sources: list.slice(0, 3).map((p) => sourcesFor(p, 1)[0]!),
-      draft: draftFor(list[0]!),
+      sources: list.slice(0, 3).map((p) => sourcesFor(p, 1)[0]),
+      draft: draftFor(list[0]),
     };
   }
 
@@ -182,7 +182,7 @@ function routeQuestion(question: string): ChatAnswer {
   return {
     kind: "fallback",
     text: `Orbit searches your notes, emails and meetings for questions like that. In this preview's made-up network, the people most likely to help are:\n${closest.map((p) => `• ${p.name} — ${p.title}, ${p.company}`).join("\n")}`,
-    sources: closest.map((p) => sourcesFor(p, 1)[0]!),
+    sources: closest.map((p) => sourcesFor(p, 1)[0]),
   };
 }
 

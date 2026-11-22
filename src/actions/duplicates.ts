@@ -18,6 +18,7 @@ import {
   mergeContacts,
   unmergeContacts,
 } from "@/lib/contact-merge";
+import { listContactChangesForUser, resolveContactChangeForUser } from "@/lib/contact-changes";
 import {
   countDuplicatesAwaitingReview,
   getDuplicateReview,
@@ -127,4 +128,20 @@ export async function undoMerge(mergeId: string) {
   revalidatePath(`/contacts/${result.winnerId}`);
   revalidatePath(`/contacts/${result.loserId}`);
   return result;
+}
+
+/** Field suggestions waiting for an answer, and what Orbit changed in the last 30 days. */
+export async function listContactChanges() {
+  return listContactChangesForUser(await requireUserId());
+}
+
+/** Undo a change Orbit made, or accept / dismiss one it offered. */
+export async function resolveContactChange(changeId: string, action: "undo" | "accept" | "dismiss") {
+  if (typeof changeId !== "string" || !["undo", "accept", "dismiss"].includes(action)) {
+    throw new Error("Invalid request");
+  }
+  const userId = await requireUserId();
+  const { contactId } = await resolveContactChangeForUser(userId, changeId, action);
+  revalidateContactSurfaces();
+  revalidatePath(`/contacts/${contactId}`);
 }

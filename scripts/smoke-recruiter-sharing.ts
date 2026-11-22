@@ -160,17 +160,26 @@ async function main() {
     const shaped = toPublicRecruiter(
       (await db.query.recruiters.findFirst({ where: eq(recruiters.id, recB.id) }))!,
       null,
+      true,
+      false
+    );
+    check("pool viewer has contact locked by default", shaped.email === null && shaped.hasEmail === true);
+    check("pool viewer gets no link", shaped.myLink === null);
+
+    const unlocked = toPublicRecruiter(
+      (await db.query.recruiters.findFirst({ where: eq(recruiters.id, recB.id) }))!,
+      null,
+      true,
       true
     );
-    check("pool viewer gets contact details", shaped.email === "beta@zzsmokeshare.test");
-    check("pool viewer gets no link", shaped.myLink === null);
+    check("unlocked pool viewer gets contact details", unlocked.email === "beta@zzsmokeshare.test" && unlocked.piiUnlocked === true);
 
     const locked = toPublicRecruiter(
       (await db.query.recruiters.findFirst({ where: eq(recruiters.id, recB.id) }))!,
       null,
       false
     );
-    check("non-pool viewer gets no contact details", locked.email === null);
+    check("non-pool viewer gets no contact details", locked.email === null && locked.hasEmail === false);
 
     const discoveries = await listPoolDiscoveries({
       viewerUserId: USER_A,

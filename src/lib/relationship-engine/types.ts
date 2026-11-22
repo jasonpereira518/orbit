@@ -1,4 +1,11 @@
-import type { ReminderActionKind, ReminderDateBasis, RelationshipOpenThread, RelationshipRunFlag } from "@/db/schema";
+import type {
+  DatePrecision,
+  RelationshipKind,
+  ReminderActionKind,
+  ReminderDateBasis,
+  RelationshipOpenThread,
+  RelationshipRunFlag,
+} from "@/db/schema";
 
 /** One message as the engine reads it. `speaker` is "Me", the contact's first name, or "?". */
 export type WindowMessage = {
@@ -69,6 +76,29 @@ export type ValidatedDigest = {
   undated: ValidatedUndated[];
   closedKeys: string[];
   jobChange: { company: string; title: string | null; messageAt: Date } | null;
+  /** Deep read only (null / empty otherwise). Each one quoted from a message of the window. */
+  origin?: ValidatedOrigin | null;
+  relationship?: { kind: RelationshipKind; excerpt: string; interactionId: string } | null;
+  events?: ValidatedEvent[];
+};
+
+export type ValidatedOrigin = {
+  text: string;
+  /** YYYY-MM-DD; the 1st of the month or year for coarser precision. */
+  date: string | null;
+  precision: DatePrecision | null;
+  context: string | null;
+  excerpt: string;
+  interactionId: string;
+};
+
+export type ValidatedEvent = {
+  type: "meeting" | "in_person" | "call";
+  summary: string;
+  /** YYYY-MM-DD, never after the message that mentions it. */
+  day: string;
+  excerpt: string;
+  interactionId: string;
 };
 
 export type PlannedReminder = {

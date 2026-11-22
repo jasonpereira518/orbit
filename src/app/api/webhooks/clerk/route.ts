@@ -1,6 +1,7 @@
 import { verifyWebhook } from "@clerk/nextjs/webhooks";
 import type { NextRequest } from "next/server";
 import { purgeUserData } from "@/lib/user-data";
+import { reportError } from "@/lib/report-error";
 import { bookChurnOnDeletion } from "@/lib/account-deletion";
 import { recordAccountAudit } from "@/lib/account-audit";
 import {
@@ -54,7 +55,8 @@ export async function POST(req: NextRequest) {
   try {
     evt = await verifyWebhook(req);
   } catch (err) {
-    console.error("Clerk webhook verification failed:", err);
+    // Unauthenticated callers can trigger this, so a warning (throttled), not an error per POST.
+    reportError(err, { where: "webhook.clerk.verify", level: "warning" });
     // Deliberately stores nothing from the body: an unverified payload is untrusted input.
     // Once per hour, not once per request: this write happens BEFORE any authentication, so
     // without the latch anyone can grow the ledger a row per POST. One row still says
@@ -121,7 +123,7 @@ export async function POST(req: NextRequest) {
           // for founding pricing (no longer a comp). The same marker names the ledger row and the
           // waitlist row, so the account is linked to both by id (the email is only a fallback
           // for invitations sent before the ledger existed). Idempotent under webhook retries.
-          await recordSiteInvite(userId, evt.data.public_metadata as Record<string, unknown>, {
+          await recordSiteInvite(userId, evt.data.public_metadata, {
             email: primaryEmail(evt.data),
             surface: "webhook",
           });

@@ -3,9 +3,10 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { cache } from "react";
 import { notFound } from "next/navigation";
-import { Lock, Mail, Phone, ExternalLink } from "lucide-react";
+import { Mail, Phone, ExternalLink } from "lucide-react";
 import { getRecruiter, getRecruiterSharing } from "@/actions/recruiters";
 import { RecruiterLogForm } from "@/components/recruiters/recruiter-log-form";
+import { RecruiterUnlockButton } from "@/components/recruiters/recruiter-unlock-button";
 import { requireUserId } from "@/lib/auth";
 import { getEntitlements } from "@/lib/entitlements";
 import { RecruitersLocked } from "@/components/locked-feature";
@@ -74,6 +75,11 @@ export default async function RecruiterDetailPage({
           <p className="mt-1 text-muted-foreground">
             {recruiter.firm || "Unknown firm"}
           </p>
+          {recruiter.role && (
+            <p className="mt-1 text-sm font-medium text-foreground">
+              Interviewing for: <span className="text-primary">{recruiter.role}</span>
+            </p>
+          )}
           <div className="mt-3 flex flex-wrap gap-2">
             {recruiter.specialty.map((s) => (
               <Badge key={s} variant="secondary">
@@ -154,15 +160,12 @@ export default async function RecruiterDetailPage({
               )}
           </ul>
         ) : (
-          <div className="mt-3 flex items-start gap-3 rounded-xl bg-muted/40 p-4 text-sm">
-            <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-            <div>
-              <p className="font-medium">Contact details are locked</p>
-              <p className="mt-1 text-muted-foreground">
-                Log that you&apos;ve interacted with (or plan to contact) this
-                recruiter to unlock email, phone, and LinkedIn.
-              </p>
-            </div>
+          <div className="mt-3">
+            <RecruiterUnlockButton
+              recruiterId={recruiter.id}
+              hasEmail={recruiter.hasEmail}
+              hasLinkedin={recruiter.hasLinkedin}
+            />
           </div>
         )}
       </div>

@@ -45,7 +45,7 @@ export function generateCampaignCsv(campaignName: string, prospects: ProspectRow
   ];
 
   const rows = prospects.map((p) => {
-    const enrichment = (p.enrichment || {}) as Record<string, unknown>;
+    const enrichment = (p.enrichment || {});
     const score = typeof enrichment.effectivenessScore === "number" ? `${enrichment.effectivenessScore}%` : "";
     const education = (enrichment.education as string) || (enrichment.almaMater as string) || "";
     const news = (enrichment.newsContext as string) || (enrichment.recentNews as string) || "";
@@ -111,7 +111,7 @@ export function generateGoogleSheetsTsv(prospects: ProspectRow[]): string {
   ];
 
   const rows = prospects.map((p) => {
-    const enrichment = (p.enrichment || {}) as Record<string, unknown>;
+    const enrichment = (p.enrichment || {});
     const score = typeof enrichment.effectivenessScore === "number" ? `${enrichment.effectivenessScore}%` : "";
     const education = (enrichment.education as string) || (enrichment.almaMater as string) || "";
     const news = (enrichment.newsContext as string) || (enrichment.recentNews as string) || "";
@@ -187,7 +187,7 @@ export function generateNotionMarkdownTable(prospects: ProspectRow[]): string {
   ];
 
   const rows = prospects.map((p) => {
-    const enrichment = (p.enrichment || {}) as Record<string, unknown>;
+    const enrichment = (p.enrichment || {});
     const score = typeof enrichment.effectivenessScore === "number" ? `${enrichment.effectivenessScore}%` : "-";
     const education = (enrichment.education as string) || (enrichment.almaMater as string) || "-";
     const news = (enrichment.newsContext as string) || (enrichment.recentNews as string) || "-";

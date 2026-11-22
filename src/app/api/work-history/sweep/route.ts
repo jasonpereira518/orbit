@@ -1,6 +1,6 @@
 /**
  * The work-history sweep's entry point: re-checks contacts whose LinkedIn work history is
- * due, logs any job moves it finds. Hourly from `.github/workflows/ops.yml` at :37.
+ * due, logs any job moves it finds. Hourly from the tick (`src/lib/schedules.ts`) at :00.
  *
  * Its own route, schedule and `cron_runs` job name for the same reasons the job-feed sweep
  * has them (see src/app/api/jobs/feed/sweep/route.ts): the ten-minute ops sweep is the
@@ -10,7 +10,7 @@
  * `POST` because it mutates.
  */
 import { NextResponse } from "next/server";
-import { finishCronRun, startCronRun } from "@/lib/cron-runs";
+import { cronTrigger, finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { kickEmbeddingBackfill } from "@/lib/embedding-backfill";
 import { isInternalRequest } from "@/lib/internal-auth";
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const started = Date.now();
-  const handle = await startCronRun("work-history.sweep");
+  const handle = await startCronRun("work-history.sweep", cronTrigger(request));
   try {
     const stats = await runWorkHistorySweep({ deadline: started + START_DEADLINE_MS });
 

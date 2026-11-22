@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { recalibrateCloseness } from "@/lib/closeness-cohort";
 import { getDb, rowsOf } from "@/db";
+import type { FieldSource, FieldSources } from "@/lib/contact-fields";
+import { indexStoredIdentities } from "@/lib/contact-identity";
 import {
   contacts,
   imports,
@@ -48,6 +50,7 @@ import { reportAndContinue, reportError } from "@/lib/report-error";
 import { withReference } from "@/lib/errors";
 import { track } from "@/lib/product-events";
 import type { IMPORT_PROVIDERS } from "@/lib/product-event-schemas";
+import { isAdmissibleRecord } from "@/lib/names/classify";
 
 /**
  * Rows pulled from the DB per processing loop iteration. Widened from 40 to cut the fixed
@@ -146,6 +149,12 @@ export type ImportAdapter<P> = {
    * exactly what a matched-but-not-merged row needs, it just needs it at a lower bar.
    */
   matchConfidence?: number;
+  /**
+   * Which source this file's merged fields count as (`@/lib/contact-fields`). Defaults to
+   * "import": fills blanks, never replaces. The LinkedIn export is the person's own record
+   * ("linkedin_export"); an address-book export is "address_book".
+   */
+  fieldSource?: FieldSource;
   /** Interaction rows to bulk-insert for this payload, once its contact id is known. */
   interactions?(payload: P, contactId: string, userId: string): InteractionInsert[];
   /**
@@ -398,6 +407,12 @@ type PreMergeContact = {
   dateMet: Date | null;
   firstInteractionAt: Date | null;
   lastInteractionAt: Date | null;
+  location: string | null;
+  school: string | null;
+  xHandle: string | null;
+  website: string | null;
+  industry: string | null;
+  fieldSources: FieldSources | null;
 };
 
 /**
@@ -432,6 +447,12 @@ function snapshotOf(
     dateMet: iso(prior.dateMet),
     firstInteractionAt: iso(prior.firstInteractionAt),
     lastInteractionAt: iso(prior.lastInteractionAt),
+    location: prior.location,
+    school: prior.school,
+    xHandle: prior.xHandle,
+    website: prior.website,
+    industry: prior.industry,
+    fieldSources: prior.fieldSources,
   };
 }
 
@@ -639,9 +660,12 @@ export async function runImportJob(importId: string): Promise<void> {
           xHandle: true,
           company: true,
           title: true,
+          phone: true,
         },
       });
       duplicateIndex = buildDuplicateIndex(existingContacts);
+      // Second emails, phones and older LinkedIn URLs live only in contact_identities.
+      await indexStoredIdentities(userId, duplicateIndex, existingContacts);
       contactById = new Map(existingContacts.map((c) => [c.id, c]));
       companyResolve = await createCompanyResolver(userId);
       // Opened once per invocation, like the index: Jev checks name-evidence folds below.
@@ -806,8 +830,8 @@ export async function runImportJob(importId: string): Promise<void> {
         if (engines.jev) {
           const nameFolds: Array<{ rowId: string; probe: DuplicateProbe; best: DuplicateMatch }> = [];
           for (const row of pendingRows) {
-            if (pinnedSubject(row.payload as ImportJobRowPayload)) continue;
-            const probe = adapter.identity(row.payload as ImportJobRowPayload);
+            if (pinnedSubject(row.payload)) continue;
+            const probe = adapter.identity(row.payload);
             if (!probe) continue;
             const best = findDuplicateCandidatesIndexed(duplicateIndex, probe)[0];
             if (best && !best.strong && best.confidence >= matchConfidence) {
@@ -835,7 +859,7 @@ export async function runImportJob(importId: string): Promise<void> {
           // The adapter was chosen from this job's own `importType` and the rows belong to
           // that job, so the payload union is narrowed once here rather than at each of the
           // dozen field reads inside the adapter.
-          const payload = row.payload as ImportJobRowPayload;
+          const payload = row.payload;
           const personKey = personKeyOf(payload);
           // A row whose person an earlier row already settled (or is creating) adds history,
           // not a person: it is merged but never counted as "already in your orbit".
@@ -870,7 +894,9 @@ export async function runImportJob(importId: string): Promise<void> {
             }
           }
           const probe = adapter.identity(payload);
-          if (!probe) {
+          // A company, a machine mailbox or a shared inbox in a file is not a person: skipped
+          // like a row with no identity, so it never becomes or rewrites a contact.
+          if (!probe || !isAdmissibleRecord(probe.fullName, probe.email)) {
             toSkip.push(row);
             continue;
           }
@@ -936,7 +962,7 @@ export async function runImportJob(importId: string): Promise<void> {
           { outcome: ImportRowOutcome; snapshot: ImportRevertSnapshot | null }
         >();
 
-        // `createContactsBulk` admits only what the plan's contact headroom allows, taking
+        // `createContactsBulkForUser` admits only what the plan's contact headroom allows, taking
         // from the front, so anything past `created.length` was refused by the cap rather
         // than failed. These rows must reach a terminal status: the loop re-queries pending
         // rows every pass, so leaving them pending would spin until the time budget and then
@@ -979,7 +1005,7 @@ export async function runImportJob(importId: string): Promise<void> {
                 userId,
                 batch.map((item) => item.input),
                 companyResolve,
-                { skipRevalidate: true, skipEmbedding: true, headroom }
+                { skipRevalidate: true, skipEmbedding: true, headroom, by: adapter.fieldSource ?? "import" }
               );
               // Only reached once the insert has actually succeeded — a batch whose insert
               // throws is caught by `writeWithNarrowing`, which retries smaller slices of the
@@ -1052,7 +1078,7 @@ export async function runImportJob(importId: string): Promise<void> {
               toUpdate.push({
                 row: f.row,
                 contactId: subject.id,
-                input: adapter.toMerge(f.row.payload as ImportJobRowPayload, subject),
+                input: adapter.toMerge(f.row.payload, subject),
                 follower: true,
               });
             } else if (leaderFate.get(f.key) === "blocked") {
@@ -1099,6 +1125,12 @@ export async function runImportJob(importId: string): Promise<void> {
                   dateMet: contacts.dateMet,
                   firstInteractionAt: contacts.firstInteractionAt,
                   lastInteractionAt: contacts.lastInteractionAt,
+                  location: contacts.location,
+                  school: contacts.school,
+                  xHandle: contacts.xHandle,
+                  website: contacts.website,
+                  industry: contacts.industry,
+                  fieldSources: contacts.fieldSources,
                 })
                 .from(contacts)
                 .where(
@@ -1118,7 +1150,8 @@ export async function runImportJob(importId: string): Promise<void> {
               const mergedAt = await bulkMergeContactsForUser(
                 userId,
                 batch.map((item) => ({ contactId: item.contactId, input: item.input })),
-                companyResolve
+                companyResolve,
+                { source: adapter.fieldSource }
               );
               for (const item of batch) {
                 contactIdByRowId.set(item.row.id, item.contactId);
@@ -1184,7 +1217,7 @@ export async function runImportJob(importId: string): Promise<void> {
             if (!contactId) continue;
             interactionRows.push(
               ...adapter
-                .interactions(row.payload as ImportJobRowPayload, contactId, userId)
+                .interactions(row.payload, contactId, userId)
                 // Provenance stamped here, not in each adapter: it is a property of the job,
                 // not of the row, and an adapter that forgot it would produce interactions
                 // no revert could find.
@@ -1260,7 +1293,7 @@ export async function runImportJob(importId: string): Promise<void> {
             if (!contactId) continue;
             reminderRows.push(
               ...adapter
-                .reminders(row.payload as ImportJobRowPayload, contactId, userId)
+                .reminders(row.payload, contactId, userId)
                 .map((reminder) => ({ ...reminder, importId }))
             );
           }
@@ -1458,6 +1491,19 @@ export async function runImportJob(importId: string): Promise<void> {
       reportAndContinue({ where: "job.import.finalize.recalibrate", userId: importRow.userId }, null)
     );
     await kickEmbeddingBackfill(importRow.userId);
+    // Contacts this file saved under a handle ("jsmith42") get a real name, or a "?", now
+    // rather than at the next hourly pass. Same step `finalizeIngest` runs for connectors.
+    const { kickNameSweep } = await import("@/lib/contact-name-sweep");
+    await kickNameSweep(importRow.userId);
+    // Anyone still without a LinkedIn URL who is in the kept LinkedIn export. The Connections
+    // import is that export, so it has nothing to add to itself. (The export upload's own
+    // signals job does run it: that is when a newly kept export first meets the network.)
+    if (getAdapter(importRow.importType)?.fieldSource !== "linkedin_export") {
+      const { fillFromStoredExport } = await import("@/lib/linkedin-export-facts");
+      await fillFromStoredExport(importRow.userId).catch(
+        reportAndContinue({ where: "job.import.finalize.export-fill", userId: importRow.userId }, 0)
+      );
+    }
 
     revalidatePath("/");
     revalidatePath("/contacts");

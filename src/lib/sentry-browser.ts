@@ -22,7 +22,7 @@ init({
   // Calendar, scan and MCP URLs carry their credential in the path (src/lib/sentry-scrub.ts).
   beforeSend: scrubSentryEvent,
   beforeSendTransaction: scrubSentryEvent,
-  beforeBreadcrumb: (crumb) => scrubSentryEvent({ breadcrumbs: [crumb] }).breadcrumbs![0]!,
+  beforeBreadcrumb: (crumb) => scrubSentryEvent({ breadcrumbs: [crumb] }).breadcrumbs[0],
 });
 
 export { captureException, captureRouterTransitionStart };

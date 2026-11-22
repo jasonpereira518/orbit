@@ -25,7 +25,8 @@ import { POST as emailIntelSweep } from "../src/app/api/email-intel/sweep/route"
 import { POST as timelineBackfill } from "../src/app/api/linkedin/timeline-events/backfill/route";
 import { POST as runCaptureJob } from "../src/app/api/capture/jobs/[id]/run/route";
 import { POST as radarRun } from "../src/app/api/radar/run/route";
-import { POST as radarFeeds } from "../src/app/api/radar/feeds/sweep/route";
+import { POST as radarWeb } from "../src/app/api/radar/web/route";
+import { POST as cronTick } from "../src/app/api/cron/tick/route";
 import { POST as radarDigest } from "../src/app/api/radar/digest/route";
 
 const SECRET = "smoke-internal-auth-secret";
@@ -146,10 +147,12 @@ async function main() {
   check("capture/jobs/[id]/run → 401", cap.status === 401, `got ${cap.status}`);
   const radar = await radarRun(req());
   check("radar/run → 401", radar.status === 401, `got ${radar.status}`);
-  const feeds = await radarFeeds(req());
-  check("radar/feeds/sweep → 401", feeds.status === 401, `got ${feeds.status}`);
+  const web = await radarWeb(req());
+  check("radar/web → 401", web.status === 401, `got ${web.status}`);
   const digest = await radarDigest(req());
   check("radar/digest → 401", digest.status === 401, `got ${digest.status}`);
+  const tick = await cronTick(req());
+  check("cron/tick → 401", tick.status === 401, `got ${tick.status}`);
 
   console.log("\nRoutes reject a wrong bearer when a secret is configured...");
   env({ CRON_SECRET: SECRET, VERCEL: "1", NODE_ENV: "production" });
@@ -160,7 +163,7 @@ async function main() {
     timelineBackfill(req("Bearer nope")),
     runCaptureJob(req("Bearer nope"), { params: Promise.resolve({ id: "smoke-capture" }) }),
     radarRun(req("Bearer nope")),
-    radarFeeds(req("Bearer nope")),
+    radarWeb(req("Bearer nope")),
     radarDigest(req("Bearer nope")),
   ]);
   check(

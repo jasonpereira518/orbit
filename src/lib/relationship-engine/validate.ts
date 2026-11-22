@@ -14,7 +14,10 @@ import { validateCommitments, type RawCommitmentItem } from "@/lib/date-commitme
 import { IMPLIED_MIN_CONFIDENCE } from "@/lib/implied-next-steps";
 import { normalizeForMatch } from "@/lib/verbatim";
 import type { RelationshipDigestAnswer } from "@/lib/relationship-engine/extract";
-import type { MessageWindow, ValidatedDigest, WindowMessage } from "@/lib/relationship-engine/types";
+import type { MessageWindow, ValidatedDigest, ValidatedEvent, WindowMessage } from "@/lib/relationship-engine/types";
+import { RELATIONSHIP_KINDS, type DatePrecision, type RelationshipKind } from "@/db/schema";
+import { cleanSingleLine } from "@/lib/ai-security";
+import { isMetContext } from "@/lib/met-context";
 
 /**
  * The floor for an excerpt to count as evidence. A substring test alone accepted "ok" — found
@@ -52,10 +55,37 @@ export function locateExcerpt(window: MessageWindow, excerpt: string): WindowMes
   return null;
 }
 
+const EVENT_TYPES = new Set<ValidatedEvent["type"]>(["meeting", "in_person", "call"]);
+const KINDS = new Set<string>(RELATIONSHIP_KINDS);
+
+function realDay(y: number, m: number, d: number): boolean {
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+}
+
+/** A model date by its shape only: YYYY-MM-DD, YYYY-MM or YYYY. Coarser dates are stored as their 1st. */
+export function readModelDate(raw: string): { date: string; precision: DatePrecision } | null {
+  const s = raw.trim();
+  // Nobody's "how we met" predates 1900; a year like that is a model artifact, not a date.
+  if (+s.slice(0, 4) < 1900) return null;
+  let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (m) return realDay(+m[1], +m[2], +m[3]) ? { date: s, precision: "day" } : null;
+  m = /^(\d{4})-(\d{2})$/.exec(s);
+  if (m) return +m[2] >= 1 && +m[2] <= 12 ? { date: `${s}-01`, precision: "month" } : null;
+  m = /^(\d{4})$/.exec(s);
+  return m ? { date: `${s}-01-01`, precision: "year" } : null;
+}
+
+const dayOf = (d: Date) => d.toISOString().slice(0, 10);
+
+/** An excerpt kept on the digest is re-read by later prompts and shown on the contact page: one capped line. */
+const storedExcerpt = (excerpt: string) => cleanSingleLine(excerpt, 300) ?? "";
+
 export function validateDigest(
   answer: RelationshipDigestAnswer,
   window: MessageWindow,
-  openKeys: Set<string>
+  openKeys: Set<string>,
+  opts: { deepRead?: boolean } = {}
 ): ValidatedDigest {
   const facts = answer.facts.filter((f) => locateExcerpt(window, f.excerpt)).map((f) => f.text.trim());
 
@@ -136,7 +166,50 @@ export function validateDigest(
     }
   }
 
+  // Deep read: origin, relationship kind and events. Quote-or-drop, like everything above, and
+  // no date may be later than the message that states it.
+  let origin: ValidatedDigest["origin"] = null;
+  let relationship: ValidatedDigest["relationship"] = null;
+  const events: ValidatedDigest["events"] = [];
+  if (opts.deepRead) {
+    const o = answer.origin ?? null;
+    const oMsg = o ? locateExcerpt(window, o.excerpt) : null;
+    if (o && oMsg) {
+      const when = o.date ? readModelDate(o.date) : null;
+      // A period that starts after the message is a claim the message cannot have made.
+      if (!when || when.date <= dayOf(oMsg.at)) {
+        const text = cleanSingleLine(o.text, 200);
+        if (text) {
+          origin = {
+            text,
+            date: when?.date ?? null,
+            precision: when?.precision ?? null,
+            context: o.context && isMetContext(o.context) ? o.context : null,
+            excerpt: storedExcerpt(o.excerpt),
+            interactionId: oMsg.interactionId,
+          };
+        }
+      }
+    }
+    const r = answer.relationship ?? null;
+    const rMsg = r && KINDS.has(r.kind) ? locateExcerpt(window, r.excerpt) : null;
+    if (r && rMsg) relationship = { kind: r.kind as RelationshipKind, excerpt: storedExcerpt(r.excerpt), interactionId: rMsg.interactionId };
+    for (const e of answer.events ?? []) {
+      if (!EVENT_TYPES.has(e.type as ValidatedEvent["type"])) continue;
+      const msg = locateExcerpt(window, e.excerpt);
+      const summary = cleanSingleLine(e.summary, 200);
+      if (!msg || !summary) continue;
+      const said = readModelDate(e.date);
+      const msgDay = dayOf(msg.at);
+      const day = said?.precision === "day" && said.date <= msgDay ? said.date : msgDay;
+      events.push({ type: e.type as ValidatedEvent["type"], summary, day, excerpt: storedExcerpt(e.excerpt), interactionId: msg.interactionId });
+    }
+  }
+
   return {
+    origin,
+    relationship,
+    events,
     whatTheyDo: answer.what_they_do,
     workingOn: answer.working_on,
     summary: answer.summary,

@@ -199,7 +199,7 @@ export async function enqueueEmail(userId: string, input: EnqueueInput): Promise
         inReplyToSendId: input.inReplyToSendId ?? null,
       })
       .returning(); // bare: a field selector breaks over the Db union
-    return { ok: true, id: row!.id, sendAt: row!.sendAt, to: recipients.to, provider: sender.provider };
+    return { ok: true, id: row.id, sendAt: row.sendAt, to: recipients.to, provider: sender.provider };
   } catch (err) {
     if (isUniqueViolation(err)) return refuse("duplicate");
     throw err;
@@ -437,6 +437,21 @@ async function settleRetry(
     .where(and(eq(emailSends.id, send.id), eq(emailSends.claimedBy, worker)))
     .returning();
   return settled.length ? "retry" : "not_claimable";
+}
+
+/** Whether `drainEmailSends` would find a row: the same predicate, one cheap read. */
+export async function hasDueEmailSends(): Promise<boolean> {
+  const db = await getDb();
+  return (
+    rowsOf(
+      await db.execute(sql`
+        SELECT 1 FROM email_sends
+         WHERE send_at <= now()
+           AND (status = 'queued' OR (status = 'sending' AND lease_until < now()))
+         LIMIT 1
+      `)
+    ).length > 0
+  );
 }
 
 /**

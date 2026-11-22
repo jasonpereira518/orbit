@@ -25,7 +25,7 @@ import { userSettings } from "@/db/schema";
 import { detectInjectionSignals, guardModelOutput, recordAiSecurityEvent } from "@/lib/ai-security";
 import type { StoredProposedAction } from "@/lib/chat-proposed-actions";
 import { revalidatePathIfRequestScoped } from "@/lib/reminder-paths";
-import { chatWriteNamed, parseWriteInput, runUndo, touchesIdentity, type UndoStep } from "@/lib/tools/chat-writes";
+import { chatWriteNamed, parseWriteInput, runUndo, touchesIdentity } from "@/lib/tools/chat-writes";
 
 /** Changes one turn may apply itself; the rest are proposed. */
 export const AUTO_APPLY_PER_TURN = 5;
@@ -202,7 +202,7 @@ export async function rollBackApplied(userId: string, cards: readonly StoredProp
   for (const card of [...cards].reverse()) {
     if (!card.autoApplied || card.status !== "done" || !card.undo) continue;
     try {
-      await runUndo(userId, card.undo as UndoStep);
+      await runUndo(userId, card.undo);
       undone++;
     } catch {
       // Left applied; nothing more can be done without a card.

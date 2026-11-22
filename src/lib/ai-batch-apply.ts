@@ -17,6 +17,7 @@ import {
   touchImport,
   type RecruiterBatchPayload,
 } from "@/lib/gmail-scan-processor";
+import { applyOriginBatch, releaseOriginBatch } from "@/lib/relationship-engine/origin-pass";
 import { applyRelationshipBatch, releaseRelationshipBatch } from "@/lib/relationship-engine/runner";
 import { reportError } from "@/lib/report-error";
 
@@ -51,6 +52,11 @@ const APPLIERS: Partial<Record<AiOperationId, Applier>> = {
   "relationship.digest": {
     apply: (job, outcomes) => applyRelationshipBatch(job, outcomes),
     release: (job) => releaseRelationshipBatch(job),
+  },
+
+  "relationship.origin": {
+    apply: (job, outcomes) => applyOriginBatch(job, outcomes),
+    release: (job) => releaseOriginBatch(job),
   },
 
   "import.linkedin.timeline": {

@@ -16,6 +16,10 @@ import type {
   SaveActivityResponse,
   SaveContactRequest,
   SaveContactResponse,
+  ScanMatchRequest,
+  ScanMatchResponse,
+  ScanSaveRequest,
+  ScanSaveResponse,
   StartersRequest,
   StartersResponse,
 } from "@contract";
@@ -169,6 +173,14 @@ export function createApi(getToken: TokenGetter) {
 
     saveActivity: (body: SaveActivityRequest, signal?: AbortSignal) =>
       post<SaveActivityResponse>("/signals", body, signal),
+
+    /** "Scan this page", step one: which of these authors are contacts (profile links only). */
+    scanMatch: (body: ScanMatchRequest, signal?: AbortSignal) =>
+      post<ScanMatchResponse>("/signals/scan", body, signal),
+
+    /** Step two: only the matched contacts' posts. */
+    scanSave: (body: ScanSaveRequest, signal?: AbortSignal) =>
+      post<ScanSaveResponse>("/signals/scan/save", body, signal),
 
     // GET /contacts?q= exists server-side but has no client here yet: it is
     // the seam for a future "link this page to an existing contact" flow.

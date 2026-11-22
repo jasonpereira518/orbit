@@ -13,13 +13,15 @@
  */
 
 /**
- * How often a visible tab beats.
+ * How often a visible, in-use tab beats.
  *
- * 45s is chosen against the window below, not for its own sake: it gives every beat a full
+ * 180s is chosen against the window below, not for its own sake: it gives every beat a full
  * spare interval of slack, so one dropped request — a sleeping radio, a redeploy, a
- * momentary offline — does not blink an active user out of the roster and back.
+ * momentary offline — does not blink an active user out of the roster and back. It was 45s;
+ * each beat wakes a function, and the cost of the coarser roster is that "active now" lags a
+ * person leaving by up to the window (plus the 5 minutes of input-idle before beats stop).
  */
-export const HEARTBEAT_INTERVAL_MS = 45 * 1000;
+export const HEARTBEAT_INTERVAL_MS = 180 * 1000;
 
 /**
  * How recently a beat must have landed for the user to count as live. Exactly two

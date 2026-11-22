@@ -13,9 +13,10 @@ import {
 } from "@/db/schema";
 import { internalFetch } from "@/lib/internal-auth";
 import { failImport, truncateStoredError } from "@/lib/import-job-processor";
+import { isRealHumanName } from "@/lib/recruiter-detect";
 import {
   buildRecruiterQuery,
-  fetchGmailHeaders,
+  type fetchGmailHeaders,
   fetchGmailHeadersBatched,
   fetchGmailMessages,
   firmFromEmail,
@@ -53,6 +54,13 @@ const CHUNK_SIZE = 8;
  * trip however many requests it holds, and capped by what `submitAiBatch` accepts.
  */
 const SCAN_BATCH_SIZE = 50;
+/**
+ * Fewer senders than this are classified inline, never batched. A batch answers in minutes
+ * to a day and is only collected by the half-hourly sweep, so a small scan someone is
+ * watching sat at "Reading 0/N" for up to an hour. Half price on a handful of calls is
+ * pennies; a progress bar that never moves is not.
+ */
+export const BATCH_MIN_SENDERS = 10;
 /** Same headroom as the LinkedIn runner: stay under the 300s ceiling with room to hand off. */
 const TIME_BUDGET_MS = 4.5 * 60 * 1000;
 const DISCOVERY_PAGE_SIZE = 200;
@@ -376,13 +384,19 @@ export async function applyRecruiterVerdict(
     return "rejected";
   }
 
+  const name = result.fullName || (isRealHumanName(payload.name).valid ? payload.name : null);
+  if (!name || !isRealHumanName(name).valid) {
+    return "rejected";
+  }
+
   // The sender's address came from THIS user's inbox; it lands on a shared row only when
   // the row is new (this user is its creator) or this user shares.
   const recruiter = await upsertCanonicalRecruiter(
     {
-      fullName: result.fullName || payload.name,
+      fullName: name,
       firm: result.firm || payload.firm,
       email: payload.email,
+      linkedinUrl: result.linkedinUrl,
       specialty: result.rolesDiscussed,
     },
     { contributePii: await isViewerSharing(userId), createdByUserId: userId }
@@ -395,6 +409,7 @@ export async function applyRecruiterVerdict(
     source: "gmail",
     // From THIS user's mailbox: it belongs on their own link whether or not they share.
     email: payload.email,
+    linkedinUrl: result.linkedinUrl,
   });
 
   const db = await getDb();
@@ -404,6 +419,7 @@ export async function applyRecruiterVerdict(
       aiSummary: result.summary,
       companiesMentioned: result.companiesMentioned,
       rolesDiscussed: result.rolesDiscussed,
+      roleInterviewingFor: result.roleInterviewingFor,
       emailCount: meta.messageCount,
       firstEmailAt: meta.dates.length ? new Date(Math.min(...meta.dates)) : null,
       lastEmailAt: meta.dates.length ? new Date(Math.max(...meta.dates)) : null,
@@ -555,6 +571,7 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
   } else {
     const window = await resolveScanWindow(userId, {
       full: importRow.stats?.scanIsFull === true,
+      cycle: (importRow.stats as { cycle?: import("@/lib/recruiter-scan-state").RecruitingCycle } | undefined)?.cycle,
     });
     scanAfter = window.after;
     scanIsFull = window.isFull;
@@ -661,10 +678,10 @@ export async function runGmailRecruiterScanJob(importId: string, deps: ScanDeps 
       );
       const keys = await Promise.all(calls.map((c) => completionCacheKey(userId, c)));
       const known = await Promise.all(keys.map((k) => readAiResult<string>(userId, "recruiter.scan", k, RECRUITER_VERDICT_TTL_DAYS)));
-      const fresh = batchable.flatMap((b, i) => (known[i] === undefined ? [{ b, call: calls[i]!, key: keys[i]! }] : []));
+      const fresh = batchable.flatMap((b, i) => (known[i] === undefined ? [{ b, call: calls[i], key: keys[i] }] : []));
       batchable = fresh.map((f) => f.b);
 
-      if (batchable.length > 0) {
+      if (batchable.length >= BATCH_MIN_SENDERS) {
         const items = fresh.map(({ b, key }, i) => ({
           customId: `s${i}`,
           rowId: b.row.id,

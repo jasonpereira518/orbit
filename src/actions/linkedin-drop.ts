@@ -16,6 +16,7 @@ import {
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
+import { personNameFromSlug } from "@/lib/names/from-identifier";
 
 export type DroppedLinkedInPerson = { contactId: string; name: string };
 
@@ -95,7 +96,7 @@ export async function addContactsFromLinkedInUrls(
   let limitMessage: string | null = null;
 
   for (const person of people) {
-    const fullName = person.name ?? person.slug;
+    const fullName = person.name ?? personNameFromSlug(person.slug) ?? person.slug;
     try {
       const { contactId, outcome } = await resolveOrCreateContact(
         userId,

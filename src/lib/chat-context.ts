@@ -1,3 +1,6 @@
+import { listMemories } from "@/lib/chat-memory";
+import { memoriesForPrompt } from "@/lib/chat-memory-text";
+import { attachmentsForPrompt, type ChatAttachment } from "@/lib/chat-attachments";
 import { nowInZone } from "@/lib/user-clock";
 import { loadChatCalendar, type ChatCalendar } from "@/lib/chat-calendar";
 import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
@@ -72,6 +75,7 @@ import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadRecruitersForChat } from "@/actions/recruiters";
 import { loadWritingInstructions, writingInstructionsFromRow } from "@/lib/writing-instructions-store";
 import { sanitizeDraft } from "@/lib/chat-draft";
+import { loadRelationshipContexts, renderRelationshipBlock, type RelationshipContext } from "@/lib/relationship-context";
 
 /**
  * Everything the model is shown for one question, assembled with the independent lookups
@@ -116,6 +120,24 @@ export function renderAboutUser(
     ? [career.role.title, career.role.company].map((v) => sanitizeProfileLine(v ?? "")).filter(Boolean).join(" at ")
     : "";
   if (role) parts.push(`current role: ${role}`);
+  // LinkedIn deep read (PR 1 history): up to three past roles and two schools.
+  const years = (a?: { year: number }, b?: { year: number }) =>
+    a ? (b && b.year !== a.year ? `${a.year}–${b.year}` : `${a.year}`) : "";
+  const past = (career?.positions ?? [])
+    .filter((p) => p.end)
+    .slice(0, 3)
+    .map((p) => {
+      const what = [p.title, p.company].map((v) => sanitizeProfileLine(v ?? "")).filter(Boolean).join(" at ");
+      const when = years(p.start, p.end);
+      return what ? `${what}${when ? ` (${when})` : ""}` : "";
+    })
+    .filter(Boolean);
+  if (past.length) parts.push(`previously: ${past.join(", ")}`);
+  const studied = (career?.education ?? [])
+    .slice(0, 2)
+    .map((e) => [e.degree, e.school].map((v) => sanitizeProfileLine(v ?? "")).filter(Boolean).join(" at "))
+    .filter(Boolean);
+  if (studied.length) parts.push(`studied: ${studied.join(", ")}`);
   for (const [label, value] of [
     ["headline", career?.profile?.headline],
     ["based in", career?.profile?.location],
@@ -126,7 +148,12 @@ export function renderAboutUser(
   return parts.length ? `About the user — ${parts.join("; ")}`.slice(0, ABOUT_USER_MAX_CHARS) : null;
 }
 
-type PriorRow = { role: string; content: string; recommendations?: ChatRecommendation[] | null };
+type PriorRow = {
+  role: string;
+  content: string;
+  recommendations?: ChatRecommendation[] | null;
+  attachments?: ChatAttachment[] | null;
+};
 
 /**
  * Oldest first, and an assistant turn carries the names it suggested. The cards are not in
@@ -141,9 +168,16 @@ function rowsToTurns(rows: PriorRow[]): ChatTurn[] {
       // Capped: a stored answer can hold a 200-row list table, and replaying it whole would
       // crowd this question's own context out of the prompt.
       const content = m.content.length > PRIOR_TURN_CHARS ? `${m.content.slice(0, PRIOR_TURN_CHARS)}…` : m.content;
+      // Only the names here: the files' text returns inside the prompt's fenced files block.
+      const files = (m.attachments ?? []).map((a) => a.name);
       return {
         role: m.role as ChatTurn["role"],
-        content: m.role === "assistant" && names.length ? `${content}\n(Suggested, in order: ${names.join(", ")})` : content,
+        content:
+          m.role === "assistant" && names.length
+            ? `${content}\n(Suggested, in order: ${names.join(", ")})`
+            : files.length
+              ? `${content}\n(Attached: ${files.join(", ")})`
+              : content,
       };
     });
 }
@@ -167,6 +201,10 @@ export type ChatContext = {
   scopedQuestion: string;
   /** Freeform context the user typed for this conversation, if any — never extracted into contacts. */
   userContext: string | null;
+  /** What the person asked Orbit to keep in mind across chats, for the prompt's fenced block. */
+  memories: string | null;
+  /** The text of files attached to this question and earlier in the thread, for the prompt's fenced block. */
+  attachedFiles: string | null;
   /** One line to show under the answer when the semantic arm was unavailable. */
   searchNotice: string | null;
   /**
@@ -777,6 +815,8 @@ export async function prepareChatContext(
     timeZone?: string | null;
     /** The request's own signal, passed to the model calls retrieval makes. */
     signal?: AbortSignal;
+    /** Files attached to this question, already checked (`sanitizeAttachments`). */
+    attachments?: readonly ChatAttachment[];
   }
 ): Promise<ChatContext> {
   const db = await getDb();
@@ -792,13 +832,15 @@ export async function prepareChatContext(
   // attached: there is no single person to answer "primarily about". The mention is still
   // loaded as attached (the step, the thread's mark) but not rendered twice.
   const pinnedContactId =
-    options.focusContactId?.trim() || (attachedIds.length === 1 ? attachedIds[0]!.trim() : null);
+    options.focusContactId?.trim() || (attachedIds.length === 1 ? attachedIds[0].trim() : null);
   const steps = options.steps ?? NULL_STEPS;
   const photos = createPhotoCache();
 
   // ROUTING (decisions/chat-route.ts). Read from the question parse retrieval already makes,
   // so it costs no extra round trip; the branches it gates (attention brief, recruiter list)
   // chain off it while the search runs. A failed parse routes to the one-pass default.
+  // Read beside everything else; an answer never fails because memories could not be read.
+  const memoriesP = listMemories(userId).catch(() => []);
   const priorRowsP = threadId
     ? db.query.chatMessages
         .findMany({
@@ -810,13 +852,13 @@ export async function prepareChatContext(
           ),
           orderBy: [desc(chatMessages.createdAt)],
           limit: PRIOR_TURN_LIMIT,
-          columns: { role: true, content: true, recommendations: true },
+          columns: { role: true, content: true, recommendations: true, attachments: true },
         })
         .then((rows) =>
           // A stopped turn persists its question with no reply. Newest-first, so that is
           // only ever the first row — never orphan it into history as an unanswered ask.
           // The router reads these too: an unanswered question is not a turn to follow up on.
-          rows.length && rows[0]!.role === "user" ? rows.slice(1) : rows
+          rows.length && rows[0].role === "user" ? rows.slice(1) : rows
         )
     : Promise.resolve([] as PriorRow[]);
   // ONE account read for the whole question. The decider, the query embedding and its cache
@@ -1107,7 +1149,7 @@ export async function prepareChatContext(
   if (retrievedIds.length) {
     steps.start("read", `Reading notes on ${plural(retrievedIds.length, "person", "people")}`);
   }
-  const [snippets, careerLines, moveLines, focusMsgs, focusProfileData, focusReminders, focusBrief] = await Promise.all([
+  const [snippets, careerLines, moveLines, focusMsgs, focusProfileData, focusReminders, focusBrief, focusDeep] = await Promise.all([
     loadRecentInteractions(userId, retrievedIds),
     getCareerLines(userId, retrievedIds).catch(() => new Map<string, string>()),
     getRecentMoveLines(userId, retrievedIds).catch(() => new Map<string, string>()),
@@ -1144,6 +1186,10 @@ export async function prepareChatContext(
           .catch(() => [])
       : Promise.resolve([]),
     focusContactId ? getContactBrief(userId, focusContactId).catch(() => null) : Promise.resolve(null),
+    // LinkedIn deep read: how you met, kind, overlap, topics. Empty when it is off.
+    focusContactId
+      ? loadRelationshipContexts(userId, [focusContactId]).catch(() => new Map<string, RelationshipContext>())
+      : Promise.resolve(new Map<string, RelationshipContext>()),
   ]);
   if (retrievedIds.length) {
     // Count the people who actually had something written about them, not the page size —
@@ -1169,6 +1215,7 @@ export async function prepareChatContext(
   const focusProfile =
     [
       renderFocusRelationship(focusRelationship, focusReminders, focusBrief),
+      focusContactId ? renderRelationshipBlock(focusDeep.get(focusContactId)) : null,
       renderFocusProfile(focusProfileData),
     ]
       .filter((block): block is string => Boolean(block))
@@ -1269,6 +1316,11 @@ export async function prepareChatContext(
     snippets,
     scopedQuestion,
     userContext,
+    memories: memoriesForPrompt(await memoriesP),
+    attachedFiles: attachmentsForPrompt(
+      options.attachments ?? [],
+      priorRows.flatMap((row) => (row.role === "user" ? (row.attachments ?? []) : []))
+    ),
     searchNotice: retrieval.searchNotice,
     goals: retrieval.goals,
     userSchools: retrieval.userSchools,

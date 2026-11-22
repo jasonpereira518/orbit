@@ -1,5 +1,6 @@
 import type { GoogleContactRowPayload } from "@/db/schema";
 import type { ImportAdapter } from "@/lib/import-engine";
+import { HOW_MET_LABEL } from "@/lib/contact-fields";
 
 /**
  * The `imports.import_type` value Google Contacts import jobs carry.
@@ -21,11 +22,13 @@ export const GOOGLE_CONTACTS_IMPORT_TYPE = "google_contacts";
  * safer than silently merging two different people who happen to share a name.
  */
 export const googleContactsAdapter: ImportAdapter<GoogleContactRowPayload> = {
+  fieldSource: "address_book",
   identity(payload) {
     if (!payload.fullName.trim()) return null;
     return {
       fullName: payload.fullName,
       email: payload.email,
+      phone: payload.phone,
       company: payload.company,
       title: payload.title,
     };
@@ -47,7 +50,7 @@ export const googleContactsAdapter: ImportAdapter<GoogleContactRowPayload> = {
       // ?? 2` to the same value — this task changes plumbing only, not the semantics of
       // this field.
       relationshipScore: 2,
-      howMet: "Google Contacts",
+      howMet: HOW_MET_LABEL.googleContacts,
       metContext: "online",
       tagNames: ["google-contacts"],
     };
@@ -62,7 +65,7 @@ export const googleContactsAdapter: ImportAdapter<GoogleContactRowPayload> = {
       profileImageUrl: payload.photoUrl || undefined,
       profileImageSource: "google",
       source: "google_contacts",
-      howMet: "Google Contacts",
+      howMet: HOW_MET_LABEL.googleContacts,
       metContext: "online",
     };
   },

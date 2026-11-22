@@ -30,7 +30,8 @@
  * runs before any query, so a flood of malformed tokens against a public route costs
  * zero database work. Hashed, not encrypted, for the reasons set out in that file.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 import { and, eq, lt } from "drizzle-orm";
 import { getDb } from "@/db";
 import { captureHandoffs, captureJobs, userSettings } from "@/db/schema";
@@ -61,7 +62,7 @@ export function generateHandoffToken(): GeneratedHandoffToken {
 }
 
 export function hashHandoffToken(token: string): string {
-  return createHash("sha256").update(token, "utf8").digest("hex");
+  return sha256Hex(token);
 }
 
 /**

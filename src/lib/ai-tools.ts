@@ -83,6 +83,12 @@ export type ToolDriver = {
   step(signal: AbortSignal, options?: ToolStepOptions): Promise<ToolStep>;
   /** One result per call from the last step, in any order. */
   addResults(results: Array<{ call: ToolCall; content: string }>): void;
+  /**
+   * Something the person said while the loop was running, for the next round to read. Call
+   * it after `addResults`: it joins the user turn the results are in, since no provider
+   * takes a second user turn between a tool call and its results.
+   */
+  addUserText(text: string): void;
 };
 
 /**
@@ -233,6 +239,11 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
           })),
         });
       },
+      addUserText(text) {
+        const last = messages[messages.length - 1];
+        if (last?.role === "user" && Array.isArray(last.content)) last.content.push({ type: "text", text });
+        else messages.push({ role: "user", content: text });
+      },
     };
   }
 
@@ -273,8 +284,8 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
             signal.throwIfAborted();
             if (read.usage) {
               report({
-                ...tokensFromOpenAi({ usage: read.usage } as never),
-                reportedCostMicros: reportedCostMicros({ usage: read.usage } as OpenAiUsageWithCost),
+                ...tokensFromOpenAi({ usage: read.usage }),
+                reportedCostMicros: reportedCostMicros({ usage: read.usage }),
               });
             }
             return read;
@@ -322,6 +333,9 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
         for (const r of results) {
           messages.push({ role: "tool", tool_call_id: r.call.id, content: r.content });
         }
+      },
+      addUserText(text) {
+        messages.push({ role: "user", content: text });
       },
     };
   }
@@ -409,6 +423,11 @@ export async function createToolDriver(input: DriverInput): Promise<ToolDriver> 
           },
         })),
       });
+    },
+    addUserText(text) {
+      const last = contents[contents.length - 1];
+      if (last?.role === "user" && last.parts) last.parts.push({ text });
+      else contents.push({ role: "user", parts: [{ text }] });
     },
   };
 }

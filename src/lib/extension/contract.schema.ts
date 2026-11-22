@@ -23,6 +23,8 @@ import type {
   PageContext,
   ResolveRequest,
   SaveActivityRequest,
+  ScanMatchRequest,
+  ScanSaveRequest,
   SaveContactRequest,
   StartersRequest,
 } from "./contract";
@@ -239,6 +241,23 @@ export const saveActivityRequestSchema = z.object({
   seenAt: z.iso.datetime().nullish(),
 });
 
+export const scanMatchRequestSchema = z.object({
+  authors: z.array(z.string().trim().min(1).max(500)).min(1).max(25),
+});
+
+export const scanSaveRequestSchema = z.object({
+  posts: z
+    .array(
+      z.object({
+        authorProfileUrl: z.string().trim().min(1).max(500),
+        excerpt: z.string().trim().min(1).max(1000),
+        url: z.string().trim().max(2000).nullish(),
+      })
+    )
+    .min(1)
+    .max(25),
+});
+
 /* Drift guards. If a schema and its contract type diverge, these stop compiling. */
 const _resolve: Exact<z.infer<typeof resolveRequestSchema>, ResolveRequest> = true;
 const _page: Exact<z.infer<typeof pageContextSchema>, PageContext> = true;
@@ -250,6 +269,8 @@ const _save: Exact<z.infer<typeof saveContactRequestSchema>, SaveContactRequest>
 const _log: Exact<z.infer<typeof logInteractionRequestSchema>, LogInteractionRequest> = true;
 const _followUp: Exact<z.infer<typeof followUpRequestSchema>, FollowUpRequest> = true;
 const _activity: Exact<z.infer<typeof saveActivityRequestSchema>, SaveActivityRequest> = true;
-void [_resolve, _page, _parse, _roster, _connections, _starters, _save, _log, _followUp, _activity];
+const _scanMatch: Exact<z.infer<typeof scanMatchRequestSchema>, ScanMatchRequest> = true;
+const _scanSave: Exact<z.infer<typeof scanSaveRequestSchema>, ScanSaveRequest> = true;
+void [_resolve, _page, _parse, _roster, _connections, _starters, _save, _log, _followUp, _activity, _scanMatch, _scanSave];
 
 export type { ContactSearchResponse };
