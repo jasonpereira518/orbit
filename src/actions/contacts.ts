@@ -3,6 +3,7 @@
 import { after } from "next/server";
 import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { requirePageUser } from "@/lib/plan-guards";
+import { asActionResult, type ActionResult } from "@/lib/errors";
 import { relatedSqlLower } from "@/lib/related-contacts-sql";
 import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { listSchools } from "@/lib/events/target-companies";
@@ -1327,22 +1328,26 @@ export async function lookupLinkedInProfile(input: {
   linkedinUrl: string;
   fullName?: string;
   email?: string;
-}): Promise<LinkedInProfileEnrichment | null> {
-  const userId = await requirePageUser("page.contacts");
-  const raw = input.linkedinUrl.trim();
-  if (!isLinkedInProfileUrl(raw)) {
-    throw new Error("Enter a LinkedIn profile URL (linkedin.com/in/…)");
-  }
+}): Promise<ActionResult<LinkedInProfileEnrichment | null>> {
+  // asActionResult: Apollo's plan refusal is a UserFacingError, and a thrown one would
+  // reach the form as a digest (and Sentry as a 500) instead of its own words.
+  return asActionResult(async () => {
+    const userId = await requirePageUser("page.contacts");
+    const raw = input.linkedinUrl.trim();
+    if (!isLinkedInProfileUrl(raw)) {
+      throw new Error("Enter a LinkedIn profile URL (linkedin.com/in/…)");
+    }
 
-  const linkedinUrl = buildLinkedInUrl(raw);
-  const [profile] = await enrichPeopleFromLinkedIn(userId, [
-    {
-      linkedinUrl,
-      fullName: input.fullName?.trim() || null,
-      email: input.email?.trim() || null,
-    },
-  ]);
-  return profile;
+    const linkedinUrl = buildLinkedInUrl(raw);
+    const [profile] = await enrichPeopleFromLinkedIn(userId, [
+      {
+        linkedinUrl,
+        fullName: input.fullName?.trim() || null,
+        email: input.email?.trim() || null,
+      },
+    ]);
+    return profile;
+  });
 }
 
 /**

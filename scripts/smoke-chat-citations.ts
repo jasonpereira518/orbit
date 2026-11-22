@@ -82,7 +82,7 @@ async function main() {
   check("evidence is stored exactly as given", sameJson(stored?.evidence, evidence), JSON.stringify(stored?.evidence));
 
   console.log("reading through getChatThread");
-  const loaded = await getChatThread(thread!.id);
+  const loaded = (await getChatThread(thread!.id))!;
   const row = loaded.messages.find((m) => m.id === saved.messageId);
   check("the thread returns the evidence column", sameJson(row?.evidence, evidence), JSON.stringify(row?.evidence));
 
