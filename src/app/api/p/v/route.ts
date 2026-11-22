@@ -31,11 +31,16 @@ export const runtime = "nodejs";
  * keeps reporting. Do not rename it back to anything that says "track", "analytics" or "beacon".
  *
  * Traffic ingest. The client beacon in `src/components/analytics/pageview-beacon.tsx`
- * POSTs one of these per page view, a `load` once its content is on screen, then a `dwell`
- * for it on the way out.
+ * sends ONE request per page view, when the visitor leaves it: a `view` that also carries the
+ * view's `at` time and, as flat optional fields, its `loadMs`/`navType`, Core Web Vitals
+ * (`lcpMs`, `inpMs`, `clsMilli`) and `dwellMs`. Later leaves of the same view (a tab away,
+ * then back, then gone) send an `update` — the same id and fields, no view. The row is
+ * inserted first, then patched from whichever of those fields are present, in one request.
  *
- * Two more kinds ride the same pipe: `vitals` (Core Web Vitals for a document's first view,
- * patched onto its row like `load`) and `event` — the ONE door for client-only product events
+ * The older one-kind-per-request shapes (`dwell`, `load`, `vitals`, and a bare `view`) are
+ * still accepted for tabs that loaded the previous bundle, and take the same patch path.
+ *
+ * One more kind rides the same pipe: `event` — the ONE door for client-only product events
  * (`CLIENT_EVENTS`: an error screen shown, a desktop notification shown or clicked). Any other
  * event name is dropped; the properties are validated against `product-event-schemas` before
  * anything is written, and the user is whoever the request's session says, never the body.
@@ -73,7 +78,7 @@ const OK = () => new NextResponse(null, { status: 204 });
  * matters here — someone curling the endpoint in a loop to poison the numbers.
  */
 const RATE_WINDOW_MS = 60_000;
-/** Per IP, and a page sends up to three beacons (view, load, dwell): room for a campus NAT. */
+/** Per IP, and a page sends one beacon per leave (a few for a visitor who tabs away): room for a campus NAT. */
 const RATE_MAX = 240;
 const recentByVisitor = new Map<string, number[]>();
 
@@ -198,6 +203,27 @@ async function resolveUserId(request: Request): Promise<string | null> {
   return userFromStaleSession(request);
 }
 
+/** How far back a client-reported view time is believed. */
+const AT_MAX_AGE_MS = 86_400_000;
+
+/**
+ * Patch a view's row from whichever of `loadMs`, the vitals and `dwellMs` the body carries.
+ * Each writer validates and clamps its own input, so a body with none of them is a no-op.
+ */
+async function applyPatches(
+  id: string,
+  body: { dwellMs?: unknown; loadMs?: unknown; navType?: unknown; lcpMs?: unknown; inpMs?: unknown; clsMilli?: unknown }
+) {
+  // Load first: it sets `nav_type`, which the vitals writer reads to refuse a soft view's.
+  if (typeof body.loadMs === "number" && (body.navType === "hard" || body.navType === "soft")) {
+    await recordLoad(id, body.loadMs, body.navType);
+  }
+  if (body.lcpMs !== undefined || body.inpMs !== undefined || body.clsMilli !== undefined) {
+    await recordVitals(id, { lcpMs: body.lcpMs, inpMs: body.inpMs, clsMilli: body.clsMilli });
+  }
+  if (typeof body.dwellMs === "number") await recordDwell(id, body.dwellMs);
+}
+
 const isUuid = (value: unknown): value is string =>
   typeof value === "string" &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
@@ -217,6 +243,7 @@ export async function POST(request: Request) {
       path?: unknown;
       url?: unknown;
       referrer?: unknown;
+      at?: unknown;
       dwellMs?: unknown;
       loadMs?: unknown;
       navType?: unknown;
@@ -231,26 +258,15 @@ export async function POST(request: Request) {
 
     if (!body || !isUuid(body.id)) return OK();
 
-    // Time-on-page, sent by `sendBeacon` as the page goes away.
-    if (body.kind === "dwell") {
-      if (typeof body.dwellMs === "number") await recordDwell(body.id, body.dwellMs);
-      return OK();
-    }
-
-    // Time until the page's content was on screen, sent once the skeletons are gone.
-    if (body.kind === "load") {
-      if (
-        typeof body.loadMs === "number" &&
-        (body.navType === "hard" || body.navType === "soft")
-      ) {
-        await recordLoad(body.id, body.loadMs, body.navType);
-      }
-      return OK();
-    }
-
-    // Core Web Vitals for the document's first view: monotonic, like dwell.
-    if (body.kind === "vitals") {
-      await recordVitals(body.id, { lcpMs: body.lcpMs, inpMs: body.inpMs, clsMilli: body.clsMilli });
+    // The patch-only shapes: `update` from the batched beacon, and the older one-per-kind
+    // requests still in flight from tabs that loaded the previous bundle.
+    if (
+      body.kind === "update" ||
+      body.kind === "dwell" ||
+      body.kind === "load" ||
+      body.kind === "vitals"
+    ) {
+      await applyPatches(body.id, body);
       return OK();
     }
 
@@ -277,7 +293,16 @@ export async function POST(request: Request) {
     if (!isUuid(body.sessionId)) return OK();
     if (typeof body.path !== "string" || !isTrackedPath(body.path)) return OK();
 
-    const visitorHash = hashVisitor(clientIp(headers), userAgent);
+    // The batched beacon is sent when the visitor leaves, so the view carries the time it began:
+    // `created_at` and the daily visitor salt must be those of the arrival, not of the leave, or
+    // a view that spans midnight (or a pinned tab) would land in the wrong day. A client clock
+    // can only move it into the past, and no further than a day.
+    const now = Date.now();
+    const at =
+      typeof body.at === "number" && body.at > now - AT_MAX_AGE_MS
+        ? new Date(Math.min(body.at, now))
+        : new Date(now);
+    const visitorHash = hashVisitor(clientIp(headers), userAgent, at);
 
     // The client sends its full URL so the UTMs can be read here rather than trusted from
     // it. `attributionFromUrl` is the same parser the signup attribution cookie uses, so a
@@ -319,6 +344,7 @@ export async function POST(request: Request) {
       // being filtered out.
       isBot,
       isInternal: body.internal === true || isInternalUser(userId),
+      createdAt: at,
     });
 
     // The first signed-in view of a new account closes the session -> account link and emits
@@ -328,6 +354,9 @@ export async function POST(request: Request) {
         reportError(err, { where: "api.track.signup_session", level: "warning" })
       );
     }
+
+    // The batched beacon's load, vitals and dwell for this same view, now that its row exists.
+    await applyPatches(body.id, body);
   } catch (err) {
     // Still a 204: none of this is the visitor's problem. But it IS the operator's — a
     // missing column after a bad migration used to look like a quiet week on the admin page,
