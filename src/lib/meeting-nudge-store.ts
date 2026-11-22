@@ -8,10 +8,14 @@
  * all for someone with no calendar connected or no meetings plan: the first non-`ok` answer
  * stops it for the session); the 15-second tick only compares clocks locally.
  *
- * It is deliberately NOT paused while the tab is hidden. The case it exists for is Orbit
- * sitting in a background tab while the call is in another one. A hidden tab's timers slow to
- * about one a minute, which still lands inside the five-minutes-before window, and that is
- * when the desktop alert — not the in-app card, which nobody is looking at — does the work.
+ * The calendar READ is paused while the tab is hidden (each one is a live Google call from a
+ * function), but the local 15-second tick is not. The case this exists for is Orbit sitting
+ * in a background tab while the call is in another one: the list read when the tab was last
+ * visible (refreshed again on return after 5 minutes) is what the tick works from, and a
+ * hidden tab's timers slow to about one a minute, which still lands inside the
+ * five-minutes-before window. That is when the desktop alert — not the in-app card, which
+ * nobody is looking at — does the work. A meeting added to the calendar while the tab is
+ * hidden is not seen until it is shown again.
  */
 
 import { useSyncExternalStore } from "react";
@@ -208,7 +212,9 @@ function onVisibility(): void {
 
 function start(): void {
   timers.first = setTimeout(() => void refresh(), FIRST_REFRESH_DELAY_MS);
-  timers.refresh = setInterval(() => void refresh(), REFRESH_MS);
+  timers.refresh = setInterval(() => {
+    if (document.visibilityState !== "hidden") void refresh();
+  }, REFRESH_MS);
   timers.tick = setInterval(recompute, TICK_MS);
   stopVisibility = listen(document, "visibilitychange", onVisibility);
 }

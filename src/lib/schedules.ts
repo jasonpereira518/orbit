@@ -13,7 +13,9 @@
  * costs Neon hours; check the budget before shortening it.
  *
  * Crons are UTC and sit on the tick marks (:00 and :30), so a job runs at the minute it
- * lists. The hourly jobs are split between the two marks to halve each burst.
+ * lists. The hourly jobs are split between the two marks to halve each burst. Only jobs a
+ * person or an alert waits on run every tick; each one costs a function invocation (Vercel
+ * Hobby's Fluid Active CPU is capped) even when idle, so everything else is hourly or slower.
  */
 
 export type JobSchedule = { id: string; cron: string; method: "GET" | "POST"; path: string };
@@ -22,24 +24,31 @@ export const TICK_MINUTES = 30;
 export const TICK_PATH = "/api/cron/tick";
 
 export const JOB_SCHEDULES: readonly JobSchedule[] = [
-  // Every tick: the alerting path, the outbound drains, the credit emails, the syncs.
+  // Every tick: only what a person is waiting on or an alert depends on. The ops sweep is the
+  // alerting path; sync-run keeps connections fresh (its alert threshold is three hours);
+  // email-drain is the backstop for queued and scheduled sends, so a send waits at most one tick.
   { id: "ops-sweep", cron: "*/30 * * * *", method: "POST", path: "/api/ops/sweep" },
-  { id: "webhooks-drain", cron: "*/30 * * * *", method: "POST", path: "/api/webhooks/outbound/drain" },
-  { id: "connectors-outbox", cron: "*/30 * * * *", method: "POST", path: "/api/connectors/outbox/drain" },
-  { id: "email-drain", cron: "*/30 * * * *", method: "POST", path: "/api/email/drain" },
-  { id: "credit-notices", cron: "*/30 * * * *", method: "POST", path: "/api/credits/notices" },
   { id: "sync-run", cron: "*/30 * * * *", method: "POST", path: "/api/sync/run" },
-  { id: "email-intel", cron: "*/30 * * * *", method: "POST", path: "/api/email-intel/sweep" },
-  { id: "cloud-notes", cron: "*/30 * * * *", method: "POST", path: "/api/cloud-notes/run" },
+  { id: "email-drain", cron: "*/30 * * * *", method: "POST", path: "/api/email/drain" },
   // Hourly, at :30.
   { id: "process-stalled", cron: "30 * * * *", method: "GET", path: "/api/imports/process-stalled" },
   // Radar's pass: each account is due at its own local 5am, and same-day alerts follow it.
   { id: "radar-run", cron: "30 * * * *", method: "POST", path: "/api/radar/run" },
   { id: "jobs-feed", cron: "30 * * * *", method: "POST", path: "/api/jobs/feed/sweep" },
+  // Retry queue for writes that failed once; the first attempt already ran when the user acted.
+  { id: "connectors-outbox", cron: "30 * * * *", method: "POST", path: "/api/connectors/outbox/drain" },
+  // Reads new career mail per opted-in account; not something anyone watches arrive.
+  { id: "email-intel", cron: "30 * * * *", method: "POST", path: "/api/email-intel/sweep" },
+  // Notices go out at 80% and 100% of credits; two hours late is invisible. Even hours only.
+  { id: "credit-notices", cron: "30 */2 * * *", method: "POST", path: "/api/credits/notices" },
   // Hourly, at :00.
   { id: "work-history", cron: "0 * * * *", method: "POST", path: "/api/work-history/sweep" },
   { id: "name-sweep", cron: "0 * * * *", method: "POST", path: "/api/contacts/name-sweep" },
   { id: "radar-web", cron: "0 * * * *", method: "POST", path: "/api/radar/web" },
+  // Retry engine for customers' webhook endpoints (backoff steps are minutes to hours).
+  { id: "webhooks-drain", cron: "0 * * * *", method: "POST", path: "/api/webhooks/outbound/drain" },
+  // Opening the app re-checks a drive older than an hour itself (OPEN_RESCAN_MS).
+  { id: "cloud-notes", cron: "0 * * * *", method: "POST", path: "/api/cloud-notes/run" },
   // Every hour of Sunday AND Monday UTC: the route sends only to people whose own Monday
   // 06:00–09:00 it is (Auckland's Monday morning is Sunday evening in UTC).
   { id: "radar-digest", cron: "0 * * * 0,1", method: "POST", path: "/api/radar/digest" },

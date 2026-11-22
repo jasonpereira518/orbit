@@ -59,7 +59,7 @@ async function main() {
   const cache = createPhotoCache();
   await loadPhotoUrls(USER, [dataPhoto.id, hosted.id, placeholder.id, noPhoto.id, foreign.id], cache);
 
-  check("a data: photo becomes the short same-origin route", cache.get(dataPhoto.id) === `/api/avatars/${dataPhoto.id}`, String(cache.get(dataPhoto.id)));
+  check("a data: photo becomes the short same-origin route", cache.get(dataPhoto.id) === `/api/avatars/${dataPhoto.id}?v=0`, String(cache.get(dataPhoto.id)));
   check("the photo bytes never appear in what is sent", !JSON.stringify([...cache.values()]).includes("AAAAAAAA"));
   check("a hosted photo is passed through", cache.get(hosted.id)?.startsWith("https://abc.public.blob.vercel-storage.com/") === true);
   check("a placeholder host resolves to none, not a broken image", cache.get(placeholder.id) === null);
@@ -95,7 +95,7 @@ async function main() {
     await sleep(400);
 
     const last = seen[seen.length - 1];
-    check("the stage is re-sent once with the photo attached", seen.length === 3 && last?.refs?.[0]?.photoUrl === `/api/avatars/${dataPhoto.id}`, JSON.stringify(last?.refs));
+    check("the stage is re-sent once with the photo attached", seen.length === 3 && last?.refs?.[0]?.photoUrl === `/api/avatars/${dataPhoto.id}?v=0`, JSON.stringify(last?.refs));
     check("the contact with no photo stays without one", last?.refs?.[1]?.photoUrl === null);
     check("the update leaves the stage done", last?.status === "done");
     check("the update does NOT re-stamp the duration", last?.ms === msAtDone, `${msAtDone} -> ${last?.ms}`);
@@ -153,7 +153,7 @@ async function main() {
 
     const searchUpdates = seen.filter((s) => s.kind === "search" && s.status === "done");
     const withPhoto = searchUpdates.at(-1)?.refs?.find((r) => r.id === dataPhoto.id);
-    check("a candidate's photo is patched on afterwards", withPhoto?.photoUrl === `/api/avatars/${dataPhoto.id}`, JSON.stringify(withPhoto));
+    check("a candidate's photo is patched on afterwards", withPhoto?.photoUrl === `/api/avatars/${dataPhoto.id}?v=0`, JSON.stringify(withPhoto));
 
     const wire = JSON.stringify(seen);
     check("no photo bytes anywhere in the whole step stream", !wire.includes("AAAAAAAA") && !wire.includes("data:image"));
