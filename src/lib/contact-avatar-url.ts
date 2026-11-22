@@ -97,23 +97,33 @@ export function isUnfetchableImageUrl(url: string | null | undefined): boolean {
 }
 
 /**
- * `/api/avatars/{id}`, versioned by the photo the caller can see.
+ * The `?v=` of a route URL that has no photo URL to hash: an inline photo, or one still to be
+ * resolved on demand. The route treats it as "not versioned", so a redirect it answers under
+ * this URL is never cached (the photo behind it can change without the URL changing). Its
+ * 404s and inline bytes are cacheable, which is the point of sending it at all.
+ */
+export const AVATAR_NO_VERSION = "0";
+
+/**
+ * `/api/avatars/{id}`, versioned by the photo the caller can see. EVERY route URL carries `?v=`.
  *
  * The route answers a stored Blob or shared photo with a redirect, and a redirect the
  * browser may not cache is one authenticated function call per avatar per render — about
  * fifty on a contacts page (LATENCY_PLAN NET-1). With `?v=` the route marks the redirect
  * cacheable for a day, and the version is a hash of the photo URL the list or profile
- * already holds, so a new photo is a new URL: the browser never serves a stale one. The
- * `/api/avatars/{id}` value `clientAvatarUrlSql` returns for inline photos carries no
- * version (the route already serves those bytes with its own cache header) and neither
- * does on-demand resolution, which has no photo yet.
+ * already holds, so a new photo is a new URL: the browser never serves a stale one. An inline
+ * photo and on-demand resolution have no photo URL to hash and get {@link AVATAR_NO_VERSION}:
+ * the route still caches their 404s and inline bytes, never a redirect.
  */
 export function avatarRouteUrl(contactId: string, visibleUrl: string | null | undefined): string {
   const base = `/api/avatars/${contactId}`;
   const u = visibleUrl?.trim();
-  // Already a route URL: keep a cache-busting query the caller added (`?t=` after a backfill).
+  // Already a route URL: keep the version or cache-busting query the caller put on it
+  // (`?v=` from the SQL/inline builders, `?t=` after a backfill).
   if (u?.startsWith(`${base}?`)) return u;
-  if (!u || isUnusableAvatarUrl(u) || u.startsWith("/api/avatars/") || u.startsWith("data:")) return base;
+  if (!u || isUnusableAvatarUrl(u) || u.startsWith("/api/avatars/") || u.startsWith("data:")) {
+    return `${base}?v=${AVATAR_NO_VERSION}`;
+  }
   return `${base}?v=${avatarVersion(u)}`;
 }
 
@@ -163,7 +173,7 @@ export function clientContactAvatarUrl(
   const stored = profileImageUrl?.trim();
   if (!stored || isUnusableAvatarUrl(stored)) return null;
   if (stored.startsWith("data:image/")) {
-    return `/api/avatars/${contactId}`;
+    return `/api/avatars/${contactId}?v=${AVATAR_NO_VERSION}`;
   }
   return stored;
 }

@@ -8,13 +8,18 @@
  * all for someone with no calendar connected or no meetings plan: the first non-`ok` answer
  * stops it for the session); the 15-second tick only compares clocks locally.
  *
- * It is deliberately NOT paused while the tab is hidden. The case it exists for is Orbit
- * sitting in a background tab while the call is in another one. A hidden tab's timers slow to
- * about one a minute, which still lands inside the five-minutes-before window, and that is
- * when the desktop alert — not the in-app card, which nobody is looking at — does the work.
+ * The calendar READ is paused while the tab is hidden (each one is a live Google call from a
+ * function), but the local 15-second tick is not. The case this exists for is Orbit sitting
+ * in a background tab while the call is in another one: the list read when the tab was last
+ * visible (refreshed again on return after 5 minutes) is what the tick works from, and a
+ * hidden tab's timers slow to about one a minute, which still lands inside the
+ * five-minutes-before window. That is when the desktop alert — not the in-app card, which
+ * nobody is looking at — does the work. A meeting added to the calendar while the tab is
+ * hidden is not seen until it is shown again.
  */
 
 import { useSyncExternalStore } from "react";
+import { createExternalStore, listen } from "@/lib/create-external-store";
 import type { MeetingCandidatesResult } from "@/actions/meetings";
 import { showDesktopNotification } from "@/lib/browser-notifications";
 import type { MeetingCandidate } from "@/lib/meeting-calendar";
@@ -141,7 +146,7 @@ let events: MeetingCandidate[] = [];
 /** Not connected, no plan, or the read failed: stop asking for the rest of this session. */
 let stopped = false;
 let lastRefresh = 0;
-const listeners = new Set<() => void>();
+let stopVisibility: (() => void) | null = null;
 let timers: {
   first?: ReturnType<typeof setTimeout>;
   refresh?: ReturnType<typeof setInterval>;
@@ -180,7 +185,7 @@ function recompute(): void {
 
   snapshot = nudge ? { nudge, timing } : EMPTY;
   if (nudge && !sameOffer) alertDesktop(nudge);
-  listeners.forEach((l) => l());
+  store.emit();
 }
 
 /**
@@ -207,9 +212,11 @@ function onVisibility(): void {
 
 function start(): void {
   timers.first = setTimeout(() => void refresh(), FIRST_REFRESH_DELAY_MS);
-  timers.refresh = setInterval(() => void refresh(), REFRESH_MS);
+  timers.refresh = setInterval(() => {
+    if (document.visibilityState !== "hidden") void refresh();
+  }, REFRESH_MS);
   timers.tick = setInterval(recompute, TICK_MS);
-  document.addEventListener("visibilitychange", onVisibility);
+  stopVisibility = listen(document, "visibilitychange", onVisibility);
 }
 
 function stop(): void {
@@ -217,17 +224,20 @@ function stop(): void {
   clearInterval(timers.refresh);
   clearInterval(timers.tick);
   timers = {};
-  document.removeEventListener("visibilitychange", onVisibility);
+  stopVisibility?.();
+  stopVisibility = null;
 }
 
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  if (listeners.size === 1) start();
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0) stop();
-  };
-}
+const store = createExternalStore<NudgeSnapshot>({
+  getSnapshot: () => snapshot,
+  getServerSnapshot: () => EMPTY,
+  onSubscribe(count) {
+    if (count === 1) start();
+  },
+  onUnsubscribe(count) {
+    if (count === 0) stop();
+  },
+});
 
 const subscribeNothing = () => () => {};
 
@@ -236,5 +246,5 @@ const subscribeNothing = () => () => {};
  * without meeting recording) does not subscribe, so the poll never starts for it.
  */
 export function useMeetingNudgeSnapshot(enabled: boolean): NudgeSnapshot {
-  return useSyncExternalStore(enabled ? subscribe : subscribeNothing, () => (enabled ? snapshot : EMPTY), () => EMPTY);
+  return useSyncExternalStore(enabled ? store.subscribe : subscribeNothing, () => (enabled ? snapshot : EMPTY), () => EMPTY);
 }

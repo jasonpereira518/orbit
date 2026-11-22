@@ -30,7 +30,7 @@ export const EMAIL_BACKOFF_MINUTES = [1, 5, 30, 120] as const;
 /** Seconds to wait before retrying after attempt number `attempt` (1-based) failed. */
 export function emailBackoffSeconds(attempt: number): number {
   const i = Math.min(Math.max(attempt, 1), EMAIL_BACKOFF_MINUTES.length) - 1;
-  return EMAIL_BACKOFF_MINUTES[i]! * 60;
+  return EMAIL_BACKOFF_MINUTES[i] * 60;
 }
 
 /** Attachments (P4). Totals are raw bytes, before base64. */

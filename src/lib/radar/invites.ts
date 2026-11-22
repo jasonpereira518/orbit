@@ -23,7 +23,7 @@ export function calculateNextSuggestedSlot(now: Date, tz: string = "UTC"): Date 
   const [y, m, d] = ymd.split("-").map(Number);
   
   // Advance 3 days, skipping weekends
-  let target = new Date(Date.UTC(y!, m! - 1, d! + 3, 10, 0, 0));
+  let target = new Date(Date.UTC(y, m - 1, d + 3, 10, 0, 0));
   const dayOfWeek = target.getUTCDay();
   if (dayOfWeek === 6) target = new Date(target.getTime() + 2 * DAY_MS); // Saturday -> Monday
   if (dayOfWeek === 0) target = new Date(target.getTime() + 1 * DAY_MS); // Sunday -> Monday

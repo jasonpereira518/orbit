@@ -28,6 +28,7 @@ import {
 import { PLAN_SHORT_LABELS, planList } from "@/lib/plans/plan-config";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
+import { RadarNewText, RadarShimmerIcon } from "@/components/layout/radar-shimmer-icon";
 import { OrbitLogo } from "@/components/orbit-logo";
 import type { Plan } from "@/lib/plan-limits";
 import { SPRING_PILL } from "@/lib/motion";
@@ -114,9 +115,10 @@ function SidebarNavLink({
           transition={SPRING_PILL}
         />
       )}
-      <Icon className="relative z-10 h-4 w-4 shrink-0" />
+      <RadarShimmerIcon icon={Icon} radar={item.href === "/radar"} className="relative z-10 h-4 w-4 shrink-0" />
       {/* Below lg the rail is icons only; the label stays in the accessibility tree. */}
       <span className="relative z-10 max-lg:sr-only">{item.label}</span>
+      {item.href === "/radar" && <RadarNewText />}
       {hiddenFromUsers && (
         <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-3xs uppercase tracking-wide text-muted-foreground lg:inline">
           Hidden

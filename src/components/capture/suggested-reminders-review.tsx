@@ -11,7 +11,7 @@
  */
 
 import { useId, useState } from "react";
-import { CalendarClock, ChevronDown, ChevronUp, Lightbulb } from "lucide-react";
+import { CalendarClock, ChevronDown, ChevronUp, Flame, Lightbulb, Star } from "lucide-react";
 import type { SuggestionReviewItem } from "@/components/chat/bulk-notes-panel";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DatePickerButton } from "@/components/ui/date-picker";
@@ -110,6 +110,9 @@ function ReminderRow({
   update: (key: string, patch: Partial<SuggestionReviewItem>) => void;
 }) {
   const uid = useId();
+  const priority = item.priority ?? "normal";
+  const category = item.category ?? "action_item";
+
   return (
     <li className="space-y-2 rounded-xl border border-border/60 bg-card p-3">
       <div className="flex items-start gap-2">
@@ -120,6 +123,39 @@ function ReminderRow({
           className="mt-1"
         />
         <div className="min-w-0 flex-1 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {priority === "critical" && (
+                <span className="inline-flex items-center gap-1 rounded-md bg-rose-500/15 px-2 py-0.5 text-xs font-medium text-rose-700 dark:text-rose-300">
+                  <Flame className="size-3" />
+                  Critical
+                </span>
+              )}
+              {priority === "high" && (
+                <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                  <Star className="size-3" />
+                  High Priority
+                </span>
+              )}
+              {category === "waiting_on" && (
+                <span className="inline-flex items-center gap-1 rounded-md bg-sky-500/15 px-2 py-0.5 text-xs text-sky-700 dark:text-sky-300">
+                  Waiting on them
+                </span>
+              )}
+              {category === "next_step" && (
+                <span className="inline-flex items-center gap-1 rounded-md bg-purple-500/15 px-2 py-0.5 text-xs text-purple-700 dark:text-purple-300">
+                  Next step
+                </span>
+              )}
+            </div>
+
+            {item.timingRationale && (
+              <span className="text-2xs text-muted-foreground italic">
+                {item.timingRationale}
+              </span>
+            )}
+          </div>
+
           <Input
             value={item.title}
             onChange={(e) => update(item.key, { title: e.target.value })}

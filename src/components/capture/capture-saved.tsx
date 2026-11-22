@@ -27,7 +27,7 @@ export function CaptureSaved({
 }) {
   const saved = result.saved;
   const accepted = acceptedPeople(result.items, decisions);
-  const single = accepted.length === 1 ? accepted[0]! : null;
+  const single = accepted.length === 1 ? accepted[0] : null;
   const summary = saved
     ? [
         saved.created ? `${saved.created} new` : null,

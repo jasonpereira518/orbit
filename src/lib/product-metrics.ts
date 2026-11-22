@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { ACTIVATION_WINDOW_DAYS, activatedSql, intentionalActionsSince } from "@/lib/activity";
-import { managedCostSql } from "@/lib/ai-access";
+import { managedAiUsage } from "@/lib/credits/admin-credits";
 import { internalAccountSql } from "@/lib/analytics-internal";
 import { signupChannelSql } from "@/lib/attribution";
 import { speechSpendMicros } from "@/lib/speech-credit";
@@ -334,18 +334,17 @@ export async function gateConversion(now: Date, days = 28): Promise<GateConversi
   };
 }
 
-/** What Orbit paid in the window for managed AI and Deepgram, in micro-dollars. */
+/**
+ * What Orbit paid in the window for managed AI and Deepgram, in micro-dollars. AI goes through
+ * `managedAiUsage`, the one reader of Orbit-key cost (internal accounts included: Orbit paid
+ * for those calls too, and its Deepgram rows stay out so speech isn't counted twice).
+ */
 export async function costSince(now: Date, days = 7): Promise<{ aiMicros: number; speechMicros: number }> {
-  const db = await getDb();
-  const since = ago(now, days);
-  const res = await db.execute(sql`
-    SELECT coalesce(sum(${managedCostSql()}), 0) AS micros
-    FROM usage_events WHERE key_owner = 'orbit' AND created_at >= ${since}
-  `);
-  return {
-    aiMicros: num(rowsOf<{ micros: string | number }>(res)[0]?.micros),
-    speechMicros: await speechSpendMicros(new Date(since)),
-  };
+  const [ai, speechMicros] = await Promise.all([
+    managedAiUsage(days, now, { includeInternal: true }),
+    speechSpendMicros(new Date(ago(now, days))),
+  ]);
+  return { aiMicros: ai.costMicros, speechMicros };
 }
 
 /* ------------------------------------------------------------- the new surfaces -- */
@@ -494,17 +493,3 @@ export async function churnSummary(now: Date = new Date()): Promise<ChurnSummary
   return { canceledLast90d: num(r.canceled), subscribersNow: num(r.subscribers) };
 }
 
-/** The three newest unresolved bug reports, as ids and areas only; the text stays behind a click. */
-export async function newestBugs(limit = 3): Promise<Array<{ id: string; area: string | null; createdAt: Date }>> {
-  const db = await getDb();
-  const res = await db.execute(sql`
-    SELECT id, area, created_at FROM feedback
-    WHERE category = 'bug' AND status <> 'resolved'
-    ORDER BY created_at DESC LIMIT ${limit}
-  `);
-  return rowsOf<Record<string, string | Date | null>>(res).map((r) => ({
-    id: String(r.id),
-    area: r.area ? String(r.area) : null,
-    createdAt: new Date(String(r.created_at)),
-  }));
-}

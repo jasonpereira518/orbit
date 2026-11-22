@@ -15,3 +15,26 @@ export function requestAskBar(detail: OpenAskBarDetail = {}) {
 
 /** Opens the command palette from anywhere — the sidebar button, the mobile header. */
 export const OPEN_COMMAND_PALETTE_EVENT = "orbit:open-command-palette";
+
+const under = (pathname: string, root: string) => pathname === root || pathname.startsWith(`${root}/`);
+
+/**
+ * Whether the floating Ask bar shows on a page. The bar IS chat (it streams from `/api/chat`),
+ * so it hides wherever chat is hidden, on pages that fill the viewport or own the bottom edge,
+ * and on /radar until Radar is on: the Turn on screen's button sits where the bar floats.
+ */
+export function showAskBarFor(
+  pathname: string,
+  f: { tourActive: boolean; chatHidden: boolean; radarOn: boolean },
+): boolean {
+  if (f.tourActive || f.chatHidden) return false;
+  if (under(pathname, "/radar")) return f.radarOn;
+  return !(
+    pathname === "/onboarding" ||
+    pathname === "/chat" ||
+    under(pathname, "/settings") ||
+    under(pathname, "/graph") ||
+    pathname === "/reminders" ||
+    pathname === "/knowledge"
+  );
+}

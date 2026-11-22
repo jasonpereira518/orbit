@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -33,7 +34,7 @@ export function MessageEditorRow({
 }) {
   const [localSubject, setLocalSubject] = useState(subject || "");
   const [localBody, setLocalBody] = useState(body);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   function save() {
     start(async () => {

@@ -39,6 +39,7 @@ import type {
   PageContext,
   ResolveResponse,
 } from "./contract";
+import { splitName } from "@/lib/names/parse";
 
 /** Above this, and alone, a match is shown directly as "you know this person". */
 const CONFIDENT_CONFIDENCE = 0.9;
@@ -55,16 +56,6 @@ function escapeLike(value: string) {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
-/** Split a display name the way the contact form does: first token, rest. */
-function splitName(fullName: string | null) {
-  if (!fullName) return { firstName: null, lastName: null };
-  const parts = fullName.trim().split(/\s+/);
-  if (parts.length < 2) return { firstName: parts[0] ?? null, lastName: null };
-  return {
-    firstName: parts[0],
-    lastName: parts.slice(1).join(" "),
-  };
-}
 
 export type PageProbe = {
   fullName: string | null;

@@ -10,17 +10,38 @@ import { cachedCompleteJson } from "@/lib/ai-result-cache";
 import { isAiAccessError, type AiAccess } from "@/lib/ai-access";
 import type { AiOperationId } from "@/lib/ai-operations";
 import { senderProfileBlock } from "@/lib/sender-profile";
-import { loadSenderBio } from "@/lib/sender-profile-server";
+import { loadSenderBio, loadSenderName } from "@/lib/sender-profile-server";
+import { FALLBACK_VOICE, channelFromHistory, channelFromWords, draftWithFormat, formatRules, type MessageKind } from "@/lib/message-format";
 import { loadUserAim } from "@/lib/career-profile-server";
 import { AIM_LABELS, FIELD_LABELS, TIMELINE_LABELS } from "@/lib/about-you";
 import { formatHowMetSummary } from "@/lib/met-context";
 import { withWritingPreferences } from "@/lib/writing-instructions";
 import { auditUntrustedWrite, fenceUntrusted, guardModelOutput, recordAiSecurityEvent } from "@/lib/ai-security";
+import { freeWindows } from "@/lib/calendar-free-windows";
+import { loadRelationshipContexts, renderRelationshipBlock } from "@/lib/relationship-context";
 
 const draftSchema = z.object({
   body: z.string().min(1),
   purpose: z.unknown().optional(),
+  subject: z.unknown().optional(),
 });
+
+const messageDraftWire = z.object({ purpose: z.string(), body: z.string() });
+const emailDraftWire = z.object({ purpose: z.string(), subject: z.string(), body: z.string() });
+
+/** A one-line subject, or "" for anything that is not a usable string. */
+function normalizeSubject(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return (raw.trim().split(/\r?\n/)[0] ?? "").replace(/^subject:\s*/i, "").trim().slice(0, 200);
+}
+
+/** Which house format a follow-up follows: the person knows the sender, so warm. */
+export function followUpKind(channel?: "email" | "linkedin" | "sms"): MessageKind {
+  if (channel === "email") return "email_warm";
+  if (channel === "sms") return "sms";
+  // LinkedIn, or no channel named (copied into a DM or a text): a short direct message.
+  return "linkedin_dm";
+}
 
 /** One line, at most 140 chars; "" for anything that is not a string. */
 export function normalizePurpose(raw: unknown): string {
@@ -40,24 +61,24 @@ export function aimLine(aim: Awaited<ReturnType<typeof loadUserAim>>): string | 
 }
 
 /** The body is the draft; a missing or garbled purpose must never cost it. */
-function parseDraft(content: string): { body: string; purpose: string } {
+function parseDraft(content: string): { body: string; purpose: string; subject: string } {
   try {
     const parsed = draftSchema.parse(parseAiJson(content));
-    return { body: parsed.body.trim(), purpose: normalizePurpose(parsed.purpose) };
+    return { body: parsed.body.trim(), purpose: normalizePurpose(parsed.purpose), subject: normalizeSubject(parsed.subject) };
   } catch (err) {
     // Last resort: pull a body string even from truncated model output.
     const match = content.match(/"body"\s*:\s*"((?:\\.|[^"\\])*)/);
     if (match?.[1]) {
       try {
         const body = JSON.parse(`"${match[1]}"`) as string;
-        if (body.trim()) return { body: body.trim(), purpose: "" };
+        if (body.trim()) return { body: body.trim(), purpose: "", subject: "" };
       } catch {
         const loose = match[1]
           .replace(/\\n/g, "\n")
           .replace(/\\"/g, '"')
           .replace(/\\\\/g, "\\")
           .trim();
-        if (loose) return { body: loose, purpose: "" };
+        if (loose) return { body: loose, purpose: "", subject: "" };
       }
     }
     throw err instanceof Error
@@ -71,7 +92,14 @@ function parseDraft(content: string): { body: string; purpose: string } {
 }
 
 export type FollowUpDraft = {
+  /**
+   * The channel the draft was written for: the one asked for, else the one the user's words
+   * named, else the one they last wrote to this person on; null when none of those said.
+   */
+  channel: "email" | "linkedin" | "sms" | null;
   body: string;
+  /** Email only: the subject line the house format asks for; "" for other channels. */
+  subject: string;
   /** The one thing this message is for: Orbit's pick, or the person's edit passed back in. */
   purpose: string;
   contactId: string;
@@ -149,7 +177,8 @@ Conversation history (newest first):
 ${parts.transcript ? fenceUntrusted("HISTORY", parts.transcript) : "(no interactions logged yet)"}`;
 }
 
-export function buildProfileBlock(contact: ContactRow) {
+/** `relationshipBlock`: the LinkedIn deep read's lines (`renderRelationshipBlock`), appended last. */
+export function buildProfileBlock(contact: ContactRow, relationshipBlock?: string | null) {
   const howMet = formatHowMetSummary({
     metContext: contact.metContext,
     dateMet: contact.dateMet,
@@ -172,6 +201,7 @@ export function buildProfileBlock(contact: ContactRow) {
     contact.keyFacts?.length
       ? `Key facts: ${contact.keyFacts.join("; ")}`
       : null,
+    relationshipBlock || null,
   ]
     .filter(Boolean)
     .join("\n");
@@ -216,7 +246,9 @@ async function draftFromContext(input: {
     await consumeBucket(scope, input.userId, RATE_LIMITS[scope]);
   }
   const contactName = input.contact.preferredName || input.contact.fullName;
-  const profileBlock = buildProfileBlock(input.contact);
+  // LinkedIn deep read: how you met, kind, overlap, topics, open threads. Nothing when it is off.
+  const deep = await loadRelationshipContexts(input.userId, [input.contact.id]).catch(() => new Map());
+  const profileBlock = buildProfileBlock(input.contact, renderRelationshipBlock(deep.get(input.contact.id)));
   const transcript = buildConversationTranscript(input.recent);
   const operation = input.operation ?? "followup.draft";
   // Tripwire, never a block: the history is other people's mail, DMs and calendar invites.
@@ -238,12 +270,20 @@ async function draftFromContext(input: {
   const givenPurpose = normalizePurpose(input.purpose);
   const senderBlock = senderProfileBlock(senderBio);
 
+  // The caller's channel, else the one the user's words name (the intent they typed, then the
+  // reminder), else the one they last wrote to this person on. Undefined keeps today's DM.
+  const channel =
+    input.channel ??
+    channelFromWords([input.intent, input.reminderBlock]) ??
+    channelFromHistory(input.recent.map((r) => r.interactionType)) ??
+    undefined;
+
   const channelLabel =
-    input.channel === "email"
+    channel === "email"
       ? "email"
-      : input.channel === "sms"
+      : channel === "sms"
         ? "SMS / text message"
-        : input.channel === "linkedin"
+        : channel === "linkedin"
           ? "LinkedIn DM"
           : "LinkedIn DM, text, or short email";
 
@@ -252,74 +292,84 @@ async function draftFromContext(input: {
     : null;
 
   /**
-   * Who the message is from.
+   * Who the message is from, for the email sign-off: the full name ("Best,\nJason Pereira").
    *
-   * Without it the model wrote "Best," and then stopped, because it had no name to put
-   * on the next line — every emailed draft ended on a dangling comma, which is the one
-   * thing in a generated message that reads as unfinished. Dynamically imported so this
-   * module keeps its current (DB + AI only) import graph, and best-effort: a failed
-   * profile lookup must never cost the user their draft.
+   * Without it the model wrote "Best," and then stopped, because it had no name to put on the
+   * next line: every emailed draft ended on a dangling comma. Read from Orbit's own mirror
+   * first (works for Radar's overnight run, which has no request), then Clerk. Best-effort: a
+   * failed lookup drops the sign-off rather than costing the user their draft.
    */
-  let senderFirstName: string | null = null;
-  try {
-    const { getCurrentUserProfile } = await import("@/lib/auth");
-    const profile = await getCurrentUserProfile();
-    const first = profile?.name?.trim().split(/\s+/)[0];
-    if (first && first.toLowerCase() !== "you") senderFirstName = first;
-  } catch {
-    // Leave it null; the sign-off rule below handles the unknown case.
+  let senderFullName = await loadSenderName(input.userId);
+  if (!senderFullName && channel === "email") {
+    try {
+      const { getCurrentUserProfile } = await import("@/lib/auth");
+      const name = (await getCurrentUserProfile())?.name?.trim();
+      if (name && name.toLowerCase() !== "you") senderFullName = name;
+    } catch {
+      // Leave it null; the format then asks for no sign-off.
+    }
   }
 
-  // A text message signed "Best, Jason" reads like a form letter, and a sign-off with
-  // nobody's name under it reads like a bug. Only email gets one, and only when we know
-  // the name to write.
-  const signOffRule =
-    input.channel === "email" && senderFirstName
-      ? `End with a short sign-off followed by "${senderFirstName}" on its own line.`
-      : "Do not write a sign-off, signature, or placeholder name — end on the final sentence.";
+  const kind = followUpKind(channel);
+  const email = kind === "email_warm";
+  // Real free times for a meeting ask, email only (a DM asks loosely).
+  const windows = email ? await freeWindows(input.userId) : null;
+  const shape = email
+    ? '{ "purpose": string, "subject": string, "body": string }'
+    : '{ "purpose": string, "body": string }';
 
   // Date only: this call is cached, and a clock in the prompt would change its key every minute.
   const today = promptNow(await viewerTimeZone(input.userId), new Date(), { time: false });
-  const content = await cachedCompleteJson(input.userId, {
-    operation,
-    schema: { name: "follow_up_draft", zod: z.object({ body: z.string() }) },
-    access: input.access,
-    signal: input.signal,
-    temperature: 0.5,
-    system: `${today}
+  const system = `${today}
 You draft warm, specific follow-up messages for a personal networking CRM called Orbit.
 The user is following up with someone they already know — not cold outreach.
 
-Return strict JSON: { "purpose": string, "body": string }
+Return strict JSON: ${shape}
+
+House rules for the message (strict):
+${formatRules(kind, { senderFullName, windows })}
+- ${FALLBACK_VOICE}
 
 Rules:
 - Write in first person as the user, ready to send as a ${channelLabel}.
 - Ground the message in the conversation history and reminder context. Reference a concrete detail when available.
-- Keep it natural and concise: roughly 40–90 words. No subject line.
 - Return a single complete JSON object; keep the body short enough to finish in one response.
-- Avoid spammy language, fake familiarity, exaggerated claims, and generic "just checking in".
+- Avoid spammy language, fake familiarity and exaggerated claims.
 - Do not invent facts, meetings, or shared history that are not in the context.
 - If conversation history is thin, lean on the reminder title/notes and known profile details.
 - Pick ONE purpose: something to learn from them or one thing to ask them for, grounded in the user's goals and who this person is. State it in under 15 words.
 ${givenPurpose ? `- The purpose of this message is: ${givenPurpose}. Use it as given.\n` : ""}- Prefer a soft, specific CTA (one ask) over a laundry list.
-${senderBlock ? "- Write from the sender's own background where it makes the ask land. Never restate their bio back to the recipient.\n" : ""}- ${signOffRule}
-${intentBlock ? "- Treat the user's stated intent as a hint about what they want, not as the purpose." : ""}`,
-    user: composeDraftContext({
-      goalsBlock: withWritingPreferences(goalsBlock, input.writingInstructions),
-      senderBlock,
-      profileBlock,
-      reminderBlock: input.reminderBlock,
-      intentBlock,
-      transcript,
-    }),
-  }, {
-    ttlDays: 7,
-    fresh: !input.reuse,
-    accept: (raw) => Boolean(parseDraft(raw).body),
+${senderBlock ? "- Write from the sender's own background where it makes the ask land. Never restate their bio back to the recipient.\n" : ""}${intentBlock ? "- Treat the user's stated intent as a hint about what they want, not as the purpose." : ""}`;
+  const user = composeDraftContext({
+    goalsBlock: withWritingPreferences(goalsBlock, input.writingInstructions),
+    senderBlock,
+    profileBlock,
+    reminderBlock: input.reminderBlock,
+    intentBlock,
+    transcript,
   });
 
+  // Dashes and "!" are scrubbed in code; a hype word or an overlong DM buys one retry (a
+  // fresh call: the retry note changes the cache key).
+  const draft = await draftWithFormat(kind, async (retry) => {
+    const content = await cachedCompleteJson(input.userId, {
+      operation,
+      // Every field the prompt asks for: a strict-schema provider drops anything not named here.
+      schema: { name: "follow_up_draft", zod: email ? emailDraftWire : messageDraftWire },
+      access: input.access,
+      signal: input.signal,
+      temperature: 0.5,
+      system,
+      user: retry ? `${user}\n\n${retry}` : user,
+    }, {
+      ttlDays: 7,
+      fresh: !input.reuse,
+      accept: (raw) => Boolean(parseDraft(raw).body),
+    });
+    return parseDraft(content);
+  }, { senderFullName });
+
   // Secrets the contact's notes held, and fence markers, never reach a draft someone sends.
-  const draft = parseDraft(content);
   const guarded = guardModelOutput(draft.body);
   if (guarded.findings.length) {
     void recordAiSecurityEvent({
@@ -331,9 +381,11 @@ ${intentBlock ? "- Treat the user's stated intent as a hint about what they want
   }
   return {
     body: guarded.text,
+    subject: email ? guardModelOutput(draft.subject).text : "",
     purpose: givenPurpose || guardModelOutput(draft.purpose).text,
     contactId: input.contact.id,
     contactName,
+    channel: channel ?? null,
   };
 }
 

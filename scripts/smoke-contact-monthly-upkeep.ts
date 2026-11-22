@@ -23,7 +23,12 @@ import { checker } from "./smoke/check";
 
 delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 delete process.env.CLERK_SECRET_KEY;
+// Blob unconfigured, so a shared photo is adopted as its raw https URL (the CI path). With a
+// developer's Blob credentials in `.env.local`, adoption would try the live store instead:
+// offline it fails and the pool stays empty, and online it uploads to a real bucket.
 delete process.env.BLOB_READ_WRITE_TOKEN;
+delete process.env.BLOB_STORE_ID;
+delete process.env.VERCEL_OIDC_TOKEN;
 (process.env as Record<string, string>).NODE_ENV = "development";
 process.env.ORBIT_DEMO_DATA = "off";
 

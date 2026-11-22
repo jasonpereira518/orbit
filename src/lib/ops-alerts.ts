@@ -52,14 +52,12 @@ export type OpsSnapshot = {
      * a feed that stopped being read is indistinguishable from a quiet hiring season.
      */
     jobFeed: { lastStartedAt: Date | null; lastState: CronRunState | null };
-    /** Radar's nightly pass (`/api/radar/run`), once a day at 04:17 UTC. */
+    /** Radar's pass (`/api/radar/run`), hourly at :30 (the tick); each account is due at its own 5am. */
     radarRun: { lastStartedAt: Date | null; lastState: CronRunState | null };
-    /** Radar's news sweep (`/api/radar/feeds/sweep`), hourly at :53. */
-    radarFeeds: { lastStartedAt: Date | null; lastState: CronRunState | null };
     /** Radar's Monday email (`/api/radar/digest`), hourly at :13 through Sunday and Monday UTC. */
     radarDigest: { lastStartedAt: Date | null; lastState: CronRunState | null };
     workHistory: { lastStartedAt: Date | null; lastState: CronRunState | null };
-    /** The email-insights sweep (`/api/email-intel/sweep`), every fifteen minutes. */
+    /** The email-insights sweep (`/api/email-intel/sweep`), hourly at :30 (the tick). */
     emailIntel: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
   /** The last PARTIAL_STREAK process-stalled states, newest first. */
@@ -200,15 +198,14 @@ export const CALENDAR_DISARM_BURST = 5;
  * How long the job-feed sweep may be silent before it is treated as dead.
  *
  * The schedule is hourly and this is six times that — the same loose multiple the connector
- * sync gets, for the same reason: GitHub Actions schedules lag under load and are disabled
- * outright after 60 days without a commit on a public repository.
+ * sync gets, for the same reason: a lost tick or two is not worth a Slack message; a dead schedule is.
  *
  * `warning`, never `critical`: nobody is paged because an internship notification is late.
  */
 const JOB_FEED_SILENT_MS = 6 * 60 * 60 * 1000;
 
 /**
- * Radar's nightly pass: daily, so a day and a quarter plus GitHub's lag.
+ * Radar's nightly pass: daily, so a day and a quarter plus slack.
  *
  * Unlike the job feed, a pass that has NEVER run is not an alert. The first run is up to a
  * day after the deploy that adds it, and a condition that opens on every deploy and closes
@@ -218,12 +215,6 @@ const JOB_FEED_SILENT_MS = 6 * 60 * 60 * 1000;
  */
 const RADAR_SILENT_MS = 30 * 60 * 60 * 1000;
 
-/**
- * Radar's news sweep: hourly, so six hours is five missed runs. As with the nightly pass, a
- * sweep that has never run is not an alert (it stands down until someone opens Radar, and a
- * stand-down still records a run). `warning`: a headline noticed late costs nothing.
- */
-const RADAR_FEEDS_SILENT_MS = 6 * 60 * 60 * 1000;
 
 /**
  * Radar's Monday email runs every hour of Sunday and Monday UTC and not at all in between,
@@ -233,17 +224,17 @@ const RADAR_FEEDS_SILENT_MS = 6 * 60 * 60 * 1000;
 const RADAR_DIGEST_SILENT_MS = 6 * 24 * 60 * 60 * 1000;
 
 /**
- * The work-history sweep runs hourly (ops.yml, :37); six hours of silence is five missed
- * runs, not GitHub's ordinary lag. `warning`: a job move noticed a day late costs nothing.
+ * The work-history sweep runs hourly (the tick, :00); six hours of silence is five missed
+ * runs, not one lost tick. `warning`: a job move noticed a day late costs nothing.
  */
 const WORK_HISTORY_SILENT_MS = 6 * 60 * 60 * 1000;
 
 /**
- * The email-insights sweep runs every fifteen minutes; two hours of silence is eight missed
- * runs, not GitHub's ordinary lag. `warning`: a stage change noticed late costs nothing.
+ * The email-insights sweep runs hourly (the :30 tick); three hours of silence is three missed
+ * runs, not a late tick. `warning`: a stage change noticed late costs nothing.
  * Never having run is NOT an alert — the feature is opt-in and may not be enabled anywhere.
  */
-const EMAIL_INTEL_SILENT_MS = 2 * 60 * 60 * 1000;
+const EMAIL_INTEL_SILENT_MS = 3 * 60 * 60 * 1000;
 
 export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[] {
   const out: OpsCondition[] = [];
@@ -376,7 +367,7 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
   // Freshness for the connector sync, with its OWN threshold rather than `hasMissedRun`.
   // That helper's 25-hour window is calibrated for the nightly job; applied to a job that is
   // supposed to run every fifteen minutes it would stay silent for a full day of no syncing.
-  // Three hours is deliberately loose — GitHub's scheduler routinely lags 5-30 minutes, and
+  // Three hours is deliberately loose — a lost tick or two is ordinary, and
   // this must alert on "the schedule is dead", not on "the schedule is late".
   const sync = s.cron.syncRun;
   const syncSilentFor = sync.lastStartedAt ? now.getTime() - sync.lastStartedAt.getTime() : null;
@@ -462,25 +453,6 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       severity: "warning",
       title: `Radar's nightly pass ${radarRun.lastState === "stale" ? "was killed" : "failed"}`,
       detail: `Last run ${radarRun.lastStartedAt?.toISOString() ?? "unknown"} ended ${radarRun.lastState}.`,
-      href: "/admin/health",
-    });
-  }
-
-  const radarFeeds = s.cron.radarFeeds;
-  if (radarFeeds.lastStartedAt && now.getTime() - radarFeeds.lastStartedAt.getTime() > RADAR_FEEDS_SILENT_MS) {
-    out.push({
-      id: "radarfeeds.schedule_missed",
-      severity: "warning",
-      title: "Radar's news sweep has stopped running",
-      detail: `Last started ${radarFeeds.lastStartedAt.toISOString()}; headlines about people's companies are not arriving.`,
-      href: "/admin/health",
-    });
-  } else if (radarFeeds.lastState === "failed" || radarFeeds.lastState === "stale") {
-    out.push({
-      id: "radarfeeds.run_failed",
-      severity: "warning",
-      title: `Radar's news sweep ${radarFeeds.lastState === "stale" ? "was killed" : "failed"}`,
-      detail: `Last run ${radarFeeds.lastStartedAt?.toISOString() ?? "unknown"} ended ${radarFeeds.lastState}.`,
       href: "/admin/health",
     });
   }

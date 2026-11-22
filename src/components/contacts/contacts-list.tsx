@@ -108,7 +108,7 @@ function lastNameOf(c: ContactListItem) {
   const fromField = c.lastName?.trim();
   if (fromField) return fromField;
   const parts = c.fullName.trim().split(/\s+/).filter(Boolean);
-  return parts.length > 1 ? parts[parts.length - 1]! : parts[0] || "";
+  return parts.length > 1 ? parts[parts.length - 1] : parts[0] || "";
 }
 
 function letterOf(lastName: string) {
@@ -874,6 +874,7 @@ const ContactRow = memo(function ContactRow({
                   variant="ghost"
                   size="icon-sm"
                   aria-label={`Open ${c.fullName} on LinkedIn`}
+                  title={`Open ${c.fullName} on LinkedIn`}
                   className="tap-target relative shrink-0 text-muted-foreground"
                   onClick={(e: MouseEvent<HTMLButtonElement>) => {
                     e.preventDefault();
@@ -912,17 +913,17 @@ const ContactRow = memo(function ContactRow({
 });
 
 function nearestSectionEl(letter: string, available: Set<string>) {
-  const idx = ALPHABET.indexOf(letter as (typeof ALPHABET)[number]);
+  const idx = ALPHABET.indexOf(letter);
   if (idx < 0) return null;
 
   for (let i = idx; i < ALPHABET.length; i++) {
-    const next = ALPHABET[i]!;
+    const next = ALPHABET[i];
     if (available.has(next)) {
       return document.getElementById(`contact-letter-${next}`);
     }
   }
   for (let i = idx - 1; i >= 0; i--) {
-    const prev = ALPHABET[i]!;
+    const prev = ALPHABET[i];
     if (available.has(prev)) {
       return document.getElementById(`contact-letter-${prev}`);
     }
@@ -961,12 +962,12 @@ function AlphabetScrubber({
   const letters = ALPHABET.filter((l) => available.has(l));
   const currentLetter = activeLetter ?? keyLetter ?? letters[0] ?? null;
   const currentIdx = currentLetter
-    ? ALPHABET.indexOf(currentLetter as (typeof ALPHABET)[number])
+    ? ALPHABET.indexOf(currentLetter)
     : 0;
 
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     if (letters.length === 0) return;
-    const at = currentLetter ? ALPHABET.indexOf(currentLetter as (typeof ALPHABET)[number]) : -1;
+    const at = currentLetter ? ALPHABET.indexOf(currentLetter) : -1;
     let next: string | undefined;
     if (e.key === "ArrowDown" || e.key === "ArrowRight") {
       next = letters.find((l) => ALPHABET.indexOf(l) > at) ?? letters[letters.length - 1];
@@ -1036,7 +1037,7 @@ function AlphabetScrubber({
       ALPHABET.length - 1,
       Math.max(0, Math.floor(t * ALPHABET.length))
     );
-    return ALPHABET[idx]!;
+    return ALPHABET[idx];
   }
 
   function scrub(clientY: number) {
@@ -1070,7 +1071,7 @@ function AlphabetScrubber({
     <nav
       aria-label="Contacts A to Z"
       className={cn(
-        "pointer-events-none fixed top-1/2 right-1.5 z-40 -translate-y-1/2 md:right-4",
+        "pointer-events-none fixed top-1/2 right-1.5 z-40 -translate-y-1/2 md:right-[calc(1rem+var(--orbit-dock-w))] md:transition-[right] md:duration-slow md:ease-house",
         // Gone on short viewports — a landscape phone. Centred at 70% of a ~330pt
         // viewport it rose into the header and covered the notification bell, and its
         // 27 letters had about 6pt each between the header and the nav. The gutter it
@@ -1192,9 +1193,8 @@ function ClosenessChip({
         {label}
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-[240px] text-left leading-snug">
-        Closeness combines relationship strength, how recently you’ve
-        interacted, how often you’re in touch, and fit with your goals — scored
-        relative to everyone else in your orbit{tierHint}.
+        Closeness: how close Orbit thinks you are, from how recently and how often
+        you talk, plus relationship strength and fit with your goals{tierHint}.
       </TooltipContent>
     </Tooltip>
   );
@@ -1307,6 +1307,7 @@ function DeleteRowButton({
       size="icon-sm"
       disabled={disabled}
       aria-label={`Delete ${name}`}
+      title={`Delete ${name}`}
       onClick={(e: MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.stopPropagation();

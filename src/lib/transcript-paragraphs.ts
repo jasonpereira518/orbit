@@ -86,7 +86,7 @@ export function deduplicateSegments<T extends RawSegment>(segments: readonly T[]
   const result: T[] = [];
 
   for (let i = 0; i < sorted.length; i++) {
-    const current = sorted[i]!;
+    const current = sorted[i];
     const currentText = cleanText(current.text);
     if (!currentText) continue;
 

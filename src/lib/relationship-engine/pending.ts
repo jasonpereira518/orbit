@@ -21,6 +21,35 @@ export const MESSAGE_INTERACTION_SQL: SQL = sql`(
 ) AND btrim(coalesce(m.raw_notes, '')) <> ''`;
 
 /**
+ * The deep read also reads the per-person signals from a LinkedIn export (linkedinSignalsAdapter
+ * rows, keyed `li-export:<signal>:…`). Invitations and recommendations are worth a read on their
+ * own ("trigger"); the user's own LinkedIn notes ride along when the contact is read anyway
+ * ("context") but never cause a read.
+ */
+const TRIGGER_SIGNALS_SQL: SQL = sql`(m.external_id LIKE 'li-export:invitation%' OR m.external_id LIKE 'li-export:recommendation%')`;
+const CONTEXT_SIGNALS_SQL: SQL = sql`(${TRIGGER_SIGNALS_SQL} OR m.external_id LIKE 'li-export:note:%')`;
+
+/** A LinkedIn-export signal row with text, of any kind (the origin pass reads them all). */
+export const SIGNAL_ROW_SQL: SQL = sql`m.source = 'linkedin_export' AND ${CONTEXT_SIGNALS_SQL} AND btrim(coalesce(m.raw_notes, '')) <> ''`;
+
+/**
+ * A value in relationship_digests.sources: this contact's opening and signals were read for how
+ * you met, by a deep first pass or by the one-time origin pass (origin-pass.ts).
+ */
+export const ORIGIN_CHECKED = "origin-checked";
+
+/** The row predicate for one pass. Without the deep read it is exactly `MESSAGE_INTERACTION_SQL`. */
+export function messageRowSql(opts: { deepRead: boolean; signals: "trigger" | "context" }): SQL {
+  if (!opts.deepRead) return MESSAGE_INTERACTION_SQL;
+  const signals = opts.signals === "context" ? CONTEXT_SIGNALS_SQL : TRIGGER_SIGNALS_SQL;
+  return sql`(
+    m.interaction_type = 'linkedin_message'
+    OR (m.interaction_type = 'message' AND m.source IN ('whatsapp', 'imessage'))
+    OR (m.source = 'linkedin_export' AND ${signals})
+  ) AND btrim(coalesce(m.raw_notes, '')) <> ''`;
+}
+
+/**
  * True when interaction `m` is past digest `d`'s watermark (or there is none). Shared with gather.ts.
  * The watermark is written from a JS Date (milliseconds); a microsecond interaction_date is
  * truncated to match, or the row at the watermark would read as newer and stay pending forever.
@@ -36,7 +65,7 @@ export const WATERMARK_AFTER_SQL: SQL = sql`(
  * failure (failures write updated_at): new text may be what the model needed, and without
  * this the contact would never be read again. One more failure parks it again.
  */
-function pendingFrom(now: Date): SQL {
+function pendingFrom(now: Date, rows: SQL = MESSAGE_INTERACTION_SQL): SQL {
   return sql`
     FROM contacts c
     LEFT JOIN relationship_digests d ON d.contact_id = c.id
@@ -45,16 +74,21 @@ function pendingFrom(now: Date): SQL {
         SELECT 1 FROM interactions m
          WHERE m.user_id = c.user_id
            AND m.contact_id = c.id
-           AND ${MESSAGE_INTERACTION_SQL}
+           AND ${rows}
            AND ${WATERMARK_AFTER_SQL}
            AND (coalesce(d.attempts, 0) < ${MAX_ATTEMPTS} OR m.created_at > d.updated_at)
       )
   `;
 }
 
-export async function pendingRelationshipContactCount(userId: string, now: Date = new Date()): Promise<number> {
+export async function pendingRelationshipContactCount(
+  userId: string,
+  now: Date = new Date(),
+  opts: { deepRead?: boolean } = {}
+): Promise<number> {
   const db = await getDb();
-  const result = await db.execute(sql`SELECT count(*)::int AS n ${pendingFrom(now)} AND c.user_id = ${userId}`);
+  const rows = messageRowSql({ deepRead: opts.deepRead ?? false, signals: "trigger" });
+  const result = await db.execute(sql`SELECT count(*)::int AS n ${pendingFrom(now, rows)} AND c.user_id = ${userId}`);
   return Number(rowsOf<{ n: number }>(result)[0]?.n ?? 0);
 }
 
@@ -67,20 +101,22 @@ export async function claimPendingContacts(
   userId: string,
   limit: number,
   exclude: Set<string>,
-  now: Date = new Date()
+  now: Date = new Date(),
+  opts: { deepRead?: boolean } = {}
 ): Promise<string[]> {
   const db = await getDb();
   const excluded = [...exclude];
+  const rows = messageRowSql({ deepRead: opts.deepRead ?? false, signals: "trigger" });
   const result = await db.execute(sql`
     SELECT c.id
-      ${pendingFrom(now)}
+      ${pendingFrom(now, rows)}
       AND c.user_id = ${userId}
       ${excluded.length ? sql`AND c.id NOT IN (${sql.join(excluded.map((id) => sql`${id}::uuid`), sql`, `)})` : sql``}
     ORDER BY
       (SELECT max(m.interaction_date) FROM interactions m
-        WHERE m.user_id = c.user_id AND m.contact_id = c.id AND ${MESSAGE_INTERACTION_SQL}) DESC NULLS LAST,
+        WHERE m.user_id = c.user_id AND m.contact_id = c.id AND ${rows}) DESC NULLS LAST,
       (SELECT count(*) FROM interactions m
-        WHERE m.user_id = c.user_id AND m.contact_id = c.id AND ${MESSAGE_INTERACTION_SQL}) DESC,
+        WHERE m.user_id = c.user_id AND m.contact_id = c.id AND ${rows}) DESC,
       coalesce(c.stated_closeness, 0) DESC,
       c.id
     LIMIT ${limit}
@@ -89,10 +125,16 @@ export async function claimPendingContacts(
 }
 
 /** Users with pending work and the engine switched on — the cron backstop's input. */
-export async function usersWithPendingRelationshipWork(limit: number, now: Date = new Date()): Promise<string[]> {
+export async function usersWithPendingRelationshipWork(
+  limit: number,
+  now: Date = new Date(),
+  /** After launch: a contact with only an invitation note or a recommendation is pending too. */
+  opts: { deepRead?: boolean } = {}
+): Promise<string[]> {
   const db = await getDb();
+  const rows = messageRowSql({ deepRead: opts.deepRead ?? false, signals: "trigger" });
   const result = await db.execute(sql`
-    SELECT DISTINCT c.user_id ${pendingFrom(now)}
+    SELECT DISTINCT c.user_id ${pendingFrom(now, rows)}
       AND EXISTS (
         SELECT 1 FROM user_settings us
          WHERE us.user_id = c.user_id AND us.relationship_engine_enabled = 1

@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
-  AlertTriangle,
   Clock,
   Loader2,
   Play,
@@ -34,7 +33,6 @@ export function ContactUpkeepPanel({
     checked: number;
     namesFixed: number;
     avatarsUpdated: number;
-    rateLimitsEncountered: number;
     more: boolean;
   } | null>(null);
 
@@ -43,14 +41,11 @@ export function ContactUpkeepPanel({
   const handleRunUpkeep = () => {
     startTransition(async () => {
       try {
-        const res = await triggerGlobalContactUpkeepAction({
-          batchSize: 100,
-          pacingDelayMs: 200,
-        });
+        const res = await triggerGlobalContactUpkeepAction({ batchSize: 100 });
         if (res.ok) {
           setLastResult(res.stats);
           toast.success(
-            `Upkeep pass finished: ${res.stats.checked} checked, ${res.stats.namesFixed} names fixed, ${res.stats.avatarsUpdated} photos updated${res.stats.rateLimitsEncountered > 0 ? ` (${res.stats.rateLimitsEncountered} rate limits backed off)` : ""}`
+            `Upkeep pass finished: ${res.stats.checked} checked, ${res.stats.namesFixed} names fixed, ${res.stats.avatarsUpdated} photos updated`
           );
         }
       } catch (err) {
@@ -63,25 +58,9 @@ export function ContactUpkeepPanel({
 
   return (
     <AdminPanel
-      title="Global Contact Upkeep & Paced Queue"
+      title="Global contact upkeep"
       action={
         <div className="flex items-center gap-2">
-          {metrics.rateLimited ? (
-            <div className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-500 border border-amber-500/20">
-              <AlertTriangle className="size-3.5" />
-              <span>
-                LinkedIn Cooldown ({metrics.cooldownRemainingSeconds}s)
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-              <span className="relative flex size-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex size-2 rounded-full bg-emerald-500"></span>
-              </span>
-              <span>Paced & Ready</span>
-            </div>
-          )}
           <button
             type="button"
             onClick={handleRunUpkeep}
@@ -109,7 +88,7 @@ export function ContactUpkeepPanel({
     >
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          Audits and repairs contacts across all user accounts without third-party API costs. Resolves handles, usernames, and generic placeholders into real names, and backfills profile photos using LinkedIn direct scraping, Gravatar, and connected address books. Requests are paced at 200ms with automatic backoff to prevent rate limits.
+          Audits and repairs contacts across all accounts without third-party API costs: turns handles, usernames and placeholders into real names, and fills photos from the shared LinkedIn pool, connected address books and Gravatar. It never calls LinkedIn; the LinkedIn photo queue above does that.
         </p>
 
         {metrics.activeRun && (
@@ -176,15 +155,6 @@ export function ContactUpkeepPanel({
                 .
               </span>
             </div>
-            {((lastResult?.rateLimitsEncountered ??
-              Number(metrics.lastRun?.stats.rateLimitsEncountered || 0)) > 0) && (
-              <span className="text-amber-500">
-                Paced backoff triggered{" "}
-                {lastResult?.rateLimitsEncountered ??
-                  metrics.lastRun?.stats.rateLimitsEncountered}{" "}
-                times
-              </span>
-            )}
           </div>
         )}
       </div>

@@ -7,12 +7,18 @@
  */
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getDb } from "@/db";
 import { imports } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { actionFailure } from "@/lib/action-failure";
 import { isUserFacingError } from "@/lib/errors";
 import { isImportId } from "@/lib/imports/import-ids";
+import { applyShareTopics } from "@/lib/linkedin-shares";
+import { reportError } from "@/lib/report-error";
+import { runImportJobById } from "@/lib/import-job-dispatch";
+import { applyExportExtras } from "@/lib/linkedin-export-apply";
+import { fillFromStoredExport } from "@/lib/linkedin-export-facts";
 import {
   appendExportFiles,
   beginExport,
@@ -57,7 +63,10 @@ export async function appendLinkedInExportFiles(
   }
 }
 
-/** Close the upload. Nothing runs in the background, so it comes back already completed. */
+/**
+ * Close the upload and read the useful files: target companies and background land now; the
+ * per-person notes are staged and attached by the engine in the background, like any import.
+ */
 export async function startLinkedInExport(
   importId: string,
   counts: { tooLarge: number; private: number },
@@ -66,18 +75,31 @@ export async function startLinkedInExport(
   if (!isImportId(importId)) return refusal(TRY_AGAIN);
   try {
     const stats = await finishExportUpload(userId, importId, counts);
+    // Radar's topics from your own posts (Shares.csv). A failure costs the topics, never the upload.
+    await applyShareTopics(userId, importId).catch((err) => reportError(err, { where: "linkedin-export-files.share-topics", level: "warning" }));
+    const extras = await applyExportExtras(userId, importId);
     const db = await getDb();
     await db
       .update(imports)
       .set({
-        status: "completed",
-        totalRows: 0,
-        stats: { ...stats, runEndedAt: new Date().toISOString() },
+        status: extras.rows ? "processing" : "completed",
+        totalRows: extras.rows,
+        stats: {
+          ...stats,
+          targetsAdded: extras.targetsAdded,
+          backgroundAdded: extras.backgroundAdded,
+          ...(extras.rows ? {} : { runEndedAt: new Date().toISOString() }),
+        },
         updatedAt: new Date(),
       })
       .where(and(eq(imports.id, importId), eq(imports.userId, userId)));
+    if (extras.rows) after(() => runImportJobById(importId).catch(() => {}));
+    // With no rows the job never runs, so its finish step (which fills the network from the
+    // newly kept Connections.csv) doesn't either: do that here.
+    else after(() => fillFromStoredExport(userId).catch((err) => reportError(err, { where: "linkedin-export-files.export-fill", level: "warning" })));
     revalidatePath("/capture");
-    return { importId, totalRows: 0 };
+    revalidatePath("/settings");
+    return { importId, totalRows: extras.rows };
   } catch (err) {
     return failure(err, TRY_AGAIN, "linkedin-export-files.start");
   }

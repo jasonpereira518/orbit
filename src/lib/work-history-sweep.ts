@@ -29,8 +29,8 @@
 import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { userCanUseAi } from "@/lib/ai";
-import { bucketCount, consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
-import { WEB_SEARCH_BACKGROUND_SHARE, WEB_SEARCH_SCOPE, webSearchMonthKey } from "@/lib/web-search-budget";
+import { consumeBucket, isRateLimitedError, RATE_LIMITS } from "@/lib/rate-limit";
+import { backgroundSearchRoom } from "@/lib/web-search-budget";
 import { utcDayKey } from "@/lib/timeline-cost";
 import {
   researchContactWorkHistory,
@@ -39,6 +39,7 @@ import {
   type WorkHistoryOutcome,
   type WorkHistoryResearcher,
 } from "@/lib/work-history-research";
+import { openEngines as openDecisionEngines, type Engines } from "@/lib/decisions/engine";
 
 /** Accounts one run looks at. */
 export const SWEEP_USERS_PER_RUN = 8;
@@ -72,6 +73,8 @@ export type WorkHistorySweepDeps = {
   checker?: CurrentRoleChecker;
   canUseAi?: (userId: string) => Promise<boolean>;
   random?: () => number;
+  /** Jev's engines for one account, opened once per account per run (the re-check gate). */
+  openEngines?: (userId: string) => Promise<Engines>;
 };
 
 /**
@@ -83,6 +86,21 @@ export type WorkHistorySweepDeps = {
 const notCold = sql.raw(
   "(priority_level > 0 OR closeness_tier IS NOT NULL OR last_interaction_at IS NOT NULL OR stated_closeness IS NOT NULL)"
 );
+
+/**
+ * Who the sweep may search for. Always a contact with a LinkedIn URL. With
+ * ORBIT_FIND_PROFILES=on, also one without, if it has a two-word name and a company or school
+ * (the finder, `findableWithoutUrl`; corroborated before anything is written).
+ * Off by default until the namesake eval (scripts/eval-fixtures/web-search-eval.json) shows
+ * zero wrong-person finds on a real key. URL contacts sort first at the same due time.
+ */
+function searchable(alias = ""): ReturnType<typeof sql.raw> {
+  const c = alias ? `${alias}.` : "";
+  if (process.env.ORBIT_FIND_PROFILES !== "on") return sql.raw(`${c}linkedin_url IS NOT NULL`);
+  return sql.raw(
+    `(${c}linkedin_url IS NOT NULL OR (${c}full_name ~ '\\S\\S+\\s+\\S\\S+' AND (${c}company IS NOT NULL OR ${c}school IS NOT NULL)))`
+  );
+}
 
 /** Not given up on: fewer than the max misses, or the misses were against an older URL. */
 const notGivenUp = sql.raw(
@@ -98,7 +116,7 @@ async function usersWithDueContacts(now: Date, limit: number): Promise<string[]>
         FROM contacts c
         JOIN user_settings s ON s.user_id = c.user_id
        WHERE s.work_history_auto_enabled = 1
-         AND c.linkedin_url IS NOT NULL
+         AND ${searchable("c")}
          AND (c.priority_level > 0 OR c.closeness_tier IS NOT NULL OR c.last_interaction_at IS NOT NULL OR c.stated_closeness IS NOT NULL)
          AND (c.work_history_misses < ${WORK_HISTORY_MAX_MISSES} OR c.work_history_miss_slug IS DISTINCT FROM c.linkedin_slug)
          AND (c.work_history_due_at IS NULL OR c.work_history_due_at <= ${now})
@@ -123,11 +141,11 @@ async function claimDueContacts(userId: string, limit: number, now: Date): Promi
          AND id IN (
            SELECT id FROM contacts
             WHERE user_id = ${userId}
-              AND linkedin_url IS NOT NULL
+              AND ${searchable()}
               AND ${notCold}
               AND ${notGivenUp}
               AND (work_history_due_at IS NULL OR work_history_due_at <= ${now})
-            ORDER BY work_history_due_at ASC NULLS FIRST, closeness DESC NULLS LAST, id
+            ORDER BY work_history_due_at ASC NULLS FIRST, (linkedin_url IS NULL), closeness DESC NULLS LAST, id
             LIMIT ${limit}
          )
       RETURNING id
@@ -155,7 +173,7 @@ async function deferAccount(userId: string, now: Date): Promise<void> {
     UPDATE contacts
        SET work_history_due_at = ${now}::timestamptz + interval '7 days' * (0.8 + random() * 0.4)
      WHERE user_id = ${userId}
-       AND linkedin_url IS NOT NULL
+       AND ${searchable()}
        AND (work_history_due_at IS NULL OR work_history_due_at <= ${now})
   `);
 }
@@ -168,7 +186,7 @@ function nextUtcDay(now: Date): Date {
 function interleave(groups: Array<{ userId: string; ids: string[] }>): Array<{ userId: string; contactId: string }> {
   const out: Array<{ userId: string; contactId: string }> = [];
   for (let i = 0; groups.some((g) => i < g.ids.length); i++) {
-    for (const g of groups) if (i < g.ids.length) out.push({ userId: g.userId, contactId: g.ids[i]! });
+    for (const g of groups) if (i < g.ids.length) out.push({ userId: g.userId, contactId: g.ids[i] });
   }
   return out;
 }
@@ -203,6 +221,19 @@ export async function runWorkHistorySweep(deps: WorkHistorySweepDeps = {}): Prom
     groups.push({ userId, ids });
   }
 
+  // One account read per account for Jev, not per contact. A failed open is "no engines":
+  // the re-check then searches exactly as before.
+  const openFor = deps.openEngines ?? ((userId: string) => openDecisionEngines(userId));
+  const engines = new Map<string, Promise<Engines>>();
+  const enginesFor = (userId: string) => {
+    let opened = engines.get(userId);
+    if (!opened) {
+      opened = openFor(userId).catch(() => ({ jev: null, llm: null }));
+      engines.set(userId, opened);
+    }
+    return opened;
+  };
+
   const queue = interleave(groups);
   const exhausted = new Set<string>();
   const unstarted = new Map<string, string[]>();
@@ -211,7 +242,7 @@ export async function runWorkHistorySweep(deps: WorkHistorySweepDeps = {}): Prom
 
   const worker = async () => {
     while (next < queue.length) {
-      const item = queue[next++]!;
+      const item = queue[next++];
       const { userId, contactId } = item;
       const hold = (map: Map<string, string[]>) => map.set(userId, [...(map.get(userId) ?? []), contactId]);
       if (deps.deadline !== undefined && Date.now() >= deps.deadline) {
@@ -227,10 +258,10 @@ export async function runWorkHistorySweep(deps: WorkHistorySweepDeps = {}): Prom
         checker: deps.checker,
         now,
         random: deps.random,
+        gates: await enginesFor(userId),
         spend: async () => {
           // Background stops at its share of the account's monthly searches.
-          const used = await bucketCount(WEB_SEARCH_SCOPE, webSearchMonthKey(userId, now), RATE_LIMITS.webSearchMonthly);
-          if (used >= RATE_LIMITS.webSearchMonthly.limit * WEB_SEARCH_BACKGROUND_SHARE) return false;
+          if (!(await backgroundSearchRoom(userId, now))) return false;
           try {
             await consumeBucket(
               "work-history-background",

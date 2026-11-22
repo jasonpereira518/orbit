@@ -14,7 +14,7 @@ import "./smoke/_env";
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { chatMessages, chatThreads, contacts, interactions, userGoals } from "../src/db/schema";
+import { chatMessages, chatThreads, contacts, interactions, relationshipDigests, userGoals } from "../src/db/schema";
 import { prepareChatContext, renderAboutUser } from "../src/lib/chat-context";
 import { createReminderForUser } from "../src/lib/reminder-writes";
 import { logNoteInteractionForUser } from "../src/lib/contact-writes";
@@ -27,6 +27,7 @@ import { ymdInZone } from "../src/lib/reminder-due-bucket";
 import { factLane } from "../src/lib/chat-lanes";
 import { fallbackParsedQuery } from "../src/lib/chat-retrieval";
 import { NULL_STEPS } from "../src/lib/chat-steps";
+import { withDeepReadOff } from "./smoke/deep-read";
 
 const USER = "smoke-chat-context-user";
 
@@ -147,6 +148,25 @@ async function main() {
   const focusedProfile = await prepareChatContext(USER, "what did she work on?", {
     focusContactId: profiledId,
   });
+
+  // Deep read: an admin (by user id, no request needed) gets the relationship block too.
+  {
+    const db2 = await getDb();
+    await db2.insert(relationshipDigests).values({
+      contactId: profiledId, userId: USER, summary: "s", topics: [],
+      origin: { text: "Met at HackNC", date: "2022-09-01", precision: "month", context: "event", excerpt: "so good meeting you at HackNC", interactionId: profiledId, runId: profiledId, replaced: null },
+    }).onConflictDoNothing();
+    const prior = { ids: process.env.ADMIN_USER_IDS, clerk: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY };
+    process.env.ADMIN_USER_IDS = USER;
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke-chat-context";
+    const deepFocus = await prepareChatContext(USER, "what did she work on?", { focusContactId: profiledId });
+    if (prior.ids === undefined) delete process.env.ADMIN_USER_IDS; else process.env.ADMIN_USER_IDS = prior.ids;
+    if (prior.clerk === undefined) delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY; else process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = prior.clerk;
+    check("deep read: the focus profile says how you met", deepFocus.focusProfile?.includes("How you met: Met at HackNC (Sep 2022)") === true, deepFocus.focusProfile ?? "null");
+    const offFocus = await withDeepReadOff(() => prepareChatContext(USER, "what did she work on?", { focusContactId: profiledId }));
+    check("deep read off: the focus profile has no relationship block", offFocus.focusProfile?.includes("How you met: Met at HackNC") === false);
+    await db2.delete(relationshipDigests).where(eq(relationshipDigests.contactId, profiledId));
+  }
   check(
     "a focused question carries the whole profile",
     focusedProfile.focusProfile?.includes("Computed orbital mechanics by hand.") === true,
@@ -534,6 +554,20 @@ async function main() {
     });
     check("about-you carries their words and role", Boolean(about?.includes("SMB treasury") && about.includes("CEO at Ledgerly")), about ?? "null");
     check("on one line — an imported field cannot open a new one", Boolean(about && !about.includes("\n")), about ?? "null");
+    const past = renderAboutUser({
+      careerProfile: {
+        positions: [
+          { title: "CEO", company: "Ledgerly", start: { year: 2024 } },
+          { title: "PM", company: "Stripe", start: { year: 2021 }, end: { year: 2023 } },
+          { title: "Analyst", company: "Bain", start: { year: 2019 }, end: { year: 2021 } },
+          { title: "Intern", company: "Acme", start: { year: 2018 }, end: { year: 2018 } },
+          { title: "Intern", company: "Beta", start: { year: 2017 }, end: { year: 2017 } },
+        ],
+        education: [{ school: "State University", degree: "BS Economics", start: { year: 2014 }, end: { year: 2018 } }],
+      },
+    }) ?? "";
+    check("about-you lists up to 3 past roles", past.includes("previously: PM at Stripe (2021–2023), Analyst at Bain (2019–2021), Intern at Acme (2018)") && !past.includes("Beta"), past);
+    check("about-you lists where they studied", past.includes("studied: BS Economics at State University"), past);
   }
 
   console.log("\nAll chat-context checks passed.");

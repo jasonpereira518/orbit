@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { finishCronRun, startCronRun } from "@/lib/cron-runs";
 import "@/lib/email/origin-registrations";
-import { drainEmailSends } from "@/lib/email/outbox";
+import { drainEmailSends, hasDueEmailSends } from "@/lib/email/outbox";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { reportError } from "@/lib/report-error";
 
@@ -13,6 +13,8 @@ export async function POST(request: Request) {
   if (!isInternalRequest(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  // Every tick, so a scheduled or stranded send waits at most one tick; idle ticks write no ledger rows.
+  if (!(await hasDueEmailSends())) return NextResponse.json({ ok: true, idle: true });
   const handle = await startCronRun("email.drain");
   try {
     // 40s of a 60s budget, leaving room for the ledger write.

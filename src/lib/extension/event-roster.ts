@@ -28,7 +28,7 @@ export async function saveEventRoster(userId: string, page: PageContext): Promis
   // The link names the event, so it has to be the event: a canonical Luma/Partiful URL whose
   // platform is the one the adapter claimed to read.
   const outcome = canonicalizeEventUrl(page.url);
-  const url = outcome.kind === "ok" ? outcome.candidates[0]! : null;
+  const url = outcome.kind === "ok" ? outcome.candidates[0] : null;
   if (!url || (page.site !== "luma" && page.site !== "partiful") || platformOf(url)?.platform !== page.site) {
     throw new ExtensionRouteError("invalid_request", "That isn’t a Luma or Partiful event page.");
   }

@@ -97,6 +97,9 @@ export const AI_OPERATIONS = {
   // thinking level: this file only sets one where the eval showed it loses nothing, and this
   // operation has not been through the eval yet.
   "chat.gather": { label: "Chat: looking things up", tier: "user" },
+  // scripts/eval-voice.ts --score only: Cosmo's prompt and orbit_tool, replayed on the account's
+  // own model to compare Deepgram's think models. Never called by the product.
+  "voice.eval": { label: "Cosmo test set (eval only)", tier: "user" },
   "chat.refine": { label: "Chat: rewriting a draft", tier: "fast", thinking: "minimal" },
   "search.embed": { label: "Search indexing", tier: "embed" },
   "search.embed.batch": { label: "Search indexing (bulk)", tier: "embed", background: true },
@@ -104,6 +107,10 @@ export const AI_OPERATIONS = {
   // A real name for a contact saved under a handle ("jsmith42"), when the address book and
   // the handle itself say nothing. A few words out; `@/lib/contact-name-sweep`.
   "contact.name_guess": { label: "Contacts: reading names from handles", tier: "fast", thinking: "minimal", background: true },
+  // Reading a feedback report for the operator: a one-line summary, a kind, a severity and an
+  // earlier report it repeats. Runs on the OPERATOR's account, never the reporter's — see
+  // `src/lib/feedback-triage.ts`. Unattended and a few dozen tokens out, so the fast tier.
+  "feedback.triage": { label: "Feedback: reading reports for the operator", tier: "fast", thinking: "minimal", background: true },
   // The fast tier, like the other background extraction: nobody reads this answer directly,
   // it runs unattended on the person's own key, and the costly part of a searched answer is
   // the result pages it reads as input — which cost per token on the pricier model too. The
@@ -129,13 +136,27 @@ export const AI_OPERATIONS = {
   // the card is review-and-send. The same prompt as "followup.draft"; background because
   // nobody is waiting on it.
   "radar.draft": { label: "Radar: drafts for Today", tier: "user", background: true },
+  // The weekly Connect judge: which pairs of the person's notes are a real reason to introduce,
+  // ask or share, with one quote from each side (src/lib/radar/connect.ts).
+  "radar.connect": { label: "Radar: connecting your notes", tier: "fast", thinking: "minimal", background: true },
   // Extracts ongoing user projects from interactions, calendar, and notes during Radar runs.
   "radar.projects.extract": { label: "Radar: extracting active projects", tier: "fast", thinking: "minimal", background: true },
+  // Radar's weekly web pass: events near the person, people to meet, open programs
+  // (src/lib/radar/opportunities.ts). Every link it keeps is one the search cited.
+  "radar.web": { label: "Radar: events, people and programs (web search)", tier: "fast", thinking: "minimal", background: true },
   "extension.parse": { label: "Extension: reading profiles", tier: "fast", thinking: "minimal" },
   "extension.starters": { label: "Extension: conversation starters", tier: "user" },
   // "Talking points" on a meeting's prep card: the user asked, so a foreground operation.
   "meeting.talking_points": { label: "Meeting: talking points", tier: "fast", thinking: "minimal" },
   "followup.draft": { label: "Follow-up drafts", tier: "user" },
+  // One call that reads ~20 recent sent emails and writes a short description of how the user
+  // writes (`@/lib/writing-style-profile`). Runs after a draft the user asked for, or on
+  // Refresh: foreground, on their own model, because the profile shapes every draft after it.
+  "style.profile": { label: "Writing style from sent mail", tier: "user" },
+  // Reads up to 30 pairs (Orbit's draft, what the user sent) and writes down the changes they
+  // made in at least 3 (`@/lib/draft-edits`). Fast tier: a comparison, not writing; one call
+  // per 3 edited drafts, after the send that triggered it.
+  "style.edits": { label: "Learning from your edits", tier: "fast", thinking: "minimal" },
   "outreach.draft": { label: "Outreach drafts", tier: "user" },
   "outreach.apollo": { label: "Outreach: prospect search", tier: "user" },
   "recruiter.scan": { label: "Recruiter scan", tier: "fast", thinking: "minimal", background: true },
@@ -164,6 +185,18 @@ export const AI_OPERATIONS = {
   "contact.brief.gate": { label: "Contact briefs: anything new? (decision model)", tier: "decision" },
   "extension.starters.gate": { label: "Extension: enough for openers? (decision model)", tier: "decision" },
   "import.enrich.gate": { label: "LinkedIn import: worth summarizing? (decision model)", tier: "decision", background: true },
+  // The two work-history gates — the only decisions Orbit's own TypeSafe key answers
+  // (`ORBIT_PAID_DECISIONS`, ai-access.ts; spec 2026-11-10-jev-work-history-design.md).
+  "contact.work_history.recheck.gate": {
+    label: "Work history: re-check needed? (decision model)",
+    tier: "decision",
+    background: true,
+  },
+  "contact.work_history.verify.gate": {
+    label: "Work history: same person? (decision model)",
+    tier: "decision",
+    background: true,
+  },
   "import.linkedin.timeline.decide": {
     label: "LinkedIn timeline events (decision model)",
     tier: "decision",
@@ -184,6 +217,13 @@ export const AI_OPERATIONS = {
   },
   "relationship.digest": {
     label: "Relationship analysis (conversations)",
+    tier: "fast",
+    thinking: "minimal",
+    background: true,
+  },
+  // LinkedIn deep read, launch catch-up: one read of each already-summarised conversation's opening.
+  "relationship.origin": {
+    label: "Relationship analysis (how you met, one-time)",
     tier: "fast",
     thinking: "minimal",
     background: true,

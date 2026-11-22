@@ -8,6 +8,7 @@ import {
   ChartsSection,
   LinkedInExportNudgeSection,
   MorningBriefingSection,
+  RadarWidgetSection,
   RecentlyUpdatedSection,
   RemindersAndFollowUpsSection,
   SetupChecklistSection,
@@ -20,6 +21,7 @@ import { listPendingAgentSends } from "@/lib/agent-sends";
 import { requireUserId } from "@/lib/auth";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { RenderStamp } from "@/components/layout/render-stamp";
+import { RadarDockProvider } from "@/components/radar/radar-dock";
 import { fetchRadarBriefing } from "@/actions/radar";
 
 export const metadata = { title: "Dashboard" };
@@ -52,19 +54,35 @@ export default async function DashboardPage() {
   radarBriefing?.catch(() => {});
 
   // The outreach summary streams independently, and is not started at all when its card
-  // is hidden — it is the one query on this page that no other card shares.
-  const outreachSummary = show("dashboard.outreach-performance")
-    ? getOutreachPerformanceSummary()
-    : null;
+  // is hidden — it is the one query on this page that no other card shares. Like the Radar
+  // widget, it stays off while Outreach is marked coming soon: the reply-rate chip links to
+  // /outreach, which hasn't shipped.
+  const outreachSummary =
+    show("dashboard.outreach-performance") && !comingSoonMarked.has("page.outreach")
+      ? getOutreachPerformanceSummary()
+      : null;
 
   // Each row is guarded as well as each card: a `grid` whose children are all hidden still
   // renders, and its `gap` would leave an unexplained band of empty page behind.
   const showSuggestedRow = show("dashboard.suggested-outreach");
 
   return (
-    <div className="space-y-8">
+    <RadarDockProvider className="space-y-8">
       <RenderStamp />
-      <DashboardHeader />
+      {/* Radar's collapsed card sits in the header's corner (from `lg`; below that the full
+          briefing shows, as before). The row only exists for viewers who can open Radar, and
+          the card renders nothing before their first run, so everyone else gets the plain
+          header. The card streams in beside the title, so it moves nothing vertically. */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+        <div className="min-w-0">
+          <DashboardHeader />
+        </div>
+        {radarBriefing && (
+          <Suspense fallback={null}>
+            <RadarWidgetSection briefing={radarBriefing} />
+          </Suspense>
+        )}
+      </div>
 
       {/* One boundary for everything below the header. The optional leading cards are
           data-dependent — today's meetings, the LinkedIn nudge, agent drafts and the setup
@@ -75,12 +93,9 @@ export default async function DashboardPage() {
           immediately, so first paint is unchanged. */}
       <Suspense fallback={<DashboardBodySkeleton />}>
         <div className="space-y-8">
-          {/* Radar flagship morning briefing: centerpiece hero at the top of the dashboard */}
-          {radarBriefing && (
-            <div className="w-full">
-              <MorningBriefingSection briefing={radarBriefing} bundle={bundle} />
-            </div>
-          )}
+          {/* Radar's morning briefing. Closed behind the corner card from `lg` up; the drawer
+              is the section's own root so it can give back this list's gap while closed. */}
+          {radarBriefing && <MorningBriefingSection briefing={radarBriefing} bundle={bundle} />}
 
           {/* Today's meetings (when the calendar has any). Drops row when neither renders. */}
           <div className="empty:hidden">
@@ -142,6 +157,6 @@ export default async function DashboardPage() {
           {show("dashboard.tail") && <TailSection bundle={bundle} />}
         </div>
       </Suspense>
-    </div>
+    </RadarDockProvider>
   );
 }

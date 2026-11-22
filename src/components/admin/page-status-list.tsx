@@ -214,7 +214,7 @@ export function PageStatusList({
   const byKey = new Map(pages.map((p) => [p.key, p]));
   const inNav = new Set(navKeys);
   const rows = [
-    ...navItems.map((item, i) => ({ key: navKeys[i]!, icon: item.icon, navIndex: i })),
+    ...navItems.map((item, i) => ({ key: navKeys[i], icon: item.icon, navIndex: i })),
     ...pages
       .filter((p) => !inNav.has(p.key))
       .map((p) => ({ key: p.key, icon: null, navIndex: -1 })),
@@ -310,9 +310,9 @@ export function PageStatusList({
 
   /** The nav row next to `navIndex` inside the same group, or -1 at the group's edge. */
   function neighbour(navIndex: number, by: -1 | 1) {
-    const group = groupOf(navKeys[navIndex]!);
+    const group = groupOf(navKeys[navIndex]);
     for (let i = navIndex + by; i >= 0 && i < navKeys.length; i += by) {
-      if (groupOf(navKeys[i]!) === group) return i;
+      if (groupOf(navKeys[i]) === group) return i;
     }
     return -1;
   }
@@ -321,7 +321,7 @@ export function PageStatusList({
     const target = neighbour(navIndex, by);
     if (target < 0) return;
     const next = [...navKeys];
-    [next[navIndex], next[target]] = [next[target]!, next[navIndex]!];
+    [next[navIndex], next[target]] = [next[target], next[navIndex]];
     void saveOrder(next);
   }
 

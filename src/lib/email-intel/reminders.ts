@@ -115,7 +115,7 @@ export async function scheduleEmailEventReminder(
         itemHash,
       })
       .returning();
-    reminderId = row!.id;
+    reminderId = row.id;
     created = true;
   }
 

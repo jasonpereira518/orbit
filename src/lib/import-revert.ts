@@ -79,6 +79,21 @@ export type RevertResult =
  */
 function restoreStatement(contactId: string, userId: string, snap: ImportRevertSnapshot) {
   const ts = (value: string | null) => (value ? new Date(value) : null);
+  // Columns merges write since schema 240. A snapshot taken before then has no key for them,
+  // and the merge it describes never wrote them: leave those alone.
+  const later = [
+    ["location", "location"],
+    ["school", "school"],
+    ["x_handle", "xHandle"],
+    ["website", "website"],
+    ["industry", "industry"],
+  ] as const;
+  const extra = later
+    .filter(([, key]) => key in snap)
+    .map(([col, key]) => sql`${sql.raw(col)} = ${snap[key] ?? null},`);
+  if ("fieldSources" in snap) {
+    extra.push(sql`field_sources = ${snap.fieldSources ? JSON.stringify(snap.fieldSources) : null}::jsonb,`);
+  }
   return sql`
     UPDATE contacts
     SET company              = ${snap.company},
@@ -97,6 +112,7 @@ function restoreStatement(contactId: string, userId: string, snap: ImportRevertS
         date_met             = ${ts(snap.dateMet)},
         first_interaction_at = ${ts(snap.firstInteractionAt)},
         last_interaction_at  = ${ts(snap.lastInteractionAt)},
+        ${sql.join(extra, sql` `)}
         embedding_stale_at   = now(),
         updated_at           = now()
     WHERE id = ${contactId}::uuid AND user_id = ${userId}

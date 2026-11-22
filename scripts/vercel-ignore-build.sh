@@ -12,6 +12,7 @@
 #      scripts, the extension). Diffed against the branch's last build
 #      (VERCEL_GIT_PREVIOUS_SHA), so skipped docs pushes followed by a code push still build
 #      all of it; without that variable, against the push's parent commit.
+#   4. A push whose commit subject is only a merge ("Merge origin/main into X").
 #
 # `[deploy]` in the commit message always builds. Production ALWAYS builds (the post-deploy
 # workflow and /api/health's sha expect every main push to land). Everything unrecognised
@@ -57,6 +58,20 @@ esac
 
 if [ -z "${VERCEL_GIT_PULL_REQUEST_ID:-}" ]; then
   echo "ignore-build: skipping $ref, it has no pull request (push with [deploy] in the message to build it anyway)"
+  exit 0
+fi
+
+# A push whose commit is only a merge ("Merge origin/main into X", "Merge branch 'a' into b",
+# "Merge claude/a into claude/b") carries no new work to look at, and Hobby builds one thing at
+# a time: eleven stacked PR branches merged into each other on Nov 11 queued the last preview
+# ~40 minutes. A subject with anything more ("Merge origin/main; fix CI (dvh)", "Merge pull
+# request #1 ...") still builds, and so does `[deploy]` (handled above).
+subject="${VERCEL_GIT_COMMIT_MESSAGE:-}"
+subject="${subject%%$'\n'*}"
+merge_branch_re="^Merge (remote-tracking )?branch '[^']+'( of [^ ]+)? into [^ ;:(]+$"
+merge_ref_re="^Merge ([^ ;:'\"]*/[^ ;:'\"]*|main) into [^ ;:(]+$"
+if [[ "$subject" =~ $merge_branch_re || "$subject" =~ $merge_ref_re ]]; then
+  echo "ignore-build: skipping $ref, the push is only a merge (push with [deploy] in the message to build it anyway)"
   exit 0
 fi
 

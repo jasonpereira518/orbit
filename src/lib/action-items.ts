@@ -3,7 +3,7 @@
  * as a write-through denorm for the timeline and the extension; this table is what the
  * profile checklist and reminders link to.
  */
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@/lib/crypto";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { actionItems, interactions } from "@/db/schema";
@@ -12,7 +12,7 @@ export const MAX_ACTION_ITEMS_PER_INTERACTION = 10;
 
 /** Must equal the SQL in src/db/index.ts ADMIN_V2_STATEMENTS: sha256(id || '|' || lower(btrim(text))). */
 export function actionItemHash(interactionId: string, text: string) {
-  return createHash("sha256").update(`${interactionId}|${text.replace(/^ +| +$/g, "").toLowerCase()}`).digest("hex");
+  return sha256Hex(`${interactionId}|${text.replace(/^ +| +$/g, "").toLowerCase()}`);
 }
 
 export type ExistingActionItem = { id: string; itemHash: string; status: "open" | "done"; reminderId: string | null };

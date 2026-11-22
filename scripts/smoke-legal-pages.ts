@@ -104,7 +104,13 @@ check("the recruiter scan is described", privacy.includes('id="recruiters"'));
 check("the shared directory is described", privacy.includes("shared directory"));
 check("self-service account deletion is described", privacy.includes("Delete your account"));
 check("the usage view is pointed to", privacy.includes("Integrations → AI provider"));
-check("the timeline cap is quoted from code", privacy.includes("TIMELINE_DAILY_CONTACT_CAP"));
+check("the old 40-summary cap is no longer claimed", !privacy.includes("up to 40 of"));
+check("the retired timeline cap is quoted nowhere", !privacy.includes("TIMELINE_DAILY_CONTACT_CAP") && !terms.includes("TIMELINE_DAILY_CONTACT_CAP"));
+check("the LinkedIn deep read is described", privacy.includes("Your LinkedIn export: what Orbit reads"));
+check("the way to remove a relationship kind is named", privacy.includes("Not right?"));
+check("connected assistants are said to get the relationship description", privacy.includes("how you met, the kind of relationship"));
+check("…including what they are working on (the block sends it)", privacy.includes("what they are working on"));
+check("no Undo is promised for the LinkedIn read", !/LinkedIn[^.]*\bUndo\b/.test(privacy));
 check("the date comes from legal.ts", privacy.includes("LEGAL_LAST_UPDATED"));
 
 console.log("Terms");
@@ -113,7 +119,6 @@ check("billing is said to run through Stripe", terms.includes("Payments are hand
 check("refunds and chargebacks end access", terms.includes("Refunds and chargebacks end what they paid for"));
 check("account deletion from Settings is described", terms.includes("delete your account yourself"));
 check("the Terms date comes from legal.ts", terms.includes("LEGAL_LAST_UPDATED"));
-check("the timeline cap is quoted from code", terms.includes("TIMELINE_DAILY_CONTACT_CAP"));
 
 console.log("The published version moved with the text");
 

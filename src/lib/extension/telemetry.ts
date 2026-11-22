@@ -54,7 +54,8 @@ export type ExtensionAction =
   | "log_connections"
   | "starters"
   | "schedule_follow_up"
-  | "save_activity";
+  | "save_activity"
+  | "scan_activity";
 
 export type ExtensionEventSite = "linkedin" | "gmail" | "luma" | "partiful" | "other";
 

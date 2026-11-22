@@ -446,7 +446,7 @@ const FOLLOWUP_SWEEP_SLOT_MS = 10 * 60 * 1000;
 export function rotatingWindow<T>(items: readonly T[], size: number, slot: number): T[] {
   if (items.length <= size) return [...items];
   const start = (((slot * size) % items.length) + items.length) % items.length;
-  return Array.from({ length: size }, (_, i) => items[(start + i) % items.length]!);
+  return Array.from({ length: size }, (_, i) => items[(start + i) % items.length]);
 }
 
 /**
@@ -589,6 +589,30 @@ export async function drainDueDeliveries(
       .where(and(inArray(outboundWebhookDeliveries.id, unattempted), eq(outboundWebhookDeliveries.claimedBy, token)));
   }
   return stats;
+}
+
+/**
+ * Whether a drain run has anything to do: a delivery due, a follow-up subscriber to emit for,
+ * or an idempotency record past `purgeBefore`. The route stands down without a ledger row
+ * when all three are no. Same due predicate as `claimDueDeliveries`.
+ */
+export async function hasWebhookWork(now: Date, purgeBefore: Date): Promise<boolean> {
+  const db = await getDb();
+  const [row] = rowsOf<{ work: boolean }>(
+    await db.execute(sql`
+      SELECT (
+        EXISTS (
+          SELECT 1 FROM outbound_webhook_deliveries d
+            JOIN webhook_endpoints e ON e.id = d.endpoint_id
+           WHERE d.status = 'pending' AND d.next_attempt_at IS NOT NULL AND d.next_attempt_at <= ${now}
+             AND e.status = 'active' AND (d.claimed_until IS NULL OR d.claimed_until < ${now})
+        )
+        OR EXISTS (SELECT 1 FROM webhook_endpoints WHERE status = 'active' AND event_types ? 'followup.due')
+        OR EXISTS (SELECT 1 FROM api_idempotency_keys WHERE created_at < ${purgeBefore})
+      ) AS work
+    `)
+  );
+  return row?.work === true;
 }
 
 /** Purge idempotency records past their useful life. Called from the same sweep. */

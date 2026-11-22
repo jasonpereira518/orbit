@@ -19,7 +19,7 @@
  *
  * Pure apart from the small per-instance cache; no database, no framework.
  */
-import { MCP_CLIENTS } from "@/lib/product-event-schemas";
+import { type MCP_CLIENTS } from "@/lib/product-event-schemas";
 
 export type McpClient = (typeof MCP_CLIENTS)[number];
 

@@ -4,11 +4,17 @@ import { Check, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useId, useState } from "react";
 import { toast } from "@/lib/toast";
 
-import { getWritingInstructions, saveWritingInstructions } from "@/actions/settings";
+import {
+  getWritingInstructions,
+  refreshStyleProfile,
+  saveEditLessons,
+  saveStyleProfile,
+  saveWritingInstructions,
+} from "@/actions/settings";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { friendlyError } from "@/lib/errors";
-import { MAX_WRITING_INSTRUCTIONS } from "@/lib/writing-instructions";
+import { EDIT_LESSONS_MAX, MAX_WRITING_INSTRUCTIONS, STYLE_PROFILE_MAX } from "@/lib/writing-instructions";
 
 /**
  * "How I like things written" — the second box in the chat Context sheet.
@@ -30,6 +36,10 @@ export function WritingInstructionsField({ active }: { active: boolean }) {
   const [saving, setSaving] = useState(false);
   // What the box held when it last saved. The tick shows only while the box still holds it.
   const [receipt, setReceipt] = useState<string | null>(null);
+  // null = not learned yet, "" = turned off, text = what drafts are told.
+  const [styleProfile, setStyleProfile] = useState<string | null>(null);
+  // Same three states, for the changes learned from the user's own edits.
+  const [editLessons, setEditLessons] = useState<string | null>(null);
 
   // Loaded the first time the sheet opens, and only then: it is not per-thread, so a thread
   // switch must never reload (and clobber an edit in progress).
@@ -37,10 +47,12 @@ export function WritingInstructionsField({ active }: { active: boolean }) {
     if (!active || loaded) return;
     let cancelled = false;
     getWritingInstructions()
-      .then(({ text: stored }) => {
+      .then(({ text: stored, styleProfile: learned, editLessons: lessons }) => {
         if (cancelled) return;
         setSaved(stored ?? "");
         setText(stored ?? "");
+        setStyleProfile(learned);
+        setEditLessons(lessons);
         setLoaded(true);
       })
       .catch((err) => {
@@ -116,6 +128,187 @@ export function WritingInstructionsField({ active }: { active: boolean }) {
           </Button>
         </div>
       </div>
+      {loaded && <LearnedStyle profile={styleProfile} onChange={setStyleProfile} />}
+      {loaded && <LearnedEdits lessons={editLessons} onChange={setEditLessons} />}
     </section>
+  );
+}
+
+const REFRESH_COPY = {
+  no_mailbox: "Connect Gmail or Outlook with mail access first",
+  too_few: "Not enough sent mail to learn from yet",
+  failed: "Couldn’t read your style this time — try again?",
+} as const;
+
+/**
+ * "Learned from your sent mail": the style profile Orbit distilled from the user's own sent
+ * email (`@/lib/writing-style-profile`). Editable (their edit is then their text), refreshable,
+ * and Turn off clears it and stops Orbit learning it again on its own.
+ */
+function LearnedStyle({ profile, onChange }: { profile: string | null; onChange: (p: string) => void }) {
+  const id = useId();
+  const [draft, setDraft] = useState(profile ?? "");
+  const [busy, setBusy] = useState<"save" | "refresh" | "off" | null>(null);
+  const dirty = Boolean(profile) && draft.trim() !== (profile ?? "").trim();
+
+  async function refresh() {
+    setBusy("refresh");
+    try {
+      const res = await refreshStyleProfile();
+      if (res.status === "built") {
+        onChange(res.profile);
+        setDraft(res.profile);
+        toast.success("Learned how you write");
+      } else toast.error(REFRESH_COPY[res.status]);
+    } catch (err) {
+      toast.error(friendlyError(err, REFRESH_COPY.failed));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function store(text: string, kind: "save" | "off") {
+    setBusy(kind);
+    try {
+      const res = await saveStyleProfile(text);
+      onChange(res.styleProfile);
+      setDraft(res.styleProfile);
+      toast.success(res.styleProfile ? "Style saved" : "Orbit won’t learn from your sent mail");
+    } catch (err) {
+      toast.error(friendlyError(err, "Couldn’t save that — try again?"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="mt-2 flex flex-col gap-2" aria-labelledby={`${id}-title`} role="group">
+      <div>
+        <h4 id={`${id}-title`} className="text-xs font-medium text-foreground">
+          Learned from your sent mail
+        </h4>
+        <p id={`${id}-hint`} className="mt-0.5 text-xs text-muted-foreground">
+          {profile
+            ? "How Orbit thinks you write. Your notes above win where they differ."
+            : profile === ""
+              ? "Off. Orbit won’t read your sent mail to learn your style."
+              : "After your first draft, Orbit reads about 20 recent sent emails to match your style. Only this description is kept."}
+        </p>
+      </div>
+      {profile ? (
+        <Textarea
+          rows={5}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          maxLength={STYLE_PROFILE_MAX}
+          disabled={busy !== null}
+          aria-labelledby={`${id}-title`}
+          aria-describedby={`${id}-hint`}
+          className="min-h-[112px] resize-none text-xs"
+        />
+      ) : null}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {profile ? (
+          <Button type="button" variant="ghost" size="sm" onClick={() => store("", "off")} disabled={busy !== null}>
+            {busy === "off" ? <Loader2 className="size-4 animate-spin" /> : "Turn off"}
+          </Button>
+        ) : null}
+        <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={busy !== null}>
+          {busy === "refresh" ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : profile ? (
+            "Refresh"
+          ) : profile === "" ? (
+            "Turn on"
+          ) : (
+            "Learn now"
+          )}
+        </Button>
+        {dirty ? (
+          <Button type="button" variant="outline" size="sm" onClick={() => store(draft, "save")} disabled={busy !== null}>
+            {busy === "save" ? <Loader2 className="size-4 animate-spin" /> : "Save"}
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Learned from your edits": changes the user made to Orbit's drafts in at least 3 messages,
+ * learned silently (`@/lib/draft-edits`). Editable; Turn off clears them, deletes the drafts kept
+ * for learning, and stops recording until Turn on.
+ */
+function LearnedEdits({ lessons, onChange }: { lessons: string | null; onChange: (l: string | null) => void }) {
+  const id = useId();
+  const [draft, setDraft] = useState(lessons ?? "");
+  const [busy, setBusy] = useState<"save" | "off" | "on" | null>(null);
+  const dirty = Boolean(lessons) && draft.trim() !== (lessons ?? "").trim();
+
+  async function store(text: string | null, kind: "save" | "off" | "on") {
+    setBusy(kind);
+    try {
+      const res = await saveEditLessons(text);
+      onChange(res.editLessons);
+      setDraft(res.editLessons ?? "");
+      toast.success(kind === "off" ? "Orbit won’t learn from your edits" : kind === "on" ? "Learning from your edits again" : "Saved");
+    } catch (err) {
+      toast.error(friendlyError(err, "Couldn’t save that — try again?"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="mt-2 flex flex-col gap-2" aria-labelledby={`${id}-title`} role="group">
+      <div>
+        <h4 id={`${id}-title`} className="text-xs font-medium text-foreground">
+          Learned from your edits
+        </h4>
+        <p id={`${id}-hint`} className="mt-0.5 text-xs text-muted-foreground">
+          {lessons
+            ? "Changes you keep making to Orbit’s drafts. Drafts now make them for you."
+            : lessons === ""
+              ? "Off. Orbit isn’t learning from how you edit its drafts."
+              : "When you change Orbit’s drafts the same way three times, Orbit learns it here and does it for you."}
+        </p>
+      </div>
+      {lessons ? (
+        <Textarea
+          rows={4}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          maxLength={EDIT_LESSONS_MAX}
+          disabled={busy !== null}
+          aria-labelledby={`${id}-title`}
+          aria-describedby={`${id}-hint`}
+          className="min-h-[92px] resize-none text-xs"
+        />
+      ) : null}
+      {lessons !== null ? (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {lessons ? (
+            <Button type="button" variant="ghost" size="sm" onClick={() => store("", "off")} disabled={busy !== null}>
+              {busy === "off" ? <Loader2 className="size-4 animate-spin" /> : "Turn off"}
+            </Button>
+          ) : (
+            <Button type="button" variant="outline" size="sm" onClick={() => store(null, "on")} disabled={busy !== null}>
+              {busy === "on" ? <Loader2 className="size-4 animate-spin" /> : "Turn on"}
+            </Button>
+          )}
+          {dirty ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => store(draft, "save")} disabled={busy !== null}>
+              {busy === "save" ? <Loader2 className="size-4 animate-spin" /> : "Save"}
+            </Button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="flex justify-end">
+          <Button type="button" variant="ghost" size="sm" onClick={() => store("", "off")} disabled={busy !== null}>
+            {busy === "off" ? <Loader2 className="size-4 animate-spin" /> : "Don’t learn from my edits"}
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }

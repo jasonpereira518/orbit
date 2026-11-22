@@ -184,7 +184,7 @@ export async function ingestListings(
     // actually in the table.
     stats.maxDateUpdated = Math.max(
       stats.maxDateUpdated,
-      chunk[chunk.length - 1]!.dateUpdatedUnix
+      chunk[chunk.length - 1].dateUpdatedUnix
     );
   }
 

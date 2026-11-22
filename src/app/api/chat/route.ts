@@ -9,6 +9,8 @@ import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 import { requireAuthenticatedUser, type AuthenticatedUser } from "@/lib/auth";
 import { buildChatBlocks, prepareChatContext } from "@/lib/chat-context";
 import { expandLists, peopleIdsIn, stripInvalidDirectives } from "@/lib/chat-directives";
+import { normalizeDraftBlocks } from "@/lib/chat-draft-block";
+import { createDraftStreamScrubber } from "@/lib/message-format";
 import { rollBackApplied } from "@/lib/chat-auto-apply";
 import { answerDeadlineMs, answerWithLookups, type ChatMode } from "@/lib/chat-agent-loop";
 import { sanitizeAttachments } from "@/lib/chat-attachments";
@@ -38,6 +40,8 @@ import { reportedFailure, reportError } from "@/lib/report-error";
 import { createStreamRedactor } from "@/lib/ai-security";
 import { scrubModelText } from "@/lib/sentry-scrub";
 import { requireVisibleSurface } from "@/lib/surface-visibility";
+import { classifyWebNeed, decideWebForTurn, parseWebChoice, webStep } from "@/lib/chat-web-decision";
+import { chatWebAvailability } from "@/lib/chat-web-availability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -103,10 +107,10 @@ export async function POST(request: Request) {
     ? body.contextContactIds.filter((id): id is string => typeof id === "string").slice(0, 10)
     : [];
 
-  // How hard to work on it, and whether the web may be searched. Anything unrecognized is
-  // today's behaviour: a quick answer with web lookups available.
+  // How hard to work on it, and the person's web-search choice (auto when absent or
+  // unrecognised: the question decides, below). Anything unrecognized for the mode is a quick answer.
   const mode: ChatMode = body?.mode === "deep" ? "deep" : "quick";
-  const web = body?.web !== false;
+  const webChoice = parseWebChoice(body?.web);
 
   // Files attached to the question: names and the text already read from them. Counted,
   // cut to length and stripped of anything that is not one here, whatever the client sent.
@@ -302,14 +306,29 @@ export async function POST(request: Request) {
               }
             : undefined;
 
+        // Web search is off unless the person said on or the question needs the web
+        // (`@/lib/chat-web-decision`). The pause/provider check runs only when a search is
+        // wanted, so an ordinary question pays nothing for it.
+        const webWanted =
+          webChoice === "on" || (webChoice === "auto" && classifyWebNeed(ctx.q).needs);
+        const webTurn = decideWebForTurn({
+          choice: webChoice,
+          question: ctx.q,
+          availability: webWanted ? await chatWebAvailability(ctx.access ?? access) : { ok: true },
+        });
+        const webLine = webStep(webTurn);
+        if (webLine) steps.done("web", webLine);
+
         steps.start("answer", mode === "deep" ? "Researching in depth" : "Writing the answer");
         // Secrets and fence markers are scrubbed from the LIVE stream, not only from what is
         // stored afterwards — see `createStreamRedactor`. (A scrub is recorded once the
         // stored copy is guarded, by `guardChatAnswer`; nothing is recorded here twice.)
         const redactor = createStreamRedactor();
+        // Then the house bans on draft blocks (dashes, "!"), so the editor starts from clean text.
+        const draftScrub = createDraftStreamScrubber();
         const deadlineSignal = AbortSignal.timeout(answerDeadlineMs(requestStartedAt, Date.now(), mode));
         const onDelta = (delta: string) => {
-          const safe = redactor.push(delta);
+          const safe = draftScrub.push(redactor.push(delta));
           if (safe) send({ type: "answer", delta: safe });
         };
         const result = await traced(
@@ -333,11 +352,20 @@ export async function POST(request: Request) {
               onProposed: (items) => send({ type: "actions", items }),
               steer,
               mode,
-              web,
+              web: webTurn.on,
+              webNote: webTurn.blocked
+                ? webTurn.blocked
+                : webTurn.on
+                  ? webTurn.source === "auto"
+                    ? "auto-on"
+                    : undefined
+                  : webTurn.source === "auto"
+                    ? "auto-off"
+                    : undefined,
             }),
           { userId }
         );
-        const tail = redactor.flush();
+        const tail = draftScrub.push(redactor.flush()) + draftScrub.flush();
         if (tail) send({ type: "answer", delta: tail });
         steps.done("answer", { label: "Wrote the answer" });
 
@@ -349,10 +377,14 @@ export async function POST(request: Request) {
         const { text: unblocked, strippedCount } = stripUnresolvedMarkers(result.answer, validIds);
         // The same for blocks: an id the server never offered, or a roster that was not
         // there, is dropped before anything is stored.
-        const { text: cleanAnswer, removed: strayBlockIds } = stripInvalidDirectives(unblocked, {
-          people: new Set(Object.keys(blocks.people)),
-          lists: new Set(Object.keys(blocks.lists)),
-        });
+        // A draft block keeps a recipient only if the server offered that person (`to=`).
+        const { text: cleanAnswer, removed: strayBlockIds } = stripInvalidDirectives(
+          normalizeDraftBlocks(unblocked, new Set(Object.keys(blocks.people))),
+          {
+            people: new Set(Object.keys(blocks.people)),
+            lists: new Set(Object.keys(blocks.lists)),
+          }
+        );
         const cited = citedIds(cleanAnswer);
         const citedEvidence = Object.fromEntries(cited.map((id) => [id, result.evidence[id]]));
 
@@ -368,8 +400,8 @@ export async function POST(request: Request) {
           ...placed.map((id) => ({
             contact_id: id,
             recruiter_id: null,
-            name: blocks.people[id]!.name,
-            reason: blocks.people[id]!.subtitle ?? "",
+            name: blocks.people[id].name,
+            reason: blocks.people[id].subtitle ?? "",
             suggested_action: "",
             draft_message: null,
           })),

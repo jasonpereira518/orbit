@@ -21,6 +21,7 @@ import { cleanSingleLine, detectInjectionSignals } from "@/lib/ai-security";
 import { identityKeysFor } from "@/lib/duplicates";
 import { classifySenderKind } from "@/lib/recruiter-triage";
 import type { EmailEventKind, EmailEventPerson } from "./types";
+import { classifyName } from "@/lib/names/classify";
 
 export type InboxEventKind = Exclude<EmailEventKind, "other">;
 
@@ -54,17 +55,9 @@ export function personNameKey(name: string): string {
   return name.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-/** A department or a mailbox rather than a person. */
-const NOT_A_PERSON =
-  /\b(team|recruiting|recruitment|recruiters?|talent|careers?|hiring|human resources|hr|support|notifications?|no-?reply|do not reply|admin|info|mailer|billing|sales|marketing)\b/i;
-
 /** A person's name: two or more words, letters in each, no digits, no address, not a department. */
 export function looksLikePerson(name: string): boolean {
-  if (name.length < 3 || name.length > 60) return false;
-  if (/[@\d<>\/\\]/.test(name)) return false;
-  if (NOT_A_PERSON.test(name)) return false;
-  const words = name.split(" ").filter(Boolean);
-  return words.length >= 2 && words.every((w) => /\p{L}/u.test(w));
+  return name.length <= 60 && classifyName(name).verdict === "person_full";
 }
 
 function emailKey(email: string | null | undefined): string | null {

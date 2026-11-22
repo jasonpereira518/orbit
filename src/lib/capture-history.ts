@@ -170,7 +170,7 @@ export async function listPendingCapturesFor(userId: string): Promise<CaptureHis
   for (const drop of drops.values()) {
     // Oldest file first, the order they were dropped; open on a file that has been read.
     drop.files.sort((a, b) => fileCreated.get(a.id)!.localeCompare(fileCreated.get(b.id)!));
-    drop.href = (drop.files.find((f) => f.status === "ready") ?? drop.files[0]!).href;
+    drop.href = (drop.files.find((f) => f.status === "ready") ?? drop.files[0]).href;
   }
   return out;
 }

@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
-import { format, formatDistanceToNow } from "date-fns";
+import { format } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import {
   ArrowDown,
   ArrowUp,
@@ -287,7 +288,7 @@ export function InteractionDetailSheet({
                   the year off the end. */}
               <SheetDescription>
                 {header
-                  ? `${format(new Date(header.interactionDate), "EEE, MMM d, yyyy")} · ${formatDistanceToNow(new Date(header.interactionDate), { addSuffix: true })}`
+                  ? `${format(new Date(header.interactionDate), "EEE, MMM d, yyyy")} · ${longRelativeLabel(new Date(header.interactionDate))}`
                   : "Loading…"}
               </SheetDescription>
             </div>

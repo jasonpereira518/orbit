@@ -215,7 +215,9 @@ async function previewOne(d: Detected): Promise<PreviewOutcome> {
       const res = await previewConnections(text);
       if ("error" in res) throw new UserFacingError(res.error);
       const people = res.people.map(connectionToReviewPerson);
-      return { ok: true, people, ids: unrepeated(people), text, fileName };
+      // Everyone, people already in Orbit included: the export is their own current record, and
+      // a merge only updates what Orbit guessed, never what you typed (`@/lib/contact-fields`).
+      return { ok: true, people, ids: people.map((p) => p.id), text, fileName };
     }
     if (d.target === "linkedin_messages") {
       const res = await previewLinkedInMessagesCsv(text);

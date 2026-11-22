@@ -1,5 +1,6 @@
 "use client";
 
+import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { upload } from "@vercel/blob/client";
 import { Loader2, Paperclip, Sparkles } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
@@ -29,6 +30,7 @@ import { stripSignature } from "@/lib/email/signature";
 import { friendlyError } from "@/lib/errors";
 import { toast } from "@/lib/toast";
 import { DraftLinkWarning } from "@/components/follow-up/draft-link-warning";
+import { recordDraftOutcome } from "@/actions/settings";
 
 /**
  * Write an email and send it from the user's own mailbox. It goes out after a 10-second undo
@@ -188,7 +190,8 @@ export function ComposeDialog({
       }
       setBody(res.body);
       setAiBody(res.body);
-      setSubject((s) => (s.trim() ? s : "Following up"));
+      // A subject the person already typed stays; otherwise the draft's own, specific one.
+      setSubject((s) => (s.trim() ? s : res.subject || s));
     });
   }
 
@@ -216,6 +219,8 @@ export function ComposeDialog({
           return;
         }
         clearComposeDraft(window.localStorage, key);
+        // Orbit's draft next to what went out, to learn edits made again and again.
+        if (aiBody) void recordDraftOutcome({ surface: "compose", kind: "email", aiText: aiBody, finalText: snapshot.body }).catch(() => {});
         onOpenChange(false);
         const who = contact?.name ?? res.to[0] ?? "them";
         const others = res.to.length - 1;
@@ -268,7 +273,7 @@ export function ComposeDialog({
             <div className="flex min-h-9 items-center gap-2 border-b border-border/60 py-1.5">
               <span className="w-10 shrink-0 text-xs font-medium text-muted-foreground">From</span>
               {capability?.ok && sendable.length > 1 ? (
-                <MailboxSelect mailboxes={capability.mailboxes} value={fromProvider ?? sendable[0]!.id} onChange={setFromProvider} disabled={sending} />
+                <MailboxSelect mailboxes={capability.mailboxes} value={fromProvider ?? sendable[0].id} onChange={setFromProvider} disabled={sending} />
               ) : capability?.ok ? (
                 <span className="min-w-0 truncate font-medium">{capability.fromEmail}</span>
               ) : capability && capability.reason !== "cap_reached" ? (
@@ -323,6 +328,7 @@ export function ComposeDialog({
               </p>
             ) : (
               <Input
+                {...tourAnchor("compose.subject")}
                 aria-label="Subject"
                 placeholder="Subject"
                 value={subject}
@@ -333,6 +339,7 @@ export function ComposeDialog({
               />
             )}
             <Textarea
+              {...tourAnchor("compose.body")}
               aria-label="Message"
               rows={9}
               value={body}

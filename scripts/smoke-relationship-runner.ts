@@ -13,12 +13,12 @@ process.env.CLERK_SECRET_KEY ||= "sk_test_smoke-rel-runner";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import {
-  actionItems, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings,
+  actionItems, contactExperiences, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings,
 } from "../src/db/schema";
 import { AiAccessError } from "../src/lib/ai-access";
 import { INLINE_PER_RUN, runRelationshipPass, applyRelationshipBatch, type RelationshipBatchPayload } from "../src/lib/relationship-engine/runner";
 import { claimPendingContacts, pendingRelationshipContactCount } from "../src/lib/relationship-engine/pending";
-import type { RelationshipDigestAnswer } from "../src/lib/relationship-engine/extract";
+import { DIGEST_SYSTEM, type RelationshipDigestAnswer } from "../src/lib/relationship-engine/extract";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 const USER = "smoke-rel-runner-user";
@@ -212,6 +212,57 @@ async function main() {
   ]);
   const rows = await db.query.relationshipRuns.findMany({ where: eq(relationshipRuns.userId, USER) });
   check("concurrent passes → one run row", rows.length === 1, `${rows.length} rows, ${JSON.stringify(pair)}`);
+
+  console.log("\ndeep read");
+  await reset();
+  await db.delete(contactExperiences).where(eq(contactExperiences.userId, USER));
+  await db.update(userSettings).set({
+    careerProfile: { positions: [{ title: "Engineer", company: "Acme, Inc.", start: { year: 2021 }, end: { year: 2023 } }] },
+  }).where(eq(userSettings.userId, USER));
+  const [shared] = await seedContacts(1, REAL);
+  await db.update(contacts).set({ company: "Acme" }).where(eq(contacts.id, shared));
+  const prompts: Array<{ system: string; user: string }> = [];
+  const record = async (_u: string, p: { system: string; user: string }) => { prompts.push(p); return ANSWER; };
+  await runRelationshipPass(USER, { extract: record, submit: async () => null, deepRead: true });
+  check("deep read: the prompt asks for origin", prompts[0]?.system.includes('"origin"') === true);
+  check("deep read: a shared employer is known context", prompts[0]?.user.includes("You both worked at Acme, Inc.") === true, prompts[0]?.user.slice(0, 600));
+  await reset();
+  const [withYears] = await seedContacts(1, REAL);
+  await db.update(userSettings).set({
+    careerProfile: { positions: [{ title: "Engineer", company: "Acme, Inc.", start: { year: 2021 }, end: { year: 2023 } }] },
+  }).where(eq(userSettings.userId, USER));
+  await db.insert(contactExperiences).values({ userId: USER, contactId: withYears, kind: "role", organization: "Acme", organizationNormalized: "acme", startYear: 2022, endYear: 2024, source: "extension" });
+  prompts.length = 0;
+  await runRelationshipPass(USER, { extract: record, submit: async () => null, deepRead: true });
+  check("deep read: their history gives the years you overlapped", prompts[0]?.user.includes("You both worked at Acme, Inc., 2022 to 2023") === true, prompts[0]?.user.slice(0, 600));
+  await reset();
+  await seedContacts(1, REAL);
+  prompts.length = 0;
+  await runRelationshipPass(USER, { extract: record, submit: async () => null, deepRead: false });
+  check("flag off: the prompt is today's", prompts[0]?.system === DIGEST_SYSTEM && !prompts[0]?.user.includes("KNOWNCONTEXT"));
+
+  // A batch keeps the deep read it was built with, whatever the flag says when it lands.
+  const ORIGIN_ANSWER: RelationshipDigestAnswer = {
+    ...ANSWER,
+    origin: { text: "Met while raising a seed round", date: "", context: null, excerpt: "We're raising a seed round" },
+    relationship: null,
+    events: [],
+  };
+  for (const deepRead of [true, false]) {
+    await reset();
+    await seedContacts(INLINE_PER_RUN + 1, REAL);
+    let built = null as RelationshipBatchPayload | null;
+    const JOB3 = deepRead ? "44444444-4444-4444-8444-444444444444" : "55555555-5555-4555-8555-555555555555";
+    await runRelationshipPass(USER, { extract: async () => ANSWER, submit: async (_u, _op, _r, p) => { built = p as unknown as RelationshipBatchPayload; return JOB3; }, deepRead });
+    check(`batch payload records deepRead=${deepRead}`, (built?.deepRead ?? false) === deepRead, JSON.stringify(built?.deepRead));
+    await applyRelationshipBatch(
+      { id: JOB3, userId: USER, payload: built! } as never,
+      built!.items.map((it) => ({ customId: it.customId, text: JSON.stringify(ORIGIN_ANSWER), error: null, usage: {} as never })),
+      async () => {}
+    );
+    const batched = await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, built!.items[0].contactId) });
+    check(deepRead ? "a deep batch writes the origin when it lands" : "a plain batch never writes one", deepRead ? batched?.origin?.text === "Met while raising a seed round" : (batched?.origin ?? null) === null, JSON.stringify(batched?.origin));
+  }
 
   await reset();
   console.log("\nsmoke-relationship-runner: all checks passed");

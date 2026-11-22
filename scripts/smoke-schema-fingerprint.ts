@@ -60,6 +60,20 @@ run(async () => {
   const kept = await recorded();
   check("and never overwrites the newer stamp", Number(kept?.version) === SCHEMA_VERSION + 1 && kept?.fingerprint === "newer-build", JSON.stringify(kept));
 
+  console.log("\nA preview build, against a database a newer sibling already stamped (force)...");
+  // The state a failed preview build left behind: the sibling's stamp is ahead, and this
+  // branch's DDL (here, one index) never ran because the never-downgrade rule skipped it.
+  await db.execute(sql`DROP INDEX IF EXISTS contacts_embedding_stale_idx`);
+  const forced = await reconcileSchema({ force: true });
+  check("force sweeps although the stamp is newer", forced.applied === true && forced.failed.length === 0, JSON.stringify(forced));
+  check("and applies the DDL the newer stamp was hiding",
+    rowsOf(await db.execute(sql`SELECT 1 FROM pg_indexes WHERE indexname = 'contacts_embedding_stale_idx'`)).length === 1);
+  const keptByForce = await recorded();
+  check("without lowering the newer stamp", Number(keptByForce?.version) === SCHEMA_VERSION + 1 && keptByForce?.fingerprint === "newer-build", JSON.stringify(keptByForce));
+  await db.execute(sql`DROP INDEX IF EXISTS contacts_embedding_stale_idx`);
+  check("the default still leaves it alone (runtime boots never force)", (await reconcileSchema()).applied === false);
+  await reconcileSchema({ force: true }); // put the index back for whatever runs next
+
   // Leave the shared PGlite as every later script expects it.
   await db.execute(sql`UPDATE schema_migrations SET version = ${SCHEMA_VERSION}, fingerprint = ${fp} WHERE id = 1`);
   if (failures > 0) {

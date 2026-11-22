@@ -1,6 +1,7 @@
 "use server";
 
 import { after } from "next/server";
+import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { requirePageUser } from "@/lib/plan-guards";
 import { relatedSqlLower } from "@/lib/related-contacts-sql";
 import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
@@ -52,20 +53,19 @@ import {
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
 import { kickWorkHistoryResearch } from "@/lib/work-history-research";
-import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
   AVATAR_BACKFILL_BATCH_SIZE,
   AVATAR_BACKFILL_BUDGET_MS,
   downloadAndPersistAvatar,
-  fetchGravatarPhotoUrl,
   isLinkedInProfilePhoto,
   isUnusableAvatarUrl,
   AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
 import {
   adoptPhotoIntoSharedPool,
+  resolveGravatarCached,
   resolveLinkedInPhotoCached,
   sharedPhotoSlug,
   type ProfileImageSource,
@@ -95,6 +95,8 @@ import {
   resolveAvatarNow,
   runAvatarBackfillBatch,
 } from "@/lib/avatar-backfill";
+import { runAvatarUpgradePass } from "@/lib/avatar-upgrade";
+import { reportError } from "@/lib/report-error";
 import { reindexInteractionPassages } from "@/lib/memory-backfill";
 import { traced } from "@/lib/perf-trace";
 import {
@@ -110,16 +112,17 @@ import {
   type RelatedContactCandidate,
 } from "@/lib/related-contacts";
 import { UNDO_DELAY_MS } from "@/lib/email/config";
+import { isLinkedInProfileUrl } from "@/lib/identity/linkedin";
 import { enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
 import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/email/sender";
 import { trackSearchPerformed } from "@/lib/search-events";
 import { TEXT_LIMITS, cleanOptionalText, cleanTextList } from "@/lib/input/text";
+import { deferStyleProfileBuild } from "@/lib/style-profile-defer";
+import { removeRelationshipKind } from "@/lib/relationship-engine/apply";
+import { isUuid } from "@/lib/ids";
 
-export type {
-  ContactInput,
-  ContactWriteOptions,
-} from "@/lib/contact-writes";
+export type { ContactInput } from "@/lib/contact-writes";
 
 export type {
   ContactListRow,
@@ -722,8 +725,9 @@ function clientContactInput<T extends Partial<ContactInput>>(input: T): T {
  * free plan's limit (audit H-01). Server callers that need options use the `*ForUser`
  * functions in `@/lib/contact-writes` directly.
  */
-export async function createContact(input: ContactInput) {
-  const { contact } = await createContactDetailed(input);
+/** `typedName`: the contact form, where the person typed the name; automation never renames it. */
+export async function createContact(input: ContactInput, opts?: { typedName?: boolean }) {
+  const { contact } = await createContactDetailed(input, opts);
   return contact;
 }
 
@@ -739,11 +743,12 @@ export async function createContact(input: ContactInput) {
  * Separate from `createContact` rather than a changed return type, so the outreach path
  * that only wants the row keeps working unchanged.
  */
-export async function createContactDetailed(input: ContactInput) {
+export async function createContactDetailed(input: ContactInput, opts?: { typedName?: boolean }) {
   const userId = await requirePageUser("page.contacts");
   const { contactId, outcome, reason } = await resolveOrCreateContact(
     userId,
-    clientContactInput(input)
+    clientContactInput(input),
+    opts?.typedName ? { nameBy: "user", by: "user" } : {}
   );
   const db = await getDb();
 
@@ -755,7 +760,7 @@ export async function createContactDetailed(input: ContactInput) {
       await resolveAvatarNow(db, userId, contactId, {
         persistRemote: downloadAndPersistAvatar,
         resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
-        resolveGravatar: fetchGravatarPhotoUrl,
+        resolveGravatar: resolveGravatarCached,
         deadline: Date.now() + 2500,
       });
     } catch {
@@ -776,8 +781,9 @@ export async function createContactDetailed(input: ContactInput) {
 // same server-only `options` — so it was never callable from a browser on purpose, yet an
 // action id was still minted for it. Importers call `createContactsBulkForUser` directly.
 
+/** A name in the patch is one the person typed (only the contact form sends one): final. */
 export async function updateContact(id: string, input: Partial<ContactInput>) {
-  return updateContactForUser(await requirePageUser("page.contacts"), id, clientContactInput(input));
+  return updateContactForUser(await requirePageUser("page.contacts"), id, clientContactInput(input), { nameBy: "user", by: "user" });
 }
 
 /**
@@ -789,16 +795,18 @@ export async function reviewContactName(id: string, name?: { firstName: string; 
   if (name) {
     const firstName = name.firstName.trim();
     const lastName = name.lastName.trim();
-    await updateContactForUser(userId, id, {
-      fullName: [firstName, lastName].filter(Boolean).join(" "),
-      firstName,
-      lastName,
-    });
+    await updateContactForUser(
+      userId,
+      id,
+      { fullName: [firstName, lastName].filter(Boolean).join(" "), firstName, lastName },
+      { nameBy: "user" }
+    );
   }
+  // Confirmed or typed, the name is now the person's: final for every automated writer.
   const db = await getDb();
   await db
     .update(contacts)
-    .set({ nameGuess: sql`${contacts.nameGuess} || '{"weak": false}'::jsonb` })
+    .set({ nameGuess: sql`${contacts.nameGuess} || '{"weak": false, "source": "user"}'::jsonb` })
     .where(and(eq(contacts.id, id), eq(contacts.userId, userId), sql`${contacts.nameGuess} IS NOT NULL`));
   revalidatePath("/contacts");
   revalidatePath(`/contacts/${id}`);
@@ -1052,6 +1060,15 @@ export async function reorderSameDayInteractions(
   return { ok: true as const };
 }
 
+/** "Not right?" on a contact's relationship kind (LinkedIn deep read): hide it for good. */
+export async function removeContactRelationshipKind(contactId: string) {
+  const userId = await requirePageUser("page.contacts");
+  if (!isUuid(contactId)) return { ok: false as const };
+  const ok = await removeRelationshipKind(userId, contactId);
+  revalidatePath(`/contacts/${contactId}`);
+  return { ok };
+}
+
 export async function regenerateContactSummary(contactId: string) {
   const userId = await requirePageUser("page.contacts");
   const out = await generateAndStoreContactBrief(userId, contactId, {
@@ -1112,6 +1129,12 @@ export type AvatarBackfillResult = {
   rateLimitedUntil: number | null;
   /** Set when the photo store itself is broken — the whole run should stop. */
   storageError: string | null;
+  /**
+   * Contacts whose small stored photo was swapped for a bigger one by the idle-tick upgrade
+   * pass (`avatar-upgrade.ts`). Not counted in `saved`: nothing new was fetched, so the
+   * "Fetching LinkedIn photos" card must not appear for it.
+   */
+  upgradedIds?: string[];
 };
 
 export type AvatarBackfillOptions = {
@@ -1144,6 +1167,18 @@ export async function backfillContactAvatars(
   ]);
 
   if (candidates.length === 0) {
+    // First-time photos come first; only a tick with none left to fetch is spent on swapping a
+    // few small stored photos for bigger ones. Total on purpose: it is a nicety, and a fault
+    // in it must not turn the backfill's "nothing to do" into a 500.
+    const upgrade = await runAvatarUpgradePass(db, userId).catch((err) => {
+      reportError(err, { where: "avatar.upgrade", userId, level: "warning" });
+      return null;
+    });
+    if (upgrade && upgrade.upgraded > 0) {
+      revalidatePath("/contacts");
+      revalidatePath("/");
+      revalidatePath("/graph");
+    }
     return {
       saved: 0,
       savedIds: [],
@@ -1152,6 +1187,7 @@ export async function backfillContactAvatars(
       failed: 0,
       rateLimitedUntil: null,
       storageError: null,
+      upgradedIds: upgrade?.upgradedIds ?? [],
     };
   }
 
@@ -1238,7 +1274,7 @@ export async function backfillContactAvatars(
         persistRemote: downloadAndPersistAvatar,
         resolveConnectedAccount,
         resolveLinkedIn: (contactId, url) => resolveLinkedInPhotoCached(contactId, url, userId),
-        resolveGravatar: fetchGravatarPhotoUrl,
+        resolveGravatar: resolveGravatarCached,
         resolveApollo,
         sourcesUnavailable,
         save: async (contactId, photoUrl, source) => {
@@ -1281,20 +1317,6 @@ export async function backfillContactAvatars(
     ...result,
     pending: Math.max(0, backlog - result.saved - result.failedIds.length),
   };
-}
-
-function isLinkedInProfileUrl(raw: string) {
-  const trimmed = raw.trim();
-  if (!trimmed) return false;
-  try {
-    const url = new URL(
-      trimmed.startsWith("http") ? trimmed : `https://${trimmed}`
-    );
-    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
-    return host === "linkedin.com" && /\/in\//i.test(url.pathname);
-  } catch {
-    return /linkedin\.com\/in\//i.test(trimmed);
-  }
 }
 
 /**
@@ -1587,13 +1609,12 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         // Gravatar fallback by email
         if (!profileImageUrl && !sharedPhoto && contact.email) {
           try {
-            const gravatarUrl = await fetchGravatarPhotoUrl(contact.id, contact.email);
-            if (gravatarUrl) {
-              const persisted = await downloadAndPersistAvatar(contact.id, gravatarUrl);
-              if (persisted) {
-                profileImageUrl = persisted;
-                profileImageSource = "gravatar";
-              }
+            const gravatar = await resolveGravatarCached(contact.id, contact.email);
+            if (typeof gravatar === "string") {
+              profileImageUrl = gravatar;
+              profileImageSource = "gravatar";
+            } else if (gravatar) {
+              sharedPhoto = true;
             }
           } catch {
             // Gravatar miss is normal
@@ -1657,7 +1678,8 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
       }
 
       if (Object.keys(patch).length > 0) {
-        await updateContactForUser(userId, contact.id, patch, { skipRevalidate: true });
+        // The person's own profile, read now: replaces guesses, offers to replace what was typed.
+        await updateContactForUser(userId, contact.id, patch, { skipRevalidate: true, by: "linkedin_refresh" });
         if (profileImageUrl) {
           await deleteReplacedAvatar(contact.profileImageUrl, profileImageUrl);
         }
@@ -1725,6 +1747,8 @@ export async function draftContactFollowUp(
   const userId = await requirePageUser("page.contacts");
   const goals = await listActiveGoalTexts();
   const writingInstructions = await loadWritingInstructions(userId);
+  // Learn how they write from their sent mail, once, after the draft is on its way.
+  deferStyleProfileBuild(userId);
   return draftFollowUpResult(userId, contactId, goals, { ...options, writingInstructions });
 }
 
@@ -1819,7 +1843,7 @@ export async function sendContactFollowUpEmail(
   });
   if (!queued.ok) return queued;
   scheduleDispatch(queued.id, queued.sendAt);
-  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0]! };
+  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0] };
 }
 
 // The related-contacts SQL lives in two IMMUTABLE functions defined with the schema

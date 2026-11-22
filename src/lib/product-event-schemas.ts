@@ -52,7 +52,7 @@ export const SURVEYS = ["post_first_capture", "day7_not_activated", "followup_us
 export const CANCEL_REASONS = ["too_expensive", "not_using", "missing_feature", "privacy", "season_over", "other"] as const;
 export const SHARE_CHANNELS = ["copy", "x", "linkedin", "native", "ticket"] as const;
 export const SEARCH_SURFACES = ["contacts_page", "command_palette", "api"] as const;
-export const NOTIFICATION_KINDS = ["due", "meeting", "chat", "test"] as const;
+export const NOTIFICATION_KINDS = ["due", "meeting", "chat", "test", "radar_moment"] as const;
 /** Query length is capped, never exact past this: a long query's length is close to a fingerprint. */
 export const SEARCH_QUERY_LENGTH_CAP = 64;
 export const SEARCH_RESULT_COUNT_CAP = 1000;
@@ -106,7 +106,7 @@ export const eventSchemas = {
   notification_shown: z.object({ kind: z.enum(NOTIFICATION_KINDS) }),
   notification_clicked: z.object({ kind: z.enum(NOTIFICATION_KINDS) }),
   extension_installed: z.object({ version: z.string().regex(/^\d+\.\d+\.\d+$/), browser: z.enum(["chrome", "edge", "brave", "arc", "other"]) }),
-  extension_action: z.object({ action: z.enum(["save_person", "log_interaction", "open_profile", "event_roster", "log_connections", "starters", "schedule_follow_up", "save_activity"]), site: z.enum(["linkedin", "gmail", "luma", "partiful", "other"]), ok: z.boolean() }),
+  extension_action: z.object({ action: z.enum(["save_person", "log_interaction", "open_profile", "event_roster", "log_connections", "starters", "schedule_follow_up", "save_activity", "scan_activity"]), site: z.enum(["linkedin", "gmail", "luma", "partiful", "other"]), ok: z.boolean() }),
   extension_uninstalled: z.object({ version: z.string().regex(/^\d+\.\d+\.\d+$/) }),
 
   // Monetization

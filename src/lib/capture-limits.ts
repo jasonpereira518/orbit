@@ -101,7 +101,3 @@ export function fitsInOneRequest(text: string) {
 export function importPayloadFits(text: string | null, ids: readonly string[] = []) {
   return fitsInOneRequest((text ?? "") + JSON.stringify(ids));
 }
-
-export function formatImportSize(bytes: number) {
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-}

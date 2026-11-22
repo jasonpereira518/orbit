@@ -232,7 +232,8 @@ async function main() {
   // Statement count is a cost to watch, not a number to minimise. If it creeps past this,
   // the question to ask is whether something started scanning again, not whether two
   // aggregates can be folded together.
-  check("dashboard issues ≤ 16 statements", dashboardCount <= 16, `got ${dashboardCount}`);
+  // 17, up from 16: `getDueCounts`, the one count of what is due (src/lib/due-counts.ts).
+  check("dashboard issues ≤ 17 statements", dashboardCount <= 17, `got ${dashboardCount}`);
   check("dashboard scans contacts at least once", dashboardScans.length >= 1);
   check(
     "dashboard contacts scan does not pull notes",
@@ -263,6 +264,8 @@ async function main() {
   // ---- Radar -------------------------------------------------------------------------
   console.log("\nRadar (runRadarForUser, loadRadarPage)…");
   await ensureUserSettings(USER);
+  // Radar is off by default and the dashboard briefing hides for an account that never turned it on.
+  await (await getDb()).update(userSettings).set({ radarEnabledAt: new Date() }).where(eq(userSettings.userId, USER));
   await claimRadarLease(USER);
   startQueryCount();
   const radarRun = await runRadarForUser(USER, { trigger: "manual", ai: false });
@@ -284,8 +287,9 @@ async function main() {
   // for an account that has not opted in.
   check("radar run succeeds at 3,000 contacts", radarRun.ok);
   // 26 + the one constant read of the user's imported skills/job titles (`loadUserFocus`) + the
-  // email-insights opt-in check above = 28.
-  check("radar run issues ≤ 28 statements", radarRunCount <= 28, `got ${radarRunCount}`);
+  // email-insights opt-in check above = 28. Plus Refresh now's progress: one best-effort UPDATE per
+  // stage entered (at most 9) and per draft (at most 5), constant in the size of the network = 42.
+  check("radar run issues ≤ 42 statements", radarRunCount <= 42, `got ${radarRunCount}`);
   check(
     "radar run never pulls notes",
     radarRunQueries.every((q) => !selectsBare(q, "notes")),
@@ -299,8 +303,9 @@ async function main() {
   const radarPageCount = stopQueryCount();
   console.log(`  page statements: ${radarPageCount}`);
   // 5: the list, one settings read (which also answers "anyone in the network?" and "signals
-  // this week"), the AI key check (two), and what autopilot did. The plan's ceiling is 6.
-  check("radar page issues ≤ 6 statements", radarPageCount <= 6, `got ${radarPageCount}`);
+  // this week"), the AI key check (two), and what autopilot did; plus, since Radar PR 9a, the
+  // Opportunities lane's finds (introducer joined in, so one). The ceiling is 7.
+  check("radar page issues ≤ 7 statements", radarPageCount <= 7, `got ${radarPageCount}`);
   const radarJson = JSON.stringify(radarPage);
   check("radar page payload carries no inline base64", !radarJson.includes("data:image/"));
   check("radar page payload under 100 KB", radarJson.length < 100_000, `${(radarJson.length / 1024).toFixed(0)} KB`);
@@ -308,8 +313,9 @@ async function main() {
   const briefing = await loadRadarBriefing(USER);
   const briefingCount = stopQueryCount();
   // The dashboard's morning briefing is its own load, started beside the dashboard bundle,
-  // so the dashboard's own budget above does not move. The plan's ceiling is 3.
-  check("dashboard's morning briefing issues ≤ 3 statements", briefingCount <= 3, `got ${briefingCount}`);
+  // so the dashboard's own budget above does not move. 4 since Radar PR 9b: the run state, the
+  // list, active projects, and the web finds counted into the Opportunities lane.
+  check("dashboard's morning briefing issues ≤ 4 statements", briefingCount <= 4, `got ${briefingCount}`);
   check("and shows at most three people", briefing.hasRun && briefing.top.length <= 3);
 
   // ---- Graph -------------------------------------------------------------------------
@@ -409,7 +415,8 @@ async function main() {
   // the recommendations index), measured on, as it is for anyone who can open Radar. It is a
   // sibling of `items`, never an item, so it adds a statement but no rows to the scaling
   // bound below.
-  check("panel issues ≤ 9 statements", panelCount <= 9, `got ${panelCount}`);
+  // And one more, 10: `getDueCounts`, the same count the dashboard and the rail read.
+  check("panel issues ≤ 10 statements", panelCount <= 10, `got ${panelCount}`);
   check(
     "panel contacts scan filters on next_follow_up_at",
     panelScans.some((s) => /where[\s\S]*"next_follow_up_at"/i.test(s)),
@@ -483,7 +490,10 @@ async function main() {
   const suggestionCount = stopQueryCount();
   const suggestionScans = contactScans(capturedQueries());
   console.log(`  statements: ${suggestionCount}`);
-  check("suggestions issue ≤ 12 statements", suggestionCount <= 12, `got ${suggestionCount}`);
+  // Thirteen with Radar released: getAttentionBrief then also reads the user's pending Radar
+  // cards (`listPendingRecommendations`, one bounded read over their own slice, empty for an
+  // account that never turned Radar on). Twelve while Radar was coming soon.
+  check("suggestions issue ≤ 13 statements", suggestionCount <= 13, `got ${suggestionCount}`);
   check(
     "suggestions do not pull notes as a bare column — the emptiness test belongs in the predicate",
     suggestionScans.every((s) => !selectsBare(s, "notes")),

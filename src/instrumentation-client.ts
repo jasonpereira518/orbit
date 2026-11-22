@@ -1,7 +1,5 @@
-import { initBotId } from "botid/client/core";
 import { markNavStart } from "@/lib/nav-timing";
 import { loadSentry, reportClientError, sentryIfLoaded } from "@/lib/sentry-lazy";
-import { BOTID_PROTECTED_POSTS } from "@/lib/waitlist-host";
 
 /**
  * Browser-side Sentry, loaded after the page is up rather than with it.
@@ -38,11 +36,10 @@ if (document.readyState === "complete") startWhenIdle();
 else window.addEventListener("load", startWhenIdle, { once: true });
 
 /**
- * Vercel BotID: the waitlist join's server-action POSTs carry a proof the actions check
- * (`src/lib/bot-check.ts`). Every other request passes through untouched. Stays at startup,
- * unlike Sentry: a join submitted before it initialized would carry no proof.
+ * BotID is started from the interest hero (`ensureBotId` in `src/lib/botid-client.ts`), not
+ * here: landing `/` and the signed-in app never POST a waitlist join, so paying for BotID on
+ * every cold load was pure critical-path cost (LATENCY_PLAN #33).
  */
-initBotId({ protect: BOTID_PROTECTED_POSTS });
 
 /**
  * Every client-side navigation starts here. Page-load timing gets its clock start

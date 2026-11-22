@@ -9,6 +9,7 @@ import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { completeJson } from "@/lib/ai";
 import type { AiAccess } from "@/lib/ai-access";
+import { cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { listActiveProjectsForUser, upsertProjectForUser, type UserProject } from "@/lib/projects/store";
 import { reportError } from "@/lib/report-error";
@@ -173,7 +174,7 @@ Guidelines:
 ${existingStr}
 
 Recent Activity (${snippets.length} items):
-${activityStr}
+${fenceUntrusted("activity", activityStr)}
 
 Extract the user's currently active projects as JSON:`;
 
@@ -245,15 +246,24 @@ export async function extractActiveProjectsForUser(
     }
 
     if (parsed?.projects && Array.isArray(parsed.projects)) {
-      for (const proj of parsed.projects) {
-        if (!proj.title) continue;
+      // The model read other people's mail and notes: every field it returns is cleaned to
+      // a capped single line before it is stored or reaches a later prompt.
+      for (const proj of parsed.projects.slice(0, 5)) {
+        const title = cleanSingleLine(proj?.title, 80);
+        if (!title) continue;
+        const topics = Array.isArray(proj.topics)
+          ? proj.topics.map((t: unknown) => cleanSingleLine(typeof t === "string" ? t : null, 40)).filter((t: string | null): t is string => !!t).slice(0, 6)
+          : [];
+        const status = ["active", "dormant", "completed"].includes(proj.status) ? proj.status : "active";
+        const detectedFrom = ["gmail", "calendar", "notes"].includes(proj.detectedFrom) ? proj.detectedFrom : "notes";
+        const confidence = Number.isFinite(proj.confidence) ? Math.max(0, Math.min(100, Math.round(proj.confidence))) : 80;
         await upsertProjectForUser(userId, {
-          title: proj.title,
-          summary: proj.summary,
-          topics: proj.topics || [],
-          status: proj.status || "active",
-          detectedFrom: proj.detectedFrom || "notes",
-          confidence: proj.confidence || 80,
+          title,
+          summary: cleanSingleLine(proj.summary, 300) ?? undefined,
+          topics,
+          status,
+          detectedFrom,
+          confidence,
           lastActivityAt: new Date(),
         });
       }

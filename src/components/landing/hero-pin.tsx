@@ -108,7 +108,7 @@ export const HeroPin = forwardRef<
       // the whole composition (plus label margins) fits, then center it in
       // the leftover space.
       const baseRingR =
-        el.offsetWidth * (RING_LABELS[RING_LABELS.length - 1]!.r / SOLAR_VIEW);
+        el.offsetWidth * (RING_LABELS[RING_LABELS.length - 1].r / SOLAR_VIEW);
       const claimBottom = claimRef.current
         ? claimRef.current.getBoundingClientRect().bottom - frameRect.top
         : frameRect.height * 0.3;
@@ -182,6 +182,8 @@ export const HeroPin = forwardRef<
 
             <motion.div
               ref={camWrapRef}
+              // The first-visit sky warp streams out of this box's centre (starfield.tsx).
+              data-sky-warp-origin
               // Below md the stage is sized against the viewport, not the
               // column. The outermost orbit ring paints ~0.57 x the stage
               // from centre (Neptune at 234 of 440 view units, widened by the

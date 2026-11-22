@@ -1,6 +1,7 @@
 "use server";
 
 import { and, desc, eq, inArray, lte, sql, type SQL } from "drizzle-orm";
+import crypto from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
@@ -42,7 +43,7 @@ import {
   isDemoProspect,
   prospectSearchStatus,
 } from "@/lib/outreach-quality";
-import { sendOutreachMessage, get5HourSendQuota, type OutreachSendProvider } from "@/lib/outreach-send";
+import { sendOutreachMessage, get5HourSendQuota, type OutreachSendProvider, type OutreachThread } from "@/lib/outreach-send";
 import { interpolateMailMerge } from "@/lib/outreach-types";
 import { searchPeopleWithBrightData, getBrightDataConfig, type PeopleSearchCriteria, type BrightDataCandidate } from "@/lib/brightdata";
 import { getOutreachFlowSuggestions } from "@/lib/outreach-suggestions";
@@ -69,6 +70,8 @@ import { asActionResult, classifyAiError, UserFacingError } from "@/lib/errors";
 import { logMessageOutcomeForUser, updateOutreachDraftForUser } from "@/lib/outreach-writes";
 import { TOAST_COPY } from "@/lib/toast-copy";
 import { actionFailure } from "@/lib/action-failure";
+import { deferEditLearning, deferStyleProfileBuild } from "@/lib/style-profile-defer";
+import { recordDraftEdit } from "@/lib/draft-edits";
 
 /** Due follow-ups one call drafts, and how long it keeps starting new ones. */
 const DUE_FOLLOWUPS_PER_CALL = 15;
@@ -254,9 +257,9 @@ export async function getCampaign(campaignId: string) {
   const userSchools: string[] = (userSettingsRow?.schools || []).filter(Boolean);
 
   // Ensure each prospect has calculated effectiveness score
-  const targetFilters = (campaign.audienceFilters || {}) as AudienceFilters;
+  const targetFilters = (campaign.audienceFilters || {});
   const enrichedProspects = campaign.prospects.map((p) => {
-    const enrichment = (p.enrichment || {}) as Record<string, unknown>;
+    const enrichment = (p.enrichment || {});
     const orgKey = p.company ? normalizeCompanyKey(p.company) : "";
     const paths = orgKey ? warmPathsRecord[orgKey] || [] : [];
     const hasWarmPath = paths.length > 0;
@@ -481,7 +484,7 @@ export async function updateCampaign(
   // Allowlisted, never spread: every export here is a public POST endpoint, and spreading
   // the argument into `.set()` let a caller write any real column — `userId` included,
   // which moved a campaign and its drafts into another account.
-  const fields = pickCampaignFields(input as Record<string, unknown>);
+  const fields = pickCampaignFields(input);
   const patch: Record<string, unknown> = {
     ...fields,
     updatedAt: new Date(),
@@ -491,7 +494,7 @@ export async function updateCampaign(
     if (!Array.isArray(sequenceSteps) || sequenceSteps.length > MAX_SEQUENCE_STEPS) {
       throw new UserFacingError(`A sequence can have at most ${MAX_SEQUENCE_STEPS} steps`);
     }
-    patch.sequenceSteps = sequenceSteps as OutreachSequenceStep[];
+    patch.sequenceSteps = sequenceSteps;
   }
 
   if (audienceFilters !== undefined) {
@@ -523,7 +526,7 @@ async function searchProspectsCore(campaignId: string, _page = 1) {
   const campaign = await requireCampaign(userId, campaignId);
   const db = await getDb();
 
-  const filters = (campaign.audienceFilters ?? {}) as AudienceFilters;
+  const filters = (campaign.audienceFilters ?? {});
   const targetCompany = filters.organizationNames?.[0] || undefined;
   const targetTitles = filters.titles?.length ? filters.titles : undefined;
 
@@ -542,15 +545,20 @@ async function searchProspectsCore(campaignId: string, _page = 1) {
   const source: OutreachSearchSource = isDemo ? "demo" : "brightdata";
   const total = bdResult.candidates.length;
 
-  const prospects: NormalizedProspect[] = bdResult.candidates.map((c, i) => {
+  const prospects: NormalizedProspect[] = bdResult.candidates.map((c) => {
     const cleanCompany = (c.company || "company").toLowerCase().replace(/[^a-z0-9]/g, "");
     const cleanName = c.fullName.toLowerCase().replace(/[^a-z0-9]/g, "");
     const email = isDemo
       ? `${cleanName}@${cleanCompany}.example.com`
-      : (((c as { email?: string }).email as string | undefined) ?? null);
+      : (((c as { email?: string }).email) ?? null);
 
     return {
-      externalId: `bd-${c.id}-${i}`,
+      // Stable across searches (c.id embeds a timestamp) so the re-run upsert matches.
+      externalId: `bd-${crypto
+        .createHash("sha256")
+        .update(`${c.linkedinUrl || ""}|${c.fullName}|${c.company}`.toLowerCase())
+        .digest("hex")
+        .slice(0, 24)}`,
       fullName: c.fullName,
       title: c.title,
       company: c.company,
@@ -746,6 +754,7 @@ async function upsertMessageForProspect(
       .set({
         subject: draft.subject,
         body: draft.body,
+        aiBody: draft.body,
         status: options?.status ?? "generated",
         parentMessageId: options?.parentMessageId ?? existing.parentMessageId,
         scheduledFor: options?.scheduledFor ?? existing.scheduledFor,
@@ -763,6 +772,7 @@ async function upsertMessageForProspect(
       channel,
       subject: draft.subject,
       body: draft.body,
+      aiBody: draft.body,
       status: options?.status ?? "generated",
       stepIndex,
       parentMessageId: options?.parentMessageId ?? null,
@@ -820,6 +830,7 @@ async function upsertFirstStepMessages(
         channel,
         subject: draft.subject,
         body: draft.body,
+        aiBody: draft.body,
         status: "generated",
         stepIndex: 0,
         parentMessageId: null,
@@ -842,6 +853,7 @@ async function upsertFirstStepMessages(
           UPDATE outreach_messages AS m
              SET subject = v.subject,
                  body = v.body,
+                 ai_body = v.body,
                  status = 'generated',
                  updated_at = ${updatedAt}
             FROM (VALUES ${sql.join(updates, sql`, `)}) AS v(id, subject, body)
@@ -884,6 +896,8 @@ export async function generateOutreachDrafts(input: {
   const db = await getDb();
   const goals = await listActiveGoalTexts();
   const writingInstructions = await loadWritingInstructions(userId);
+  // Learn how they write from their sent mail, once, after the draft is on its way.
+  deferStyleProfileBuild(userId);
 
   const channel = (input.channel ||
     campaign.defaultChannel ||
@@ -1020,7 +1034,9 @@ export async function regenerateOutreachDraft(input: {
       priorNotes: await priorNotesForContact(userId, prospect.contactId),
     },
     stepIndex,
+    lastStep: stepIndex > 0 && stepIndex >= ((campaign.sequenceSteps ?? []) as SequenceStep[]).length,
     previousBody: previous?.body,
+    previousSubject: previous?.subject,
     writingInstructions,
   });
 
@@ -1258,7 +1274,7 @@ export async function generateDueFollowUps(campaignId: string) {
       : [],
     parentIds.length
       ? db
-          .select({ id: outreachMessages.id, body: outreachMessages.body })
+          .select({ id: outreachMessages.id, body: outreachMessages.body, subject: outreachMessages.subject })
           .from(outreachMessages)
           .where(inArray(outreachMessages.id, parentIds))
       : [],
@@ -1272,6 +1288,7 @@ export async function generateDueFollowUps(campaignId: string) {
   ]);
   const repliedProspects = new Set(repliedRows.map((row) => row.prospectId));
   const parentBodies = new Map(parentRows.map((row) => [row.id, row.body]));
+  const parentSubjects = new Map(parentRows.map((row) => [row.id, row.subject]));
 
   const skippedIds: string[] = [];
   const toGenerate: typeof dueForCampaign = [];
@@ -1330,9 +1347,11 @@ export async function generateDueFollowUps(campaignId: string) {
           : null,
       },
       stepIndex: message.stepIndex ?? 1,
+      lastStep: (message.stepIndex ?? 1) >= steps.length,
       previousBody: message.parentMessageId
         ? parentBodies.get(message.parentMessageId)
         : undefined,
+      previousSubject: message.parentMessageId ? parentSubjects.get(message.parentMessageId) : undefined,
       writingInstructions,
       });
     } catch (err) {
@@ -1351,11 +1370,13 @@ export async function generateDueFollowUps(campaignId: string) {
       .set({
         subject: draft.subject,
         body: draft.body,
+        aiBody: draft.body,
         status: "generated",
         updatedAt: now,
       })
       .where(eq(outreachMessages.id, message.id));
     if (parentBodies.has(message.id)) parentBodies.set(message.id, draft.body);
+    if (parentSubjects.has(message.id)) parentSubjects.set(message.id, draft.subject);
     generated += 1;
   }
 
@@ -1369,6 +1390,37 @@ export async function generateDueFollowUps(campaignId: string) {
  */
 export async function sendOutreachMessageAction(messageId: string) {
   return asActionResult(() => sendOutreachMessageNow(messageId));
+}
+
+/**
+ * The earlier step a follow-up replies to, when it went out as an email (`OutreachThread`).
+ * A row with neither id was sent through Resend, or before Orbit kept ids: its delivery id is
+ * tried as a Resend id, and a miss only costs the threading.
+ */
+async function threadOf(parentMessageId: string | null): Promise<OutreachThread | null> {
+  if (!parentMessageId) return null;
+  const db = await getDb();
+  const parent = await db.query.outreachMessages.findFirst({
+    where: eq(outreachMessages.id, parentMessageId),
+    columns: { channel: true, status: true, deliveryId: true, rfcMessageId: true, providerThreadId: true },
+  });
+  if (!parent || parent.channel !== "email" || parent.status !== "sent") return null;
+  const known = Boolean(parent.rfcMessageId || parent.providerThreadId);
+  return { rfcMessageId: parent.rfcMessageId, threadId: parent.providerThreadId, resendId: known ? null : parent.deliveryId };
+}
+
+/**
+ * A sent campaign message whose text was edited from what Orbit drafted: kept to learn the edits
+ * made again and again (`@/lib/draft-edits`). Never throws; the send already happened.
+ */
+async function recordOutreachEdit(userId: string, aiBody: string | null, body: string, channel: OutreachChannel) {
+  if (!aiBody) return;
+  try {
+    const kind = channel === "email" ? "email" : channel === "linkedin" ? "linkedin" : "other";
+    if (await recordDraftEdit(userId, { surface: "outreach", kind, aiText: aiBody, finalText: body })) deferEditLearning(userId);
+  } catch {
+    // Learning is a bonus; a failed record costs nothing the person can see.
+  }
 }
 
 /** The send itself. Throws; `bulkSendOutreach` catches per message. */
@@ -1391,7 +1443,7 @@ async function sendOutreachMessageNow(messageId: string) {
 
   // Before anything else, and outside the try below: a refusal is not a failed send, so
   // the draft must not be marked "failed".
-  if (isDemoProspect(message.prospect.enrichment)) {
+  if (isDemoProspect(message.prospect)) {
     throw new UserFacingError(DEMO_PROSPECT_SEND_MESSAGE);
   }
 
@@ -1431,6 +1483,7 @@ async function sendOutreachMessageNow(messageId: string) {
       toPhone: message.prospect.phone,
       subject: message.subject,
       body: message.body,
+      inThread: await threadOf(message.parentMessageId),
     });
 
     const [updated] = await db
@@ -1440,11 +1493,14 @@ async function sendOutreachMessageNow(messageId: string) {
         sentAt: now,
         lastActionAt: now,
         deliveryId: result.deliveryId,
+        rfcMessageId: result.rfcMessageId ?? null,
+        providerThreadId: result.threadId ?? null,
         errorMessage: null,
         updatedAt: now,
       })
       .where(eq(outreachMessages.id, messageId))
       .returning();
+    await recordOutreachEdit(userId, message.aiBody, message.body, channel);
 
     await db
       .update(outreachProspects)
@@ -1525,7 +1581,7 @@ export async function previewBulkSendQuality(input: {
       channel: m.channel as OutreachChannel,
       subject: m.subject,
       body: m.body,
-      isDemo: isDemoProspect(m.prospect.enrichment),
+      isDemo: isDemoProspect(m.prospect),
     }))
   );
 }
@@ -1613,7 +1669,7 @@ export async function saveProspectAsContact(input: {
   if (prospect.contactId) return { contactId: prospect.contactId, created: false };
 
   // A sample's email, phone and profile URL were made up: never copy them into the network.
-  const demo = isDemoProspect(prospect.enrichment);
+  const demo = isDemoProspect(prospect);
   let email = demo ? null : prospect.email;
   let phone = demo ? null : prospect.phone;
 
@@ -1773,7 +1829,7 @@ export async function triggerCampaignBackgroundSearchAction(
     after(runTask);
   } catch {
     // Outside request context (e.g. CLI or test)
-    runTask();
+    void runTask();
   }
 
   revalidatePath(`/outreach/${campaignId}`);
@@ -1966,7 +2022,7 @@ export async function bulkSendMailMergeAction(input: {
       // Apply mail merge template interpolation if template provided
       if (input.templateSubject || input.templateBody) {
         const prospect = message.prospect;
-        const enrichment = (prospect.enrichment ?? {}) as Record<string, unknown>;
+        const enrichment = (prospect.enrichment ?? {});
         const recentSignal =
           (typeof enrichment.newsContext === "string" ? enrichment.newsContext : null) ||
           (typeof enrichment.recentNews === "string" ? enrichment.recentNews : null) ||
@@ -1995,6 +2051,7 @@ export async function bulkSendMailMergeAction(input: {
         subject: finalSubject,
         body: finalBody,
         provider: input.provider,
+        inThread: await threadOf(message.parentMessageId),
       });
 
       const now = new Date();
@@ -2006,10 +2063,14 @@ export async function bulkSendMailMergeAction(input: {
           sentAt: now,
           lastActionAt: now,
           deliveryId: res.deliveryId,
+          rfcMessageId: res.rfcMessageId ?? null,
+          providerThreadId: res.threadId ?? null,
           errorMessage: null,
           updatedAt: now,
         })
         .where(eq(outreachMessages.id, message.id));
+      // The stored body, not the mail-merged one: a template fill is not the user's edit.
+      if (!input.templateBody) await recordOutreachEdit(userId, message.aiBody, message.body, message.channel as OutreachChannel);
 
       await db
         .update(outreachProspects)

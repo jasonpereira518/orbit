@@ -87,7 +87,10 @@ export function ContactChannelIcons({
       >
         {linkedinUrl ? (
           <ChannelIcon href={buildLinkedInUrl(linkedinUrl)} label="LinkedIn">
-            <LinkedInIcon className="size-4" />
+            {/* LinkedIn's own blue, and its lighter dark-mode blue (the brand one is too dim on
+                the dark card). The glyph is `currentColor`, so this overrides the muted grey the
+                other channel icons keep. */}
+            <LinkedInIcon className="size-4 text-[#0A66C2] dark:text-[#70B5F9]" />
           </ChannelIcon>
         ) : null}
         {email ? (

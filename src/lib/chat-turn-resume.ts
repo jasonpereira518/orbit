@@ -67,6 +67,8 @@ export function pendingTurn(threadId: string, rows: readonly Row[], now = Date.n
   if (sent && now - sent.startedAt < (sent.windowMs ?? RESUME_WINDOW_MS)) return sent;
   const last = rows[rows.length - 1];
   if (!last || last.role !== "user" || !last.clientTurnId) return null;
+  // A finalized voice utterance has no text-generation request waiting behind it.
+  if (last.clientTurnId.startsWith("voice:")) return null;
   const startedAt = new Date(last.createdAt).getTime();
   return now - startedAt < RESUME_WINDOW_MS ? { startedAt, turnId: last.clientTurnId } : null;
 }

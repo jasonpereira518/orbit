@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Eye, Sparkles, RotateCcw } from "lucide-react";
 import { OrbitLogo } from "@/components/orbit-logo";
 import { LandingStarfield } from "@/components/landing/landing-visuals";
@@ -79,7 +80,8 @@ export default async function UpgradePage({
     }),
     getEffectivePlanConfig(),
   ]);
-  const onPaidPlan = entitlements.plan !== "free";
+  // Nothing to buy here for an account that already pays; switching plans lives in Settings.
+  if (entitlements.plan !== "free") redirect("/settings#settings-plan");
 
   return (
     // `landing-root` keeps the body deep-space on overscroll, exactly as
@@ -127,7 +129,7 @@ export default async function UpgradePage({
               into the star trails reads as the words giving way to the sky. */}
           <Panel order={1} exit="fade">
             <h1 className={`${HEADING} text-[clamp(28px,4vw,42px)]`}>
-              {onPaidPlan ? "You're already on a paid plan." : "Pick your plan."}
+              Pick your plan.
             </h1>
           </Panel>
 
@@ -139,26 +141,24 @@ export default async function UpgradePage({
             config={config}
           />
 
-          {!onPaidPlan && (
-            <Panel order={5} className="mt-14 block">
-              <ul className="grid gap-6 sm:grid-cols-3">
-                {TRUST.map(({ icon: Icon, title, body }) => (
-                  <li key={title} className="flex gap-3.5">
-                    <Icon
-                      className="mt-0.5 size-[18px] shrink-0 text-[#f2c14e]"
-                      aria-hidden="true"
-                    />
-                    <div>
-                      <h3 className="text-sm font-medium text-[#e8f3f1]">{title}</h3>
-                      <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">
-                        {body}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </Panel>
-          )}
+          <Panel order={5} className="mt-14 block">
+            <ul className="grid gap-6 sm:grid-cols-3">
+              {TRUST.map(({ icon: Icon, title, body }) => (
+                <li key={title} className="flex gap-3.5">
+                  <Icon
+                    className="mt-0.5 size-[18px] shrink-0 text-[#f2c14e]"
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <h3 className="text-sm font-medium text-[#e8f3f1]">{title}</h3>
+                    <p className="mt-1.5 text-sm leading-relaxed text-[#9aada8]">
+                      {body}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Panel>
         </main>
       </UpgradeTransition>
     </div>

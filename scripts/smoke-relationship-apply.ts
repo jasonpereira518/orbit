@@ -15,7 +15,10 @@ import { getDb } from "../src/db";
 import {
   actionItems, contactCareerMoves, contacts, interactions, noteBatches, relationshipDigests, relationshipRuns, reminders, userSettings,
 } from "../src/db/schema";
-import { applyDigestPlan, ensureRunNoteBatch, loadPreviousDigest, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
+import { readFileSync } from "node:fs";
+import { isUuid } from "../src/lib/ids";
+import { advanceWatermarkOnly, applyDigestPlan, ensureRunNoteBatch, loadPreviousDigest, saveDigest, undoRelationshipRun } from "../src/lib/relationship-engine/apply";
+import { stableHash } from "../src/lib/linkedin-timeline-events";
 import { undoNoteBatchForUser } from "../src/lib/note-batch-save";
 import { loadMessageWindows } from "../src/lib/relationship-engine/gather";
 import { planDigestWrites } from "../src/lib/relationship-engine/rules";
@@ -23,6 +26,7 @@ import type { ValidatedDigest } from "../src/lib/relationship-engine/types";
 import { pendingRelationshipContactCount } from "../src/lib/relationship-engine/pending";
 import { actionItemHash } from "../src/lib/action-items";
 import { ensureUserSettings } from "../src/lib/user-settings";
+import { updateContactForUser } from "../src/lib/contact-writes";
 
 const USER = "smoke-rel-apply-user";
 const NOW = new Date();
@@ -210,6 +214,146 @@ async function main() {
   await db.delete(noteBatches).where(eq(noteBatches.id, b2));
   const b3 = await ensureRunNoteBatch(USER, run2.id);
   check("deleted batch → fresh batch", b3 !== b2 && Boolean(await db.query.noteBatches.findFirst({ where: eq(noteBatches.id, b3) })));
+
+  console.log("\ndeep read: how you met");
+  await reset();
+  const [run3] = await db.insert(relationshipRuns).values({ userId: USER, status: "running" }).returning();
+  const connected = new Date("2023-10-03T12:00:00Z");
+  async function person(name: string, howMet: string | null, dateMet: Date | null) {
+    const [p] = await db
+      .insert(contacts)
+      .values({ userId: USER, fullName: name, source: "linkedin", howMet, dateMet, metContext: howMet ? "online" : null, firstInteractionAt: dateMet })
+      .returning();
+    const [m] = await db
+      .insert(interactions)
+      .values({ userId: USER, contactId: p.id, interactionType: "linkedin_message", interactionDate: new Date("2022-09-20T15:00:00Z"), source: "linkedin_messages", externalId: `li-msg:${name}`, rawNotes: "so good meeting you at HackNC last weekend!", topics: [], direction: "in" as const })
+      .returning();
+    const w = (await loadMessageWindows(USER, [p.id], { deepRead: true })).get(p.id)!;
+    return { id: p.id, msg: m, window: w };
+  }
+  const deepValidated = (interactionId: string, over: Partial<ValidatedDigest> = {}): ValidatedDigest => ({
+    whatTheyDo: null, workingOn: null, summary: "Met at HackNC.", topics: [], facts: [], dated: [], undated: [], closedKeys: [], jobChange: null,
+    origin: { text: "Met at HackNC", date: "2022-09-01", precision: "month", context: "event", excerpt: "so good meeting you at HackNC", interactionId },
+    relationship: { kind: "friend", excerpt: "so good meeting you at HackNC", interactionId },
+    events: [],
+    ...over,
+  });
+  const planOf = (v: ValidatedDigest, contactId: string) =>
+    planDigestWrites(v, { contactId, contactFirstName: "X", now: NOW, closeness: null, cadenceDays: null, existingThreads: [], remindersLeftInRun: 25 });
+  type P = Awaited<ReturnType<typeof person>>;
+  const deepApply = (p: P, v: ValidatedDigest = deepValidated(p.msg.id), deepRead = true) =>
+    applyDigestPlan({ userId: USER, runId: run3.id, contactId: p.id, window: p.window, validated: v, plan: planOf(v, p.id), deepRead });
+  const get = async (id: string) => (await db.query.contacts.findFirst({ where: eq(contacts.id, id) }))!;
+  const dig = (id: string) => db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, id) });
+  const asUser = { by: "user" as const, skipRevalidate: true, skipSummary: true, skipCloseness: true };
+
+  const A = await person("Ada A", "LinkedIn connection", connected);
+  const B = await person("Ben B", "Met at Priya's dinner", null);
+  const C = await person("Cy C", "LinkedIn connection", connected);
+  // A real edit of the met fields (here the date) locks them; saving the same values does not (F).
+  await updateContactForUser(USER, C.id, { dateMet: "2023-11-11" }, asUser);
+  const D = await person("Di D", "LinkedIn connection", connected);
+  const OFF = await person("Off O", "LinkedIn connection", connected);
+  const R = await person("Ro R", "LinkedIn connection", connected);
+  await db.insert(relationshipDigests).values({ contactId: R.id, userId: USER, relationship: { kind: "recruiter", excerpt: "x y z", interactionId: R.msg.id, removed: true } });
+  // F: a form save that leaves the met fields as they were (the form always sends them).
+  const F = await person("Fi F", "LinkedIn connection", connected);
+  await updateContactForUser(USER, F.id, { howMet: "LinkedIn connection", dateMet: "2023-10-03", metContext: "online", phone: "+1 555 0100" }, asUser);
+  // G: no how-met text, but a date and context someone typed at creation (no stamp exists).
+  const G = await person("Gi G", null, null);
+  await db.update(contacts).set({ dateMet: new Date("2021-05-05T12:00:00Z"), metContext: "school" }).where(eq(contacts.id, G.id));
+  // H: written by the run, then the user corrects only the date.
+  const H = await person("Hal H", "LinkedIn connection", connected);
+  for (const p of [A, B, C, D, R, F, H]) await deepApply(p);
+  await deepApply(G, deepValidated(G.msg.id, { origin: { text: "Met at HackNC", date: "2022-09-17", precision: "day", context: "event", excerpt: "so good meeting you at HackNC", interactionId: G.msg.id } }));
+  await deepApply(OFF, deepValidated(OFF.msg.id), false);
+
+  const a = await get(A.id);
+  check("an import label is replaced by the quoted origin", a.howMet === "Met at HackNC" && a.metContext === "event", `${a.howMet}/${a.metContext}`);
+  check("a month origin never writes the day-level date_met", a.dateMet?.toISOString().startsWith("2023-10-03") === true, a.dateMet?.toISOString());
+  check("a month origin widens first contact to that month's end", a.firstInteractionAt! <= new Date("2022-09-30T23:59:59.999Z") && a.firstInteractionAt! >= new Date("2022-09-30T00:00:00Z"), a.firstInteractionAt?.toISOString());
+  const dA = await dig(A.id);
+  check("the digest keeps the origin, its run and what it replaced", dA?.origin?.text === "Met at HackNC" && dA.origin.runId === run3.id && dA.origin.replaced?.howMet === "LinkedIn connection", JSON.stringify(dA?.origin));
+  check("the digest keeps the relationship kind", dA?.relationship?.kind === "friend");
+  check("what a capture wrote is never replaced", (await get(B.id)).howMet === "Met at Priya's dinner" && (await dig(B.id))?.origin?.replaced === null);
+  check("what the user typed is never replaced", (await get(C.id)).howMet === "LinkedIn connection" && (await dig(C.id))?.origin?.replaced === null);
+  check("flag off: no met field changes and no origin stored", (await get(OFF.id)).howMet === "LinkedIn connection" && ((await dig(OFF.id))?.origin ?? null) === null);
+  await deepApply(A, deepValidated(A.msg.id, { origin: { text: "Met online", date: null, precision: null, context: "online", excerpt: "so good meeting you at HackNC", interactionId: A.msg.id } }));
+  check("a later pass never replaces the first origin", (await dig(A.id))?.origin?.text === "Met at HackNC" && (await get(A.id)).howMet === "Met at HackNC");
+  const dR = await dig(R.id);
+  check("a removed relationship kind is never set again", dR?.relationship?.removed === true && dR.relationship.kind === "recruiter", JSON.stringify(dR?.relationship));
+
+  check("a form save that changed nothing about how you met does not lock it", (await get(F.id)).howMet === "Met at HackNC");
+  const g = await get(G.id);
+  check("with no how-met text, a typed date and context are kept", g.howMet === "Met at HackNC" && g.dateMet?.toISOString().startsWith("2021-05-05") === true && g.metContext === "school", `${g.dateMet?.toISOString()}/${g.metContext}`);
+  await updateContactForUser(USER, H.id, { dateMet: "2020-01-15" }, asUser);
+  await updateContactForUser(USER, D.id, { howMet: "Met at the alumni mixer" }, asUser);
+  await undoRelationshipRun(USER, run3.id);
+  const a2 = await get(A.id);
+  check("Undo restores the import values", a2.howMet === "LinkedIn connection" && a2.metContext === "online" && a2.dateMet?.toISOString().startsWith("2023-10-03") === true, `${a2.howMet}/${a2.metContext}`);
+  check("Undo clears the run's origin", ((await dig(A.id))?.origin ?? null) === null);
+  check("Undo never undoes the user's later edit", (await get(D.id)).howMet === "Met at the alumni mixer");
+  const h2 = await get(H.id);
+  check("Undo never undoes a later date-only edit", h2.dateMet?.toISOString().startsWith("2020-01-15") === true && h2.howMet === "Met at HackNC", `${h2.howMet}/${h2.dateMet?.toISOString()}`);
+  check("Undo puts first contact back too", (await get(A.id)).firstInteractionAt?.toISOString().startsWith("2023-10-03") === true, (await get(A.id)).firstInteractionAt?.toISOString());
+  check("Undo leaves the relationship kind", (await dig(B.id))?.relationship?.kind === "friend");
+
+  console.log("\ndeep read: events and the first reach-out");
+  const [run4] = await db.insert(relationshipRuns).values({ userId: USER, status: "running" }).returning();
+  const timelineOf = async (id: string) =>
+    db.query.interactions.findMany({ where: and(eq(interactions.contactId, id), eq(interactions.source, "ai_derived")) });
+  const E1 = { type: "meeting" as const, summary: "Coffee at Joe's", day: "2022-09-24", excerpt: "so good meeting you at HackNC", interactionId: "" };
+  const applyEvents = (p: P, deepRead = true, runId = run4.id) => {
+    const v = deepValidated(p.msg.id, { origin: null, relationship: null, events: [{ ...E1, interactionId: p.msg.id }] });
+    return applyDigestPlan({ userId: USER, runId, contactId: p.id, window: p.window, validated: v, plan: planOf(v, p.id), deepRead });
+  };
+  const EV = await person("Eve E", "LinkedIn connection", connected);
+  await applyEvents(EV);
+  let tl = await timelineOf(EV.id);
+  const meetings = tl.filter((t) => t.interactionType === "meeting");
+  check("an event becomes one ai_derived meeting on its day", meetings.length === 1 && meetings[0].interactionDate.toISOString().startsWith("2022-09-24") && meetings[0].aiSummary === "Coffee at Joe's", JSON.stringify(meetings));
+  const first80 = "so good meeting you at HackNC last weekend!".slice(0, 80);
+  const reach = tl.filter((t) => t.interactionType === "reach_out");
+  check("a first pass writes the old reader's reach-out, same id", reach.length === 1 && reach[0].externalId === `li-event:${EV.id}:reach_out:${stableHash(first80)}`, JSON.stringify(reach.map((r) => r.externalId)));
+  await applyEvents(EV);
+  tl = await timelineOf(EV.id);
+  check("applying the same answer twice leaves one of each", tl.filter((t) => t.interactionType === "meeting").length === 1 && tl.filter((t) => t.interactionType === "reach_out").length === 1);
+
+  const OLD = await person("Old O", "LinkedIn connection", connected);
+  await db.insert(interactions).values({ userId: USER, contactId: OLD.id, interactionType: "meeting", interactionDate: new Date("2022-09-24T18:00:00Z"), source: "ai_derived", externalId: `li-event:${OLD.id}:meeting:oldhash`, rawNotes: "x", aiSummary: "Coffee", topics: [] });
+  await applyEvents(OLD);
+  check("an old-reader meeting on the same day blocks a second one", (await timelineOf(OLD.id)).filter((t) => t.interactionType === "meeting").length === 1);
+
+  const ONE = await person("One O", "LinkedIn connection", connected);
+  await advanceWatermarkOnly(USER, run4.id, ONE.window, { deepRead: true, firstPass: true });
+  check("a trivial one-message thread still gets its reach-out, with no AI call", (await timelineOf(ONE.id)).filter((t) => t.interactionType === "reach_out").length === 1);
+
+  const NOPE = await person("Nope N", "LinkedIn connection", connected);
+  await applyEvents(NOPE, false);
+  const NOPE2 = await person("Nope Two", "LinkedIn connection", connected);
+  await advanceWatermarkOnly(USER, run4.id, NOPE2.window);
+  check("flag off writes neither", (await timelineOf(NOPE.id)).length === 0 && (await timelineOf(NOPE2.id)).length === 0);
+
+  // A "Not right?" that lands while a pass is mid-apply: the pass read the row before the removal,
+  // so its final upsert carries a kind. The removed one must win.
+  const [gone, kept] = await db.insert(contacts).values([
+    { userId: USER, fullName: "Gone G", source: "linkedin_messages" },
+    { userId: USER, fullName: "Kept K", source: "linkedin_messages" },
+  ]).returning();
+  const iid = msgs[0].id;
+  await db.insert(relationshipDigests).values([
+    { contactId: gone.id, userId: USER, relationship: { kind: "friend", excerpt: "x", interactionId: iid, removed: true } },
+    { contactId: kept.id, userId: USER, relationship: { kind: "friend", excerpt: "x", interactionId: iid } },
+  ]);
+  for (const c2 of [gone, kept]) await saveDigest({ contactId: c2.id, userId: USER, summary: "s", relationship: { kind: "coworker", excerpt: "y", interactionId: iid } });
+  const afterSave = await db.query.relationshipDigests.findMany({ where: eq(relationshipDigests.userId, USER) });
+  const goneRow = afterSave.find((d) => d.contactId === gone.id)!;
+  check("a removed kind survives a pass that read it before the removal", goneRow.relationship?.kind === "friend" && goneRow.relationship?.removed === true && goneRow.summary === "s");
+  check("a kind that was not removed is replaced", afterSave.find((d) => d.contactId === kept.id)?.relationship?.kind === "coworker");
+
+  check("isUuid refuses 36 dashes", isUuid("------------------------------------") === false);
+  check("isUuid refuses a non-hex id", isUuid("00000000-0000-0000-0000-00000000000g") === false);
+  check("the Not right? action validates with isUuid", !readFileSync("src/actions/contacts.ts", "utf8").includes("[0-9a-f-]{36}"));
 
   await reset();
   console.log("\nsmoke-relationship-apply: all checks passed");

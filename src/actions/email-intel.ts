@@ -8,7 +8,7 @@ import { requireUserId } from "@/lib/auth";
 import { deleteEmailEventChunks } from "@/lib/email-intel/search-index";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { requireEntitlement } from "@/lib/entitlements";
-import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { type ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { hasGmailReadScope } from "@/lib/google-scopes";
 
 /**

@@ -4,6 +4,8 @@
 # .env.local at start and never written anywhere; the script refuses anything but sk_test_.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# The developer's Anthropic key, and nothing else from .env.local (see the file for why).
+. .claude/local-ai-key.sh
 KEY="$(grep -E '^STRIPE_SECRET_KEY=' "${ORBIT_MAIN_ENV:-$HOME/Projects/orbit/.env.local}" | head -1 | cut -d= -f2-)"
 case "$KEY" in
   sk_test_*) export STRIPE_SECRET_KEY="$KEY" ;;

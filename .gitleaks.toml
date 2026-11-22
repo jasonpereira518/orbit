@@ -12,6 +12,16 @@ targetRules = ["linkedin-client-id"]
 regexTarget = "match"
 regexes = ['''(?i)linkedin(slug|url|experience|profile|import|export|avatar|history|connection|cache|id)''', '''(?i)linkedin[_-](slug|url|experience|profile|import|export|avatar|history|connection|cache|id)''']
 
+# The default linkedin-client-secret rule fires on "linkedin" + a long token, so it hits the
+# `linkedinAvatars` table import (`import { contacts, linkedinAvatars, rateLimitBuckets }`).
+# Scoped to that one rule and that one identifier, so every other rule, and any other
+# linkedin-shaped value, still scans these lines.
+[[allowlists]]
+description = "the linkedinAvatars table identifier, not a credential"
+targetRules = ["linkedin-client-secret"]
+regexTarget = "match"
+regexes = ['''(?i)linkedinAvatars''']
+
 # scripts/smoke-origin-checks.ts is a route -> auth-kind table whose values are prose labels
 # ("cron secret", "one-click unsubscribe, URL token"), which trip generic-api-key. It holds no
 # credentials. Scoped to this one file and this one rule; every other rule still scans it.

@@ -11,7 +11,7 @@
  */
 
 import { getDb } from "@/db";
-import { outreachCampaigns, outreachMessages, outreachProspects, type AudienceFilters } from "@/db/schema";
+import { outreachCampaigns, outreachMessages, outreachProspects } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { searchPeopleWithBrightData, scrapeCompanyNewsWithBrightData } from "@/lib/brightdata";
 import { generateOutreachDraftsBatch, type DraftInput } from "@/lib/outreach-drafts";
@@ -62,7 +62,7 @@ export async function runCampaignDeepSearch(
       })
       .where(eq(outreachCampaigns.id, campaignId));
 
-    const filters = (campaign.audienceFilters || {}) as AudienceFilters;
+    const filters = (campaign.audienceFilters || {});
     const targetCompany = filters.organizationNames?.[0] || undefined;
     const targetTitles = filters.titles?.length
       ? filters.titles

@@ -429,9 +429,24 @@
   --orbit-corner-shift: 0px;
   --orbit-toast-right: var(--orbit-corner-right);
 
+  /* Width the feedback dock takes from the page (`useDockWidth`). Unlike the shift above,
+     this NARROWS the page's content (not its background): `[data-dock-squeeze]` below gives up the room, and the controls
+     fixed to the right edge add it to their offset. 0px unless the dock is open at `md`+ and
+     wide enough to have room beside it (`dockLayoutFor`). */
+  --orbit-dock-w: 0px;
+
+  /* Height Cosmo's orb (or its docked call bar) takes at the bottom of the corner, published
+     by `cosmo/cosmo-root.tsx`. 0px when Cosmo is off or hidden. */
+  --orbit-cosmo-height: 0px;
+
+  /* Where the job widget starts: above Cosmo. */
+  --orbit-stack-bottom: calc(
+    var(--orbit-corner-bottom) + var(--orbit-cosmo-height)
+  );
+
   /* Toasts stack ABOVE the job widget, never on it. */
   --orbit-toast-bottom: calc(
-    var(--orbit-corner-bottom) + var(--orbit-job-stack-height)
+    var(--orbit-stack-bottom) + var(--orbit-job-stack-height)
   );
 
   /* Vertical band the fixed mobile nav occupies, for content that must clear it.
@@ -466,6 +481,22 @@
     --orbit-toast-right: calc(var(--orbit-corner-right) + var(--orbit-corner-shift));
     /* The nav is `md:hidden`, so there is no band to avoid. */
     --orbit-bottom-nav: 0px;
+  }
+}
+
+/* The page gives up room for the feedback dock instead of the dock covering it.
+ *
+ * PADDING on the scroll column (`#app-main-scroll`), not a margin on the shell: the column's
+ * own scrollbar then stays at the screen's right edge, to the right of the panel rather than
+ * wedged between the page and it, and the screen's background is never narrowed (a margin
+ * left the backdrop showing as a hard edge). Only what is inside the column re-flows. It
+ * transitions with the same duration and ease as the panel's slide, so the page and the panel
+ * arrive together; the global reduced-motion clamp (below) makes both instant. The bare
+ * onboarding root carries the attribute too; it has no inner scroller. */
+@media (min-width: 48rem) {
+  [data-dock-squeeze] {
+    padding-right: var(--orbit-dock-w);
+    transition: padding-right var(--transition-duration-slow) var(--ease-house);
   }
 }
 
@@ -1293,6 +1324,17 @@
   }
 }
 
+/* The stars trail the camera (camera-motion.ts `setSkyDrift`); reduced motion holds them still.
+   JS already stops writing the offset, this also clears one set before the setting changed. */
+@media (prefers-reduced-motion: reduce) {
+  .constellation-starfield-drift {
+    transform: none !important;
+  }
+}
+html[data-motion="reduce"] .constellation-starfield-drift {
+  transform: none !important;
+}
+
 .constellation-comet {
   display: flex;
   align-items: center;
@@ -1580,6 +1622,48 @@
 
 .landing-solar-enter {
   animation: landing-solar-enter 0.9s var(--ease-house) 0.15s both;
+}
+
+/* First visit in a tab session (`html[data-landing-intro]`, set before first paint by
+ * `LandingIntroGate`): the hero block's single fade becomes a three-step stagger. Nothing waits
+ * for a script — step 1 starts at first paint like the block did. */
+@media (prefers-reduced-motion: no-preference) {
+  html[data-landing-intro] [data-landing-hero] {
+    animation: none;
+  }
+  html[data-landing-intro] [data-intro-step] {
+    animation: landing-fade var(--transition-duration-celestial) var(--ease-house) both;
+  }
+  html[data-landing-intro] [data-intro-step="2"] {
+    animation-delay: 150ms;
+  }
+  html[data-landing-intro] [data-intro-step="3"] {
+    animation-delay: 300ms;
+  }
+
+  /* Arrival: the sky's flight streams out of the sun (starfield.tsx), so the solar system starts
+   * as a speck at that same point and grows into place as the flight slows (Jason, Nov 12:
+   * "zooming to space and then you arrive at the solar system"). It scales about its own centre,
+   * the sun, so it never moves toward the text. Same length as WARP_MS in lib/landing-intro.ts. */
+  html[data-landing-intro] .landing-solar-enter {
+    /* Ease-in-out: most of the growing happens in the second half, once the stars have
+     * braked (Jason: "As the galaxy zooms in the stars should already be slower"). */
+    animation: landing-solar-warp 1s cubic-bezier(0.5, 0, 0.3, 1) both;
+  }
+}
+
+@keyframes landing-solar-warp {
+  0% {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* ── Coming soon (`components/coming-soon`) ──
@@ -3269,6 +3353,24 @@ html[data-celebration-handoff] [data-app-logo] {
   50% {
     opacity: 0.25;
   }
+}
+
+/* ── Radar "new suggestions" shimmer ──
+ * Colours for the gradient `components/layout/radar-shimmer-icon.tsx` puts on the Radar icon's
+ * stroke while Radar holds suggestions created since /radar was last opened: a green icon
+ * with a pale glint sweeping across it. The sweep itself is SVG (animateTransform), and
+ * reduced motion drops it in the component, leaving the icon green and still. */
+.radar-shimmer-base {
+  stop-color: #059669;
+}
+.radar-shimmer-glint {
+  stop-color: #6ee7b7;
+}
+.dark .radar-shimmer-base {
+  stop-color: #34d399;
+}
+.dark .radar-shimmer-glint {
+  stop-color: #ecfdf5;
 }
 
 /* --- Per-event theming ------------------------------------------------------------------

@@ -12,6 +12,7 @@ import {
   type DuplicateSubject,
 } from "@/lib/duplicates";
 import type { MentionPick } from "@/lib/mentions/mention-picks";
+import { nameKey } from "@/lib/names/key";
 
 export type MentionCandidate = { name: string; context: string | null; company?: string | null; nearPerson?: string | null };
 export type MentionMatchedBy =
@@ -25,15 +26,6 @@ export type MentionMatchedBy =
 export type ResolvedMention = { text: string; context: string | null; nearPerson: string | null; contactId: string; confidence: number; matchedBy: MentionMatchedBy };
 export type UnresolvedMention = { text: string; context: string | null; nearPerson: string | null };
 
-function normalizeName(s: string | null | undefined) {
-  return (s || "")
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 function normalizeCompany(s: string | null | undefined) {
   return (s || "").trim().toLowerCase();
 }
@@ -49,7 +41,7 @@ export function resolveMentions(
   const byFullName = new Map<string, DuplicateSubject[]>();
   const byFirstName = new Map<string, DuplicateSubject[]>();
   for (const s of pool) {
-    const full = normalizeName(s.fullName);
+    const full = nameKey(s.fullName);
     if (!full) continue;
     byFullName.set(full, [...(byFullName.get(full) ?? []), s]);
     const first = full.split(" ")[0];
@@ -66,7 +58,7 @@ export function resolveMentions(
     // take the whole parse down.
     const text = (m.name ?? "").trim();
     if (!text) continue;
-    const norm = normalizeName(text);
+    const norm = nameKey(text);
     if (!norm || seen.has(norm)) continue;
     seen.add(norm);
     const company = normalizeCompany(m.company);
@@ -152,7 +144,7 @@ export function resolveMentionsWithPicks(
     // Outside the `excluded` check on purpose: a participant's name having an answer is
     // exactly why the tiers must not have another go at it further down.
     for (const name of [pick.name, subject.fullName]) {
-      const norm = normalizeName(name);
+      const norm = nameKey(name);
       if (norm) pickedNames.add(norm);
     }
     if (excluded.has(pick.id)) continue;
@@ -166,7 +158,7 @@ export function resolveMentionsWithPicks(
     });
   }
 
-  const rest = mentions.filter((m) => !pickedNames.has(normalizeName(m.name ?? "")));
+  const rest = mentions.filter((m) => !pickedNames.has(nameKey(m.name ?? "")));
   const { resolved, unresolved } = resolveMentions(subjects, rest, ctx);
   return { resolved: [...fromPicks, ...resolved], unresolved };
 }

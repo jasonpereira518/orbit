@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
+
 import { Sparkles } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { generateDueFollowUpsAction } from "@/actions/reminders";
@@ -16,7 +17,7 @@ export function GenerateFollowUpsButton({
   label?: string;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   return (
     <Button

@@ -17,6 +17,9 @@ export function LandingHeroCopy({
 }) {
   return (
     <div
+      // First visit in a session: the block's own fade is swapped for a three-step stagger
+      // of the parts below (theme.css, `html[data-landing-intro]`).
+      data-landing-hero
       className={cn(
         "landing-fade",
         // Centred below md so the copy reads as one column with the solar
@@ -25,20 +28,20 @@ export function LandingHeroCopy({
         "motion-reduce:opacity-100 motion-reduce:translate-y-0"
       )}
     >
-      <p className="font-[family-name:var(--font-display)] text-5xl leading-[0.95] tracking-tight text-white sm:text-6xl md:text-8xl lg:text-[5.5rem] xl:text-9xl">
+      <p data-intro-step="1" className="font-[family-name:var(--font-display)] text-5xl leading-[0.95] tracking-tight text-white sm:text-6xl md:text-8xl lg:text-[5.5rem] xl:text-9xl">
         Orbit
       </p>
-      <h1 className="mx-auto mt-3 max-w-xl font-[family-name:var(--font-display)] text-xl leading-snug tracking-tight text-[#e8f3f1] sm:mt-6 sm:text-2xl md:mx-0 md:mt-8 md:text-4xl">
+      <h1 data-intro-step="2" className="mx-auto mt-3 max-w-xl font-[family-name:var(--font-display)] text-xl leading-snug tracking-tight text-[#e8f3f1] sm:mt-6 sm:text-2xl md:mx-0 md:mt-8 md:text-4xl">
         Keep your connections in Orbit.
       </h1>
-      <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-[#9aada8] sm:mt-4 sm:text-base md:mx-0 md:text-lg">
+      <p data-intro-step="2" className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-[#9aada8] sm:mt-4 sm:text-base md:mx-0 md:text-lg">
         Orbit remembers every conversation and tells you who to follow up with
         — so a good connection doesn&apos;t go cold before it becomes an
         opportunity.
       </p>
       {/* Hidden below md — the fixed header carries the same two buttons at
         * every width, so on a phone this pair was pure duplication. */}
-      <div className="mt-8 hidden sm:mt-10 md:block">
+      <div data-intro-step="3" className="mt-8 hidden sm:mt-10 md:block">
         <LandingAuthControls
           clerkOn={clerkOn}
           demoMode={demoMode}

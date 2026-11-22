@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import {
   Dialog,
   DialogContent,
@@ -41,14 +42,14 @@ export function DraftPreviewDialog({
   prospect: ProspectRow;
   onUpdated?: () => void;
 }) {
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [isEditing, setIsEditing] = useState(false);
   const message = prospect.message;
 
   const [subject, setSubject] = useState(message?.subject || "");
   const [body, setBody] = useState(message?.body || "");
 
-  const enrichment = (prospect.enrichment || {}) as Record<string, unknown>;
+  const enrichment = (prospect.enrichment || {});
   const newsHook = (enrichment.newsContext as string) || (enrichment.recentNews as string);
   const signals = Array.isArray(enrichment.signals) ? (enrichment.signals as string[]) : [];
   const matchReason = enrichment.matchReason as string | undefined;

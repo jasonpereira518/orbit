@@ -71,7 +71,7 @@ export function ScanQrHandoff({
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
-    (async () => {
+    void (async () => {
       const res = await mintScanHandoffAction();
       if (cancelled) {
         // Closed before the code came back: nobody will ever scan this one, so it must
@@ -123,11 +123,18 @@ export function ScanQrHandoff({
     let stopped = false;
     const jobId = handoff.captureJobId;
 
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the async body catches its own errors; nothing can reject out of it
     const id = window.setInterval(async () => {
       const token = tokenRef.current;
       if (!token || stopped || doneRef.current) return;
 
-      const res = await watchScanHandoffAction(token, jobId);
+      let res: Awaited<ReturnType<typeof watchScanHandoffAction>>;
+      try {
+        res = await watchScanHandoffAction(token, jobId);
+      } catch {
+        // best-effort: a dropped request is retried on the next tick.
+        return;
+      }
       if (stopped || doneRef.current) return;
       if (!res.ok) return; // A transient failure is not worth tearing the card down for.
 

@@ -29,14 +29,15 @@ import { CommandPalette } from "@/components/layout/command-palette";
 import { ComposeHost } from "@/components/email/compose-host";
 import { HiddenSurfacesProvider } from "@/components/layout/hidden-surfaces";
 import { Button } from "@/components/ui/button";
-import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
+import { OPEN_COMMAND_PALETTE_EVENT, showAskBarFor } from "@/lib/ask-bar-events";
 import { Search } from "lucide-react";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
 import { ThemeSync } from "@/components/theme-sync";
 import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { cn } from "@/lib/utils";
-import { useMemo } from "react";
+import { useMediaQuery } from "@/lib/use-media-query";
+import { useEffect, useMemo, useState } from "react";
 import type { Plan } from "@/lib/plan-limits";
 import type { ThemePreference } from "@/lib/theme";
 
@@ -70,6 +71,7 @@ export function AppShell({
   linkedinReminder,
   creditsIntroDue,
   tour,
+  radarOn,
 }: {
   children: React.ReactNode;
   userId: string;
@@ -97,8 +99,19 @@ export function AppShell({
    * runtime owns the live stop and writes it back fire-and-forget.
    */
   tour: { active: boolean; stop: string | null; hasApiKey: boolean; linkedinRequested: boolean };
+  /** Radar is turned on (and not paused): until then /radar shows its Turn on screen without the Ask bar. */
+  radarOn: boolean;
 }) {
   const pathname = usePathname();
+  // One nav tree per viewport after hydrate. Until the match is known, keep both (SSR +
+  // first paint) so desktop does not flash an empty rail and phones keep the bottom bar.
+  const mdUp = useMediaQuery("(min-width: 768px)");
+  const [navReady, setNavReady] = useState(false);
+  useEffect(() => {
+    setNavReady(true);
+  }, []);
+  const showDesktopNav = !navReady || mdUp;
+  const showMobileNav = !navReady || !mdUp;
   // Arrays cross the server boundary; the nav does membership tests, so build the sets
   // once here rather than in each consumer on every render.
   const hiddenSet = useMemo(() => new Set(hidden), [hidden]);
@@ -123,19 +136,13 @@ export function AppShell({
   // The ask bar is not a link to /chat — it streams answers from `/api/chat` inline, so it IS chat.
   // Hiding the Chat page while leaving the bar up would leave the feature fully reachable
   // from every screen, which is the whole thing hiding is supposed to prevent.
-  const showAskBar =
-    !isOnboarding &&
-    !isChat &&
-    !isSettings &&
-    !isConstellation &&
-    // A floating bar over a viewport-locked queue would sit on its last rows and on the
-    // detail pane. ⌘K still asks from there (the palette falls back to /chat).
-    !isReminders &&
-    // The bar IS chat, and it owns bottom-centre: during the guided tour it would both
-    // satisfy the Chat stop from any page and sit where the coach rail needs the room.
-    !tour.active &&
-    !isKnowledge &&
-    !hiddenSet.has("page.chat");
+  // The route rules live in `showAskBarFor` (smoke-ask-bar-visibility): tour, reminders and
+  // knowledge keep their reasons there; /radar waits until Radar is on.
+  const showAskBar = showAskBarFor(pathname, {
+    tourActive: tour.active,
+    chatHidden: hiddenSet.has("page.chat"),
+    radarOn,
+  });
   // Where the palette sends a typed question: the ask bar when it is on screen, /chat when
   // the page has no bar, and nowhere on /chat itself (its composer is already right there)
   // or when chat is hidden outright.
@@ -148,7 +155,7 @@ export function AppShell({
   if (isOnboarding) {
     return (
       <MotionPreferenceConfig>
-        <div className="min-h-dvh bg-background">
+        <div data-dock-squeeze className="min-h-dvh bg-background">
           <ThemeSync theme={theme} />
           <ConnectivityBanner />
           {children}
@@ -190,8 +197,9 @@ export function AppShell({
           <ImportJobWatcher />
           <CaptureJobWatcher />
           <GlobalJobProgressBar />
-          <CommandPalette hidden={hiddenSet} askMode={paletteAskMode} />
+          <CommandPalette hidden={hiddenSet} comingSoon={comingSoonSet} askMode={paletteAskMode} />
           <ComposeHost userId={userId} hidden={hiddenSet} />
+          {showDesktopNav && (
           <div
             data-app-sidebar
             className="hidden h-full shrink-0 p-3 md:block lg:p-4"
@@ -209,10 +217,14 @@ export function AppShell({
               tierTags={tierTags}
             />
           </div>
+          )}
           {/* The scroll column. Not itself the <main> landmark: it also holds the phone
               header and the bottom nav, which are not page content. */}
           <div
             id="app-main-scroll"
+            // The feedback dock's room is padding on THIS column, so its scrollbar stays at the
+            // screen's right edge, beside the panel, and the page (and its bell) narrow inside.
+            data-dock-squeeze
             className={cn(
               "relative flex h-full min-h-0 flex-1 flex-col",
               // A locked page (Chat, the constellation) fits itself to the viewport. Under
@@ -271,7 +283,12 @@ export function AppShell({
 
             <div
               className={cn(
-                "fixed right-5 z-30 hidden md:right-8 md:block",
+                // `--orbit-dock-w` is the room the feedback dock is taking (0 unless it is open
+                // and docked): the bell stays at the page's right edge as the page narrows,
+                // and slides with it on the same curve. Once the dock is open it also tucks 1.25rem
+                // closer to the panel (the `min()` is 0 while the dock is closed), which leaves that
+                // much more air between the page's content and the bell.
+                "fixed right-5 z-30 hidden md:block md:right-[calc(2rem+var(--orbit-dock-w)-min(1.25rem,var(--orbit-dock-w)))] md:transition-[right] md:duration-slow md:ease-house",
                 // The preview banner is in the layout flow but this button is fixed to the
                 // viewport, so it has to step down out from under it by hand.
                 viewingAsUser ? "top-12" : "top-5 md:top-6"
@@ -319,6 +336,7 @@ export function AppShell({
             </main>
 
             {showAskBar && <FloatingAskBar />}
+            {showMobileNav && (
             <MobileNav
               clerkOn={clerkOn}
               demoMode={demoMode}
@@ -327,6 +345,7 @@ export function AppShell({
               navOrder={navOrder}
               tierTags={tierTags}
             />
+            )}
           </div>
         </div>
       </div>

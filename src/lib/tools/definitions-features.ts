@@ -29,7 +29,11 @@ import { whoToTalkTo } from "@/lib/events/who-to-talk-to";
 import { loadKnowledgeDossier } from "@/lib/knowledge-dossier";
 import { campaignMetricAggregates, metricsFromAggregates } from "@/lib/outreach-metrics-sql";
 import { listPendingRecommendations } from "@/lib/radar/store";
-import { leadReason } from "@/lib/radar/types";
+import { loadRadarBriefing } from "@/lib/radar/page-data";
+import { loadNotificationPanel } from "@/lib/notification-panel";
+import { listConnectorConnections } from "@/lib/connectors/connections";
+import { listOpenOpportunities } from "@/lib/radar/opportunity-actions";
+import { LANE_OF_KIND, LANE_TITLES, leadReason } from "@/lib/radar/types";
 import { toolError } from "@/lib/tools/registry";
 import {
   CONTACT_GROUPS,
@@ -39,6 +43,7 @@ import {
 } from "@/lib/hybrid-search";
 import { INTERACTION_GROUPS, queryInteractions } from "@/lib/interaction-queries";
 import type { OrbitTool } from "@/lib/tools/registry";
+import { loadRelationshipContexts, renderRelationshipBlock } from "@/lib/relationship-context";
 
 const BOTH = ["mcp", "chat"] as const;
 const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.");
@@ -353,7 +358,7 @@ export const FEATURE_TOOLS: OrbitTool[] = [
     surfaces: BOTH,
     scope: "read",
     resultLabel: "suggestions",
-    fields: { mcp: ["id", "contactId", "name", "company", "kind", "priority", "why"] },
+    fields: { mcp: ["id", "contactId", "name", "company", "kind", "lane", "priority", "why", "proof"] },
     releasedSurface: "page.radar",
     async run(userId, args: { limit: number }) {
       const cards = await listPendingRecommendations(userId, args.limit);
@@ -364,13 +369,132 @@ export const FEATURE_TOOLS: OrbitTool[] = [
         name: c.contactName,
         company: c.company,
         kind: c.kind,
+        lane: LANE_TITLES[LANE_OF_KIND[c.kind]],
+        // "today" = a moment that won't keep; the rest is this week's plan.
         priority: c.bucket,
         why: c.aiAngle ?? leadReason(c.reasons)?.label ?? null,
+        // What the card rests on, so an answer can cite it: the quote, or the record or link's label.
+        proof: c.evidence.slice(0, 2).map((e) => (e.proof?.type === "quote" ? `“${e.proof.quote}”` : e.label)),
+      }));
+    },
+  },
+
+  {
+    name: "list_radar_finds",
+    title: "Radar finds",
+    description:
+      "What radar's weekly web search found for the user that is not in their network yet: events near them, people to " +
+      "meet (each with someone they know who can introduce them), and programs with deadlines. Every find has a link " +
+      "the search returned. Nothing here is a contact until the user saves it on the radar page.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true },
+    surfaces: BOTH,
+    scope: "read",
+    resultLabel: "finds",
+    fields: { mcp: ["kind", "title", "why", "when", "deadline", "url", "introducer"] },
+    releasedSurface: "page.radar",
+    async run(userId) {
+      const finds = await listOpenOpportunities(userId);
+      return finds.map((f) => ({
+        id: f.id,
+        kind: f.kind,
+        title: f.title,
+        why: f.why,
+        when: f.startsAt,
+        deadline: f.kind === "program" ? f.expiresAt : null,
+        url: f.url,
+        introducer: f.introducer?.name ?? null,
       }));
     },
   },
 
   /* ----------------------------------------------------------- outreach, recruiters ----- */
+  {
+    name: "what_needs_attention",
+    title: "What needs attention",
+    description:
+      "What's waiting for the user right now: reminders and follow-ups due, notes to review, " +
+      "replies to their feedback, and account problems (a disconnected mailbox, a missing AI key). " +
+      "The same list as the notification bell.",
+    inputSchema: { limit: z.number().int().min(1).max(15).default(8) },
+    annotations: { readOnlyHint: true },
+    surfaces: BOTH,
+    scope: "read",
+    resultLabel: "items",
+    fields: { mcp: ["items", "dueCount", "problems"] },
+    async run(userId, args: { limit: number }) {
+      const panel = await loadNotificationPanel(userId, new Date(), { withAlerts: true });
+      return {
+        items: panel.items.slice(0, args.limit).map((item) => ({
+          kind: item.kind,
+          title: item.title,
+          detail: item.body,
+          due: item.dueAt,
+          urgency: item.urgency,
+          contactId: item.contactId ?? null,
+        })),
+        dueCount: panel.dueCount,
+        // Account health: things only the user can fix, in their own words.
+        problems: panel.alerts.map((alert) => ({ kind: alert.kind, title: alert.title })),
+      };
+    },
+  },
+
+  {
+    name: "radar_briefing",
+    title: "Radar briefing",
+    description:
+      "Radar's briefing in one call: how many people it suggests today and this week, the top few " +
+      "with why, and how many drafts are ready.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true },
+    surfaces: BOTH,
+    scope: "read",
+    resultLabel: "briefing",
+    fields: { mcp: ["hasRun", "paused", "today", "total", "drafts", "top"] },
+    releasedSurface: "page.radar",
+    async run(userId) {
+      const briefing = await loadRadarBriefing(userId);
+      return {
+        hasRun: briefing.hasRun,
+        paused: briefing.paused,
+        today: briefing.today,
+        total: briefing.total,
+        drafts: briefing.drafts,
+        top: briefing.top.slice(0, 3).map((c) => ({
+          id: c.id,
+          contactId: c.contactId,
+          name: c.contactName,
+          company: c.company,
+          why: c.aiAngle ?? leadReason(c.reasons)?.label ?? null,
+        })),
+      };
+    },
+  },
+
+  {
+    name: "integration_status",
+    title: "Integration status",
+    description:
+      "Which apps the user has connected to Orbit (Notion, Granola and others), whether each is " +
+      "working or needs reconnecting, and when it last synced.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true },
+    surfaces: BOTH,
+    scope: "read",
+    resultLabel: "integrations",
+    fields: { mcp: ["app", "status", "lastSyncedAt", "problem"] },
+    async run(userId) {
+      const connections = await listConnectorConnections(userId);
+      return connections.map((c) => ({
+        app: c.connectorId,
+        status: c.status,
+        lastSyncedAt: c.lastSyncedAt?.toISOString() ?? null,
+        problem: c.syncError ? c.syncError.slice(0, 160) : null,
+      }));
+    },
+  },
+
   {
     name: "list_campaigns",
     title: "Outreach campaigns",
@@ -507,10 +631,16 @@ export const FEATURE_TOOLS: OrbitTool[] = [
     scope: "read",
     resultLabel: "dossier",
     releasedSurface: "page.knowledge",
-    fields: { chat: ["contact", "brief", "goals", "stale"], mcp: ["contact", "brief", "goals", "stale"] },
+    // `relationship` (LinkedIn deep read) goes to connected assistants too; /privacy says so.
+    fields: { chat: ["contact", "brief", "goals", "stale", "relationship"], mcp: ["contact", "brief", "goals", "stale", "relationship"] },
     async run(userId, args: { contactId: string }) {
       const dossier = await loadKnowledgeDossier(userId, args.contactId);
-      return dossier ?? toolError("No contact with that id.");
+      if (!dossier) return toolError("No contact with that id.");
+      // Absent (not null) when there is nothing, so deep read off is today's shape; a failed read
+      // never fails the dossier.
+      const contexts = await loadRelationshipContexts(userId, [args.contactId]).catch(() => null);
+      const relationship = renderRelationshipBlock(contexts?.get(args.contactId));
+      return relationship ? { ...dossier, relationship } : dossier;
     },
   },
 

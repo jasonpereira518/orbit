@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { Pencil } from "lucide-react";
@@ -40,7 +41,7 @@ export function ContactRemindersSection({
   const router = useRouter();
   const [editing, setEditing] = useState<ContactReminder | null>(null);
   const [note, setNote] = useState("");
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   function openEdit(reminder: ContactReminder) {
     setEditing(reminder);

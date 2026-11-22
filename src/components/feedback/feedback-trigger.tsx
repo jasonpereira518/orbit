@@ -69,24 +69,25 @@ export function FeedbackTrigger({
       variant="outline"
       size="icon"
       aria-label="Send feedback"
-      aria-haspopup="dialog"
+      // A disclosure for a docked region, not a popup: the panel is not a dialog and does not
+      // trap focus. Pressing this while it is open just brings you back into it — the panel
+      // closes only from its own close control.
+      aria-controls="feedback-dock"
       aria-expanded={state === "open"}
-      // Stays visible while the panel is open. The bell ducks out because the notifications
-      // window lands ON TOP of it and is pretending to be it; this window opens BELOW the
-      // rail instead, so there is nothing to hide behind and fading would just read as the
-      // button disappearing.
+      // Hidden while the panel is open, like the bell: the panel has its own close control and
+      // this button would just sit beside it pointing at the thing already on screen.
+      // `invisible` (not `hidden`) keeps its place so nothing shifts, and takes it out of the
+      // tab order; it is back the moment the close is requested, so focus can return to it.
       //
       // `aria-expanded:bg-background/90` cancels the `aria-expanded:bg-muted` the outline
-      // variant applies. That darkening is a reasonable "this is open" cue for a control
-      // you can still see the panel next to, but here the panel is a 24rem window directly
-      // below the button — nothing about it is ambiguous — and the button just sat there
-      // looking pressed for as long as the form was open. The bell keeps the darkening and
-      // never shows it, because it fades out.
+      // variant applies, for the frame or two it is still showing as it fades out.
       className={cn(
         "size-10 rounded-full border-border/70 bg-background/90 shadow-md backdrop-blur-md hover:bg-background aria-expanded:bg-background/90",
         // Beats both the resting fill and the hover, so the press still reads while the
         // pointer is sitting on the button — which it always is.
         pressed && "bg-muted hover:bg-muted aria-expanded:bg-muted",
+        "transition-[opacity,visibility,background-color] duration-base motion-reduce:transition-none",
+        state === "open" && "pointer-events-none invisible opacity-0",
         className
       )}
       // `e.currentTarget` rather than a ref: every copy anchors itself, so nothing has to

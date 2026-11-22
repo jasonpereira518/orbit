@@ -16,13 +16,14 @@
 import { put } from "@/lib/blob-lazy";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { feedback, feedbackScreenshots } from "@/db/schema";
+import { feedback, feedbackScreenshots, userSettings } from "@/db/schema";
+import { sql } from "drizzle-orm";
 import { hasBlobStorage } from "@/lib/contact-avatar";
-import { notifyFeedbackSubmitted } from "@/lib/feedback-notify";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import {
   FEEDBACK_AREAS,
   FEEDBACK_CATEGORIES,
+  MAX_FEEDBACK_SUBJECT,
   MAX_FEEDBACK_TEXT,
   MAX_PATH,
   MAX_SCREENSHOTS,
@@ -31,6 +32,7 @@ import {
   MAX_SUBMISSION_BYTES,
   type FeedbackArea,
   type FeedbackCategory,
+  type FeedbackSource,
 } from "@/lib/feedback-report";
 
 /**
@@ -52,7 +54,7 @@ export {
   type FeedbackCategory,
 };
 
-const screenshotSchema = z.object({
+export const screenshotSchema = z.object({
   /**
    * A `data:image/...;base64,...` string. The declared mime is parsed and then DISCARDED —
    * see `decodeScreenshot`. The length bound here is a cheap early-out on the encoded
@@ -66,6 +68,8 @@ const screenshotSchema = z.object({
 
 export const feedbackSubmissionSchema = z.object({
   text: z.string().trim().min(1, "Add a note before sending.").max(MAX_FEEDBACK_TEXT),
+  /** Required: a new message to the operator starts with a subject line. */
+  subject: z.string().trim().min(1, "Add a subject before sending.").max(MAX_FEEDBACK_SUBJECT),
   area: z.enum(FEEDBACK_AREAS).optional(),
   category: z.enum(FEEDBACK_CATEGORIES).optional(),
   /** Where they were. Pathname only — see `sanitizePath`. */
@@ -236,10 +240,16 @@ export type FeedbackScreenshotInput = DecodedScreenshot & {
  *
  * The parent is inserted first, so a blob failure aborts with one childless parent row
  * rather than a half-populated gallery that reads as "one of my screenshots vanished".
+ *
+ * Tells nobody. The submit action triages the report and sends the Slack DM after the
+ * response (`after()` in `src/actions/feedback.ts`), so the DM can lead with the triage
+ * line; a report the operator logs by hand needs no DM at all.
  */
 export async function createFeedbackSubmission(input: {
   userId: string;
   text: string;
+  /** Null for the operator's hand-logged entries when none was given. */
+  subject: string | null;
   area: FeedbackArea | null;
   category: FeedbackCategory | null;
   context: Record<string, unknown>;
@@ -253,6 +263,7 @@ export async function createFeedbackSubmission(input: {
       userId: input.userId,
       kind: "freeform",
       text: input.text,
+      subject: input.subject,
       area: input.area,
       category: input.category,
       context: input.context,
@@ -261,13 +272,6 @@ export async function createFeedbackSubmission(input: {
     // overload resolution in this TS version, the same way it does in `interest-list.ts`
     // and `import-engine.ts`.
     .returning();
-
-  notifyFeedbackSubmitted({
-    id: entry.id,
-    category: entry.category,
-    area: entry.area,
-    text: entry.text,
-  }).catch(() => {});
 
   if (input.screenshots.length === 0) return { id: entry.id, screenshotCount: 0 };
 
@@ -291,4 +295,87 @@ export async function createFeedbackSubmission(input: {
 
   await db.insert(feedbackScreenshots).values(rows);
   return { id: entry.id, screenshotCount: rows.length };
+}
+
+/**
+ * Screenshots sent later in the conversation, attached to the message they came with. Same
+ * storage path and checks as the opening report's (`decodeScreenshot` has already run).
+ */
+export async function attachMessageScreenshots(input: {
+  feedbackId: string;
+  messageId: string;
+  userId: string;
+  screenshots: FeedbackScreenshotInput[];
+}): Promise<number> {
+  if (input.screenshots.length === 0) return 0;
+  const db = await getDb();
+  const rows: (typeof feedbackScreenshots.$inferInsert)[] = [];
+  for (const [index, shot] of input.screenshots.entries()) {
+    // Positions after the report's own, so a blob path never collides with one of them.
+    const stored = await persistScreenshot(input.feedbackId, 100 + index, shot);
+    rows.push({
+      feedbackId: input.feedbackId,
+      messageId: input.messageId,
+      userId: input.userId,
+      position: index,
+      note: shot.note,
+      storage: stored.storage,
+      blobUrl: stored.blobUrl,
+      inlineData: stored.inlineData,
+      contentType: shot.contentType,
+      byteSize: shot.buf.byteLength,
+      width: shot.width,
+      height: shot.height,
+    });
+  }
+  await db.insert(feedbackScreenshots).values(rows);
+  return rows.length;
+}
+
+/**
+ * File feedback someone gave the operator outside the app — a text, a call, a chat in person —
+ * under their account, so it lands in the same inbox, gets triaged like any other report, and
+ * can be replied to in Orbit (which is what teaches them the button next time).
+ *
+ * Matches the person by email, exactly but case-insensitively, against the `user_settings`
+ * mirror of Clerk. No account, no entry: feedback that can't be replied to belongs in notes.
+ */
+export async function logDirectFeedback(input: {
+  email: string;
+  text: string;
+  /** Optional when logging: the first line of what they said stands in when left blank. */
+  subject?: string | null;
+  source: FeedbackSource;
+  area: FeedbackArea | null;
+  loggedBy: string;
+}): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
+  const email = input.email.trim();
+  const text = input.text.trim();
+  if (!email) return { ok: false, message: "Add their email" };
+  if (!text) return { ok: false, message: "Add what they said" };
+  if (text.length > MAX_FEEDBACK_TEXT) {
+    return { ok: false, message: `Keep it under ${MAX_FEEDBACK_TEXT} characters` };
+  }
+
+  const db = await getDb();
+  const [person] = await db
+    .select({ userId: userSettings.userId })
+    .from(userSettings)
+    .where(sql`lower(${userSettings.email}) = lower(${email})`)
+    .limit(1);
+  if (!person) return { ok: false, message: "No Orbit account with that email" };
+
+  const subject =
+    input.subject?.trim().slice(0, MAX_FEEDBACK_SUBJECT) ||
+    text.split("\n")[0].slice(0, MAX_FEEDBACK_SUBJECT);
+  const created = await createFeedbackSubmission({
+    userId: person.userId,
+    text,
+    subject,
+    area: input.area,
+    category: null,
+    context: { source: input.source, loggedBy: input.loggedBy, loggedAt: new Date().toISOString() },
+    screenshots: [],
+  });
+  return { ok: true, id: created.id };
 }

@@ -52,13 +52,7 @@ import {
   type SiteInviteEmailKind,
 } from "@/lib/site-invite-email";
 
-const INVITE_EXPIRES_DAYS = 30;
-/**
- * The note invitations wrote on the comp they granted before pricing v2 — kept because
- * existing comps carry it, and the v130 backfill uses it to find those accounts.
- */
-export const LEGACY_INVITE_COMP_NOTE = "Invited by an admin";
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const INVITE_EXPIRES_DAYS = 30;const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export type SiteInviteResult =
   | { kind: "invited"; email: string; url: string | null; emailed: boolean }
@@ -158,7 +152,7 @@ export async function inviteToSite(input: {
       ...(signup ? { interestSignupId: signup.id } : {}),
     },
   };
-  const clerk = deps.clerk ?? ((await clerkClient()) as unknown as NonNullable<InviteDeps["clerk"]>);
+  const clerk = deps.clerk ?? (await clerkClient());
 
   const existing = await clerk.users.getUserList({ emailAddress: [email], limit: 1 });
   const user = existing.data[0];
@@ -361,7 +355,7 @@ export async function listSiteInvites(limit = 25): Promise<SiteInviteRow[]> {
   return data.map((inv) => ({
     id: inv.id,
     email: inv.emailAddress,
-    status: inv.status as SiteInviteRow["status"],
+    status: inv.status,
     createdAt: new Date(inv.createdAt),
     url: inv.status === "pending" ? inv.url ?? null : null,
     waveId: waves.get(inv.id) ?? null,
@@ -390,7 +384,7 @@ export async function revokeSiteInvite(
   deps: InviteDeps = {}
 ) {
   if (!deps.clerk) requireClerk();
-  const clerk = deps.clerk ?? ((await clerkClient()) as unknown as NonNullable<InviteDeps["clerk"]>);
+  const clerk = deps.clerk ?? (await clerkClient());
   const revoked = await clerk.invitations.revokeInvitation(input.invitationId);
   try {
     const db = await getDb();
@@ -592,11 +586,11 @@ export async function claimSiteInviteGrant(userId: string): Promise<boolean> {
     const user = await (await clerkClient()).users.getUser(userId);
     const primary =
       user.emailAddresses.find((e) => e.id === user.primaryEmailAddressId) ?? user.emailAddresses[0];
-    return await recordSiteInvite(userId, user.publicMetadata as Record<string, unknown>, {
+    return await recordSiteInvite(userId, user.publicMetadata, {
       email: primary?.emailAddress ?? null,
     });
   } catch (err) {
-    console.error("[site-invites] invite grant check failed", err);
+    reportError(err, { where: "site.invite.grant", level: "warning" });
     return false;
   }
 }

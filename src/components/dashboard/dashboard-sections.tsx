@@ -4,7 +4,7 @@ import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { Suspense } from "react";
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import { Bell, Sparkles, Users } from "lucide-react";
 import type { getOutreachPerformanceSummary } from "@/actions/outreach";
 import type { fetchDashboard } from "@/actions/reminders";
@@ -43,6 +43,7 @@ import { countTourExamples, hasOwnInteraction } from "@/lib/onboarding-examples/
 import { tourRailVisible, tourResumable } from "@/lib/tour/tour-state";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { MorningBriefing } from "@/components/radar/morning-briefing";
+import { RadarDrawer, RadarWidget } from "@/components/radar/radar-dock";
 import type { RadarBriefing } from "@/lib/radar/page-data";
 
 /**
@@ -298,8 +299,8 @@ export async function StatsSection({ bundle }: { bundle: DashboardBundle }) {
           subtitle="Close + warm"
         />
         <StatCard
-          label="Reminders"
-          value={data.stats.pendingReminders}
+          label="Due reminders"
+          value={data.stats.dueReminders}
           icon={<Bell className="h-4 w-4" />}
           href="/reminders"
         />
@@ -353,34 +354,60 @@ export async function MorningBriefingSection({
   ]);
   if (!b?.hasRun) return null;
   return (
-    <div className="reveal-mount min-w-0 w-full" style={revealDelay(0)}>
-      <MorningBriefing
-        total={b.total}
-        today={b.today}
-        drafts={b.drafts}
-        changes={b.changes}
-        paused={b.paused}
-        networkStats={b.networkStats ?? bundleResult?.networkStats}
-        activeProjectsCount={b.activeProjectsCount}
-        items={b.top.map((r) => ({
-          id: r.id,
-          contactId: r.contactId,
-          kind: r.kind,
-          reasons: r.reasons,
-          evidence: r.evidence,
-          aiNote: r.aiNote,
-          aiAngle: r.aiAngle,
-          draft: r.draft,
-          contactName: r.contactName,
-          title: r.title,
-          company: r.company,
-          tier: r.tier,
-          avatarUrl: r.avatarUrl,
-          suggestedCalendarInvite: r.suggestedCalendarInvite,
-          discoveredPerson: r.discoveredPerson,
-        }))}
-      />
-    </div>
+    <RadarDrawer>
+      <div className="reveal-mount min-w-0 w-full" style={revealDelay(0)}>
+        <MorningBriefing
+          total={b.total}
+          today={b.today}
+          lanes={b.lanes}
+          drafts={b.drafts}
+          changes={b.changes}
+          paused={b.paused}
+          networkStats={b.networkStats ?? bundleResult?.networkStats}
+          activeProjectsCount={b.activeProjectsCount}
+          items={b.top.map((r) => ({
+            id: r.id,
+            contactId: r.contactId,
+            kind: r.kind,
+            reasons: r.reasons,
+            evidence: r.evidence,
+            aiNote: r.aiNote,
+            aiAngle: r.aiAngle,
+            draft: r.draft,
+            contactName: r.contactName,
+            title: r.title,
+            company: r.company,
+            tier: r.tier,
+            avatarUrl: r.avatarUrl,
+            suggestedCalendarInvite: r.suggestedCalendarInvite,
+          }))}
+        />
+      </div>
+    </RadarDrawer>
+  );
+}
+
+/**
+ * The small Radar card beside the dashboard header: the same briefing, collapsed. Awaits the
+ * same promise as {@link MorningBriefingSection}, so it costs no second query, and renders
+ * nothing in the same case (no first run yet), leaving the header as it always was.
+ */
+export async function RadarWidgetSection({ briefing }: { briefing: Promise<RadarBriefing> }) {
+  const b = await briefing.catch(() => null);
+  if (!b?.hasRun) return null;
+  return (
+    <RadarWidget
+      today={b.today}
+      total={b.total}
+      drafts={b.drafts}
+      paused={b.paused}
+      people={b.top.slice(0, 3).map((r) => ({
+        contactId: r.contactId,
+        name: r.contactName,
+        avatarUrl: r.avatarUrl,
+      }))}
+      changes={b.changes}
+    />
   );
 }
 
@@ -488,6 +515,10 @@ export async function RemindersAndFollowUpsSection({
               ? data.contactNameById.get(r.contactId) ?? null
               : null,
             noteBatchId: r.noteBatchId,
+            priority: r.priority,
+            category: r.category,
+            timingRationale: r.timingRationale,
+            importanceReason: r.importanceReason,
           }))}
         />
       </div>
@@ -637,7 +668,7 @@ export async function RecentlyUpdatedSection({
                     </div>
                   </div>
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {formatDistanceToNow(new Date(c.updatedAt), { addSuffix: true })}
+                    {longRelativeLabel(new Date(c.updatedAt))}
                   </span>
                 </IntentLink>
               );
@@ -692,6 +723,7 @@ export async function TailSection({ bundle }: { bundle: DashboardBundle }) {
           preferredName: c.preferredName,
           company: c.company,
           title: c.title,
+          profileImageUrl: c.profileImageUrl,
           goalRelevance: c.goalRelevance,
           reason: c.reason,
           companyName: c.companyName,

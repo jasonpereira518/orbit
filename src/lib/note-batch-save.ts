@@ -9,9 +9,9 @@
  *   undo          — marks reminders `dismissed`, never deletes, so the hash keeps blocking
  *   delete        — undo first, then the batch row itself; the hashes still block
  */
-import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { actionItems, captureJobs, contactOpportunities, contacts, ignoredPeople, interactionMentions, interactions, meetingSessions, noteBatches, reminders, type CaptureSourceKind, type NoteBatchMeeting, type NoteBatchResult, type ReminderActionKind, type ReminderOrigin } from "@/db/schema";
+import { actionItems, captureJobs, contactOpportunities, contacts, ignoredPeople, interactionMentions, interactions, meetingSessions, noteBatches, reminders, type CaptureSourceKind, type NoteBatchMeeting, type NoteBatchResult, type ReminderActionKind, type ReminderOrigin, type ReminderPriority, type ReminderCategory } from "@/db/schema";
 import type { ParsedNote } from "@/lib/ai";
 import type { DatedCommitment } from "@/lib/date-commitment-extract";
 import type { MentionMatchedBy } from "@/lib/mention-resolution";
@@ -25,6 +25,7 @@ import {
   DEFAULT_FOLLOW_UP_WINDOW_DAYS,
   dropSupersededWindowDrafts,
   emptyNoteBatchResult,
+  isNearDuplicateReminder,
   noteInteractionExternalId,
   titlesCollide,
   windowDueDate,
@@ -41,26 +42,9 @@ import { enrichmentKeyFacts, takeawaysToSummary } from "@/lib/capture/person-enr
 import { identityKeysFor } from "@/lib/duplicates";
 import { findIdentityOwners } from "@/lib/contact-identity";
 import { isHandle } from "@/lib/contact-name-guess";
+import { shouldReplaceName } from "@/lib/names/compare";
+import { splitName } from "@/lib/names/parse";
 
-/**
- * Whether a note's name for someone should replace the one on file. Only when it says more:
- * "Sarah" must never shrink "Sarah Chen", and "Mike Torres" must not replace "Michael
- * Torres". A handle or an empty name on file is always replaced.
- */
-export function nameUpgrades(current: string | null | undefined, incoming: string | null | undefined): boolean {
-  const next = incoming?.trim();
-  if (!next) return false;
-  const now = current?.trim();
-  if (!now || isHandle(now)) return true;
-  return next.split(/\s+/).length > now.split(/\s+/).length;
-}
-
-/** "Ada King Lovelace" → first "Ada", last "Lovelace". One word is a first name only. */
-function splitName(name: string): { firstName?: string; lastName?: string } {
-  const parts = name.trim().split(/\s+/);
-  if (!parts[0]) return {};
-  return parts.length > 1 ? { firstName: parts[0], lastName: parts[parts.length - 1] } : { firstName: parts[0] };
-}
 import { getInboxListId } from "@/lib/reminder-lists";
 import { inferReminderActionKind } from "@/lib/reminder-action-kind";
 import { buildSuggestionItemHash, isoDay, isoDayToLocalNoon } from "@/lib/suggested-reminder-utils";
@@ -141,6 +125,10 @@ export type NoteBatchCommitmentInput = Omit<
   rawDatePhrase: string | null;
   /** Defaults to `"explicit"` — everything that reached here before implied steps existed was. */
   origin?: ReminderOrigin;
+  priority?: ReminderPriority;
+  category?: ReminderCategory;
+  timingRationale?: string | null;
+  importanceReason?: string | null;
 };
 
 export type NoteBatchMentionInput = { text: string; context: string | null; nearPerson: string | null; contactId: string | null; confidence: number; matchedBy: MentionMatchedBy | null };
@@ -230,6 +218,10 @@ type ReminderDraft = {
   actionItemId: string | null;
   origin: ReminderOrigin;
   confidenceScore: number | null;
+  priority: ReminderPriority;
+  category: ReminderCategory;
+  timingRationale: string | null;
+  importanceReason: string | null;
 };
 
 export type SaveNoteBatchOptions = {
@@ -424,7 +416,7 @@ export async function saveNoteBatch(
           const IDENTITY = ["company", "title", "location", "email", "linkedinUrl", "howMet", "aiSummary"] as const;
           const kept = { ...restAll } as Record<string, unknown>;
           for (const key of IDENTITY) {
-            if (typeof current[key] === "string" && current[key]!.trim()) delete kept[key];
+            if (typeof current[key] === "string" && current[key].trim()) delete kept[key];
           }
           rest = kept as typeof restAll;
         }
@@ -445,7 +437,7 @@ export async function saveNoteBatch(
             // Unattended runs only fill a blank (or a bare handle) name; the rest may upgrade a partial one.
             ...((p.fillOnly
               ? !current?.fullName?.trim() || isHandle(current.fullName.trim())
-              : nameUpgrades(current?.fullName, parsed.name)) && parsed.name
+              : shouldReplaceName(current?.fullName, parsed.name)) && parsed.name
               ? { fullName: parsed.name }
               : {}),
             ...rest,
@@ -454,7 +446,8 @@ export async function saveNoteBatch(
             ...gaps,
             ...(addedFacts.length ? { keyFacts: [...priorFacts, ...addedFacts] } : {}),
           },
-          WRITE_OPTS
+          // A reviewed card is the person's own record; an unattended run is a kept one.
+          { ...WRITE_OPTS, by: p.fillOnly ? "unattended_capture" : "capture" }
         );
         // Added, never replaced, and without reading the current list first (audit M-13).
         if (tagNames?.length) await addTagsForUser(userId, contactId, tagNames);
@@ -465,7 +458,8 @@ export async function saveNoteBatch(
           userId,
           {
             fullName: parsed.name,
-            ...splitName(parsed.name),
+            firstName: splitName(parsed.name).firstName ?? undefined,
+            lastName: splitName(parsed.name).lastName ?? undefined,
             ...fields,
             dateMet: p.interactionDate?.trim() || parsed.interaction_date?.trim() || input.anchorIso,
             source: "ai_capture",
@@ -511,7 +505,7 @@ export async function saveNoteBatch(
         const inserted = await insertOpportunities(
           userId,
           p.opportunities.map((o) => ({
-            contactId: contactId!,
+            contactId: contactId,
             kind: o.kind,
             label: o.label,
             direction: o.direction,
@@ -522,7 +516,7 @@ export async function saveNoteBatch(
             rawDatePhrase: o.rawDatePhrase,
             confidenceScore: o.confidenceScore,
             createdBy: "ai" as const,
-            itemHash: buildOpportunityItemHash(input.sourceHash, contactId!, o.kind, o.label),
+            itemHash: buildOpportunityItemHash(input.sourceHash, contactId, o.kind, o.label),
           }))
         );
         // `emptyNoteBatchResult` always seeds this, but the field is optional on the type so
@@ -531,7 +525,7 @@ export async function saveNoteBatch(
         for (const r of inserted) {
           opportunityResults.push({
             id: r.id,
-            contactId: contactId!,
+            contactId: contactId,
             kind: r.kind,
             label: r.label,
             dueIso: r.dueDate ? isoDay(new Date(r.dueDate)) : null,
@@ -562,6 +556,10 @@ export async function saveNoteBatch(
             dateBasis: "window", rawDatePhrase: null, sourceExcerpt: null, actionItemId: item.id,
             // An action item is something the note SAID somebody would do.
             origin: "explicit", confidenceScore: null,
+            priority: "high",
+            category: "action_item",
+            timingRationale: "Action item from notes",
+            importanceReason: "Direct action item from interaction",
           });
           result.actionItems.push({ id: item.id, contactId, text: item.text, reminderId: null });
         }
@@ -590,6 +588,10 @@ export async function saveNoteBatch(
           actionKind: inferReminderActionKind({ title: item.text, description: null, reminderType: "ai_suggested", contactId: item.contactId }),
           dateBasis: "window", rawDatePhrase: null, sourceExcerpt: null, actionItemId: item.id,
           origin: "explicit", confidenceScore: null,
+          priority: "high",
+          category: "action_item",
+          timingRationale: "Action item from notes",
+          importanceReason: "Direct action item from interaction",
         });
       }
     }
@@ -673,6 +675,10 @@ export async function saveNoteBatch(
         actionItemId: null,
         origin: c.origin ?? "explicit",
         confidenceScore: c.confidenceScore,
+        priority: c.priority ?? "normal",
+        category: c.category ?? "action_item",
+        timingRationale: c.timingRationale ?? null,
+        importanceReason: c.importanceReason ?? null,
       });
     }
 
@@ -698,6 +704,10 @@ export async function saveNoteBatch(
         actionItemId: null,
         origin: "explicit",
         confidenceScore: null,
+        priority: "normal",
+        category: "next_step",
+        timingRationale: `Scheduled based on relationship cadence (${days} days)`,
+        importanceReason: "Follow-up to maintain connection",
       });
     }
 
@@ -729,6 +739,10 @@ export async function saveNoteBatch(
         // A digest item is something the call produced, not something Orbit inferred.
         origin: "explicit",
         confidenceScore: null,
+        priority: extra.kind === "blocker" ? "critical" : "high",
+        category: "action_item",
+        timingRationale: "Action item from meeting digest",
+        importanceReason: `Meeting ${extra.kind}`,
       });
     }
 
@@ -736,7 +750,33 @@ export async function saveNoteBatch(
     //    one yields to a dated commitment for the same contact that says the same thing
     //    (see `dropSupersededWindowDrafts`), so one follow-up never becomes two reminders.
     //    The review's Save button counts with the same function (`planReminders`).
-    const kept = dropSupersededWindowDrafts(drafts, (d) => d.contactId);
+    const windowKept = dropSupersededWindowDrafts(drafts, (d) => d.contactId);
+
+    //    Across batches: a person's pending reminder from an earlier note already says it.
+    //    Only window-dated drafts (a date Orbit chose) yield; a draft with a date the note
+    //    stated is kept, since it may move the date. This batch's own rows are skipped so a
+    //    resumed save keeps what it already wrote.
+    const contactsWithDrafts = [...new Set(windowKept.map((d) => d.contactId).filter((id): id is string => !!id))];
+    const pendingTitles = new Map<string, string[]>();
+    if (contactsWithDrafts.length) {
+      const pending = await db
+        .select({ contactId: reminders.contactId, title: reminders.title })
+        .from(reminders)
+        .where(
+          and(
+            eq(reminders.userId, userId),
+            eq(reminders.status, "pending"),
+            inArray(reminders.contactId, contactsWithDrafts),
+            or(isNull(reminders.noteBatchId), ne(reminders.noteBatchId, batchId))
+          )
+        );
+      for (const r of pending) {
+        if (r.contactId) pendingTitles.set(r.contactId, [...(pendingTitles.get(r.contactId) ?? []), r.title]);
+      }
+    }
+    const kept = windowKept.filter(
+      (d) => d.dateBasis !== "window" || !d.contactId || !(pendingTitles.get(d.contactId) ?? []).some((t) => isNearDuplicateReminder(t, d.title))
+    );
 
     // 5. Insert reminders, idempotent through itemHash. An action-item draft hashes its
     //    own item id rather than its title: two participants in one batch can share the
@@ -770,6 +810,10 @@ export async function saveNoteBatch(
             actionItemId: d.actionItemId,
             origin: d.origin,
             confidenceScore: d.confidenceScore,
+            priority: d.priority,
+            category: d.category,
+            timingRationale: d.timingRationale,
+            importanceReason: d.importanceReason,
             itemHash: d.actionItemId
               ? buildSuggestionItemHash(input.sourceHash, isoDay(d.dueDate), `action-item:${d.actionItemId}`)
               : buildSuggestionItemHash(input.sourceHash, isoDay(d.dueDate), d.title),
@@ -792,8 +836,12 @@ export async function saveNoteBatch(
       for (const r of landed) {
         result.reminders.push({
           id: r.id, contactId: r.contactId, title: r.title, dueIso: isoDay(new Date(r.dueDate!)),
-          dateBasis: (r.dateBasis ?? "window") as NoteBatchResult["reminders"][number]["dateBasis"],
+          dateBasis: (r.dateBasis ?? "window"),
           rawDatePhrase: r.rawDatePhrase, sourceExcerpt: r.sourceExcerpt,
+          priority: r.priority,
+          category: r.category,
+          timingRationale: r.timingRationale,
+          importanceReason: r.importanceReason,
         });
         if (r.actionItemId) {
           reminderByActionItem.set(r.actionItemId, r.id);

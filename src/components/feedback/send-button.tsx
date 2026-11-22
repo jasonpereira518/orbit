@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { Send as SendIcon, Loader2 } from "lucide-react";
 import { motion } from "motion/react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,7 @@ export function SendButton({
   sent,
   disabled,
   onClick,
+  label = "Send",
 }: {
   /** The submission is in flight. */
   sending: boolean;
@@ -52,6 +53,8 @@ export function SendButton({
   /** There is nothing to send yet. NOT set while sending — see below. */
   disabled: boolean;
   onClick: () => void;
+  /** The words on the button ("Send to Jason"); the gesture is the same. */
+  label?: string;
 }) {
   // The widget is mounted as a SIBLING of `AppShell` (`app/(app)/layout.tsx:122`), so the
   // `MotionConfig reducedMotion="user"` that wraps the rest of the app does not reach it.
@@ -120,7 +123,8 @@ export function SendButton({
           {/* Reduced motion gets the spinner back, because the sweep it replaces is
               hidden there — see the `.send-signal` block in globals.css. */}
           {sending && reduced && <Loader2 className="size-3.5 animate-spin" />}
-          Send
+          {!sending && <SendIcon className="size-3.5" aria-hidden />}
+          {label}
         </motion.span>
 
         {sent && <SentCheck />}

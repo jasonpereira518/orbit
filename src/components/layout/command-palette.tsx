@@ -33,10 +33,13 @@ function preloadDialog() {
  */
 export function CommandPalette({
   hidden,
+  comingSoon,
   askMode,
 }: {
   /** Surfaces hidden from this viewer; the palette leaves out anything leading to one. */
   hidden: ReadonlySet<string>;
+  /** Pages marked coming soon: listed, and tagged "Coming soon" as the sidebar tags them. */
+  comingSoon: ReadonlySet<string>;
   askMode: PaletteAskMode;
 }) {
   const [open, setOpen] = useState(false);
@@ -88,6 +91,12 @@ export function CommandPalette({
 
   if (!loaded) return null;
   return (
-    <CommandPaletteDialog open={open} onOpenChange={setOpen} hidden={hidden} askMode={askMode} />
+    <CommandPaletteDialog
+      open={open}
+      onOpenChange={setOpen}
+      hidden={hidden}
+      comingSoon={comingSoon}
+      askMode={askMode}
+    />
   );
 }

@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { SignOutButton, UserButton } from "@clerk/nextjs";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import Link from "next/link";
 import type { CareerProfile } from "@/db/schema";
 import { clearLinkedInYou } from "@/actions/imports";
-import { saveSenderBio, saveSocialLinks } from "@/actions/settings";
+import { saveCity, saveSenderBio, saveSocialLinks } from "@/actions/settings";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { FormError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,8 @@ import { integrationHref } from "@/components/settings/sections";
 import {
   Briefcase,
   Building2,
+  GraduationCap,
+  History,
   MapPin,
   Quote,
   RefreshCw,
@@ -58,7 +61,7 @@ type CareerRow = { icon: LucideIcon; label: string } & (
 );
 
 /** The rows worth showing, skipping anything that was never imported. */
-function careerRows(c: CareerProfile): CareerRow[] {
+export function careerRows(c: CareerProfile): CareerRow[] {
   const rows: (CareerRow | null)[] = [
     // Word for word as LinkedIn has it; the About summary rides along on hover.
     c.profile?.headline
@@ -78,6 +81,32 @@ function careerRows(c: CareerProfile): CareerRow[] {
         }
       : null,
     c.roleKeywords?.length ? { icon: Target, label: "Job titles", chips: c.roleKeywords } : null,
+    // Certifications, honors, projects… from the kept export (#544).
+    c.background?.length
+      ? {
+          icon: Sparkles,
+          label: "Background",
+          chips: [
+            ...c.background.slice(0, SKILL_CHIPS).map((b) => b.title),
+            ...(c.background.length > SKILL_CHIPS ? [`+${c.background.length - SKILL_CHIPS} more`] : []),
+          ],
+        }
+      : null,
+    // Deep read: the full history. Listed so a history-only import still gets the card and its Remove.
+    c.positions?.length
+      ? {
+          icon: History,
+          label: "Work history",
+          value: `${c.positions.length} ${c.positions.length === 1 ? "role" : "roles"}, latest ${c.positions[0].title} at ${c.positions[0].company}`,
+        }
+      : null,
+    c.education?.length
+      ? {
+          icon: GraduationCap,
+          label: "Education",
+          value: `${c.education.length} ${c.education.length === 1 ? "school" : "schools"}: ${c.education.map((e) => e.school).join(", ")}`,
+        }
+      : null,
   ];
   return rows.filter((r): r is CareerRow => r !== null);
 }
@@ -182,12 +211,15 @@ export function AboutYouSettings({
 }) {
   const [bio, setBio] = useState(initialSenderBio);
   const [career, setCareer] = useState(initialCareer);
-  const [clearing, startClear] = useTransition();
-  const [bioPending, startBio] = useTransition();
+  const [clearing, startClear] = useGuardedTransition();
+  const [bioPending, startBio] = useGuardedTransition();
   // A failed save stays next to its button until the next attempt; the toast alone could
   // time out before it was read.
   const [bioError, setBioError] = useState<string | null>(null);
   const [clearError, setClearError] = useState<string | null>(null);
+  const [city, setCity] = useState(initialCareer?.city ?? initialCareer?.profile?.location ?? "");
+  const [cityPending, startCity] = useGuardedTransition();
+  const [cityError, setCityError] = useState<string | null>(null);
 
   return (
     <SettingsSection title="About you">
@@ -235,6 +267,46 @@ export function AboutYouSettings({
           </p>
           <FormError className="basis-full">{bioError}</FormError>
         </div>
+      </SettingsRow>
+
+      <SettingsRow
+        title="City"
+        labelFor="your-city"
+        description="Where you are. Radar looks for events near you here."
+      >
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            startCity(async () => {
+              setCityError(null);
+              try {
+                const saved = await saveCity(city);
+                setCity(saved.city);
+                toast.success(saved.city ? "Saved" : "Cleared");
+              } catch (err) {
+                const message = friendlyError(err, "Couldn’t save that — try again?");
+                toast.error(message);
+                setCityError(message);
+              }
+            });
+          }}
+        >
+          <Input
+            id="your-city"
+            aria-describedby="your-city-description"
+            value={city}
+            maxLength={120}
+            autoComplete="address-level2"
+            placeholder="Austin, TX"
+            className="max-w-xs"
+            onChange={(e) => setCity(e.target.value)}
+          />
+          <Button type="submit" size="sm" disabled={cityPending}>
+            {cityPending ? "Saving…" : "Save"}
+          </Button>
+          <FormError className="basis-full">{cityError}</FormError>
+        </form>
       </SettingsRow>
 
       <SettingsRow
@@ -356,7 +428,7 @@ export function AboutYouSettings({
 /** The links on your own star in Constellation. */
 export function SocialLinksSettings({ initialSocialLinks }: { initialSocialLinks: SocialLinks }) {
   const [socials, setSocials] = useState(initialSocialLinks);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [socialsError, setSocialsError] = useState<string | null>(null);
 
   return (

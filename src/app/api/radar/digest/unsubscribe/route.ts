@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { escapeHtml } from "@/lib/interest-list-email";
-import { unsubscribeRadarDigest } from "@/lib/radar/digest";
+import { unsubscribeRadarDigest, unsubscribeRadarMoments } from "@/lib/radar/digest";
 import { recordUnsubscribeMiss, unsubscribeAttemptsExhausted } from "@/lib/unsubscribe-guard";
 
 // Clicked from Radar's Monday email, often in a mail client with no session. Authenticated
@@ -42,6 +42,11 @@ function tokenOf(request: NextRequest) {
   return request.nextUrl.searchParams.get("token")?.trim() || null;
 }
 
+/** Which email the link came from: the same-day email adds `kind=moment`; the Monday one has none. */
+function isMoment(request: NextRequest) {
+  return request.nextUrl.searchParams.get("kind") === "moment";
+}
+
 /**
  * The footer link opens a one-button confirmation, not an immediate change: link scanners
  * (Outlook Safe Links, corporate gateways) fetch every URL in a message before the person
@@ -51,9 +56,13 @@ function tokenOf(request: NextRequest) {
 export async function GET(request: NextRequest) {
   const token = tokenOf(request);
   if (!token) return new NextResponse(page("This link is missing its token."), { status: 400, headers: HTML_HEADERS });
-  const self = `${request.nextUrl.pathname}?token=${encodeURIComponent(token)}`;
+  const moment = isMoment(request);
+  const self = `${request.nextUrl.pathname}?${moment ? "kind=moment&" : ""}token=${encodeURIComponent(token)}`;
   return new NextResponse(
-    page("Stop Radar’s Monday email? You can turn it back on in Settings.", { href: self, label: "Turn it off" }),
+    page(
+      moment ? "Stop Radar’s same-day emails? You can turn them back on in Settings." : "Stop Radar’s Monday email? You can turn it back on in Settings.",
+      { href: self, label: "Turn it off" }
+    ),
     { status: 200, headers: HTML_HEADERS }
   );
 }
@@ -72,13 +81,18 @@ export async function POST(request: NextRequest) {
       headers: { ...HTML_HEADERS, "Retry-After": "3600" },
     });
   }
-  if (!(await unsubscribeRadarDigest(token))) {
+  const moment = isMoment(request);
+  if (!(await (moment ? unsubscribeRadarMoments(token) : unsubscribeRadarDigest(token)))) {
     // The same answer whether the token was mistyped, forged or never issued.
     await recordUnsubscribeMiss(request);
     return new NextResponse(page("This link is invalid."), { status: 404, headers: HTML_HEADERS });
   }
   return new NextResponse(
-    page("Done. Radar won’t email you on Mondays any more. Turn it back on any time in Settings."),
+    page(
+      moment
+        ? "Done. Radar won’t email you when something won’t keep. Turn it back on any time in Settings."
+        : "Done. Radar won’t email you on Mondays any more. Turn it back on any time in Settings."
+    ),
     { status: 200, headers: HTML_HEADERS }
   );
 }

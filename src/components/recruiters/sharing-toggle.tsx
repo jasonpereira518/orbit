@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { useRouter } from "next/navigation";
 import { Globe2, Lock } from "lucide-react";
 import { setRecruiterSharing } from "@/actions/recruiters";
@@ -34,7 +35,7 @@ export function RecruiterSharingToggle({
 }) {
   const router = useRouter();
   const [on, setOn] = useState(enabled);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   const canShare = on || recruiterCount >= minRequired;
 
