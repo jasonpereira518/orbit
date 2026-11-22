@@ -8,7 +8,8 @@ import { RenderStamp } from "@/components/layout/render-stamp";
 import { formatMeetingDuration } from "@/lib/format-meeting-duration";
 import { requireUserId } from "@/lib/auth";
 import { formatElapsed } from "@/lib/format-elapsed";
-import { speakerDisplayNames, speakerLabel } from "@/lib/meeting-digest";
+import { groupSegmentsIntoParagraphs } from "@/lib/transcript-paragraphs";
+import { speakerDisplayNames } from "@/lib/speaker-display";
 import { getMeetingTranscript } from "@/lib/meeting-sessions";
 import { MeetingRecapButton } from "@/components/meetings/meeting-recap-button";
 import { isSurfaceLive } from "@/lib/surface-visibility";
@@ -116,6 +117,8 @@ export default async function MeetingDetailPage({
         digest.agenda?.length)
   );
 
+  const paragraphs = groupSegmentsIntoParagraphs(segments, voices);
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <RenderStamp />
@@ -219,7 +222,7 @@ export default async function MeetingDetailPage({
         <summary className="cursor-pointer select-none text-sm font-medium text-ink marker:text-muted-foreground">
           Transcript
           <span className="font-normal text-muted-foreground">
-            {" "}· {segments.filter((s) => s.text.trim()).length} lines
+            {" "}· {paragraphs.length} {paragraphs.length === 1 ? "paragraph" : "paragraphs"}
           </span>
         </summary>
         <div className="mt-2 space-y-2">
@@ -229,24 +232,23 @@ export default async function MeetingDetailPage({
             some of what was said may be missing.
           </p>
         )}
-        {segments.length === 0 ? (
+        {paragraphs.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nothing was transcribed.</p>
         ) : (
-          <div className="space-y-3 rounded-2xl border border-border/70 bg-card p-5 text-sm">
-            {segments
-              .filter((s) => s.text.trim())
-              .map((s) => {
-                const who = (s.speaker && voices.get(s.speaker)) || speakerLabel(s.speaker);
-                return (
-                  <p key={s.seq} className="leading-relaxed">
-                    <span className="mr-2 font-mono text-xs tabular-nums text-muted-foreground">
-                      {formatElapsed(s.startMs)}
-                    </span>
-                    {who && <span className="mr-1.5 font-medium text-foreground">{who}:</span>}
-                    <Highlighted text={s.text} q={q} />
-                  </p>
-                );
-              })}
+          <div className="space-y-4 rounded-2xl border border-border/70 bg-card p-5 text-sm">
+            {paragraphs.map((p, i) => (
+              <div key={i} className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs tabular-nums text-muted-foreground">
+                    {formatElapsed(p.startMs)}
+                  </span>
+                  <span className="font-medium text-foreground">{p.speakerName}:</span>
+                </div>
+                <p className="leading-relaxed pl-6 text-foreground/90">
+                  <Highlighted text={p.text} q={q} />
+                </p>
+              </div>
+            ))}
           </div>
         )}
         </div>

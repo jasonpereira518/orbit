@@ -237,7 +237,8 @@ const CORE_WRITES: readonly ChatWrite[] = [
         previous.notes = before.notes ?? null;
       }
       if (!Object.keys(patch).length) throw new UserFacingError("Nothing to change");
-      await updateContactForUser(userId, contactId, patch, { skipRevalidate: true });
+      // Confirmed by the person before it runs: theirs.
+      await updateContactForUser(userId, contactId, patch, { skipRevalidate: true, by: "user" });
       return { resultId: contactId, href: `/contacts/${contactId}`, undo: { tool: "restore_contact_fields", input: { contactId, fields: previous } } };
     },
   },
@@ -669,7 +670,7 @@ export function chatWriteNamed(toolName: string): ChatWrite | undefined {
 /** Validate stored input against the write's own schema again — a row is data, not trusted. */
 export function parseWriteInput(write: ChatWrite, input: unknown): Record<string, unknown> | null {
   const parsed = z.object(write.inputSchema).safeParse(input);
-  return parsed.success ? (parsed.data as Record<string, unknown>) : null;
+  return parsed.success ? (parsed.data) : null;
 }
 
 export async function runUndo(userId: string, step: UndoStep): Promise<void> {

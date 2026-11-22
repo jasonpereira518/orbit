@@ -12,6 +12,7 @@ import {
   APP_NAV_CORE,
   APP_NAV_EXTRAS,
   APP_NAV_SETTINGS,
+  APP_NAV_SPECIAL_HREFS,
   isNavActive,
   type AppNavItem,
 } from "@/components/layout/app-nav";
@@ -27,6 +28,7 @@ import {
 import { PLAN_SHORT_LABELS, planList } from "@/lib/plans/plan-config";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { NavPendingDot } from "@/components/layout/nav-pending-dot";
+import { RadarNewText, RadarShimmerIcon } from "@/components/layout/radar-shimmer-icon";
 import { OrbitLogo } from "@/components/orbit-logo";
 import type { Plan } from "@/lib/plan-limits";
 import { SPRING_PILL } from "@/lib/motion";
@@ -113,9 +115,10 @@ function SidebarNavLink({
           transition={SPRING_PILL}
         />
       )}
-      <Icon className="relative z-10 h-4 w-4 shrink-0" />
+      <RadarShimmerIcon icon={Icon} radar={item.href === "/radar"} className="relative z-10 h-4 w-4 shrink-0" />
       {/* Below lg the rail is icons only; the label stays in the accessibility tree. */}
       <span className="relative z-10 max-lg:sr-only">{item.label}</span>
+      {item.href === "/radar" && <RadarNewText />}
       {hiddenFromUsers && (
         <span className="relative z-10 ml-auto hidden rounded-full border border-border/70 px-1.5 py-px text-3xs uppercase tracking-wide text-muted-foreground lg:inline">
           Hidden
@@ -154,6 +157,19 @@ function SidebarNavLink({
   );
 }
 
+/** A labelled rule between sidebar groups; on the icon rail the label goes and the rule stays. */
+function GroupDivider({ label }: { label: string }) {
+  return (
+    <div className="my-2 flex items-center gap-2 px-2 lg:px-3">
+      <div className="h-px flex-1 bg-border/60" />
+      <span className="hidden text-3xs font-medium uppercase tracking-wider text-muted-foreground-subtle lg:inline">
+        {label}
+      </span>
+      <div className="hidden h-px flex-1 bg-border/60 lg:block" />
+    </div>
+  );
+}
+
 export function AppSidebar({
   pathname,
   clerkOn,
@@ -187,8 +203,11 @@ export function AppSidebar({
   const ordered = orderNavItems([...APP_NAV_CORE, ...APP_NAV_EXTRAS], navOrder).filter(
     (item) => item.href !== "/capture" && !isHrefHidden(item.href, hidden)
   );
-  const core = ordered.filter((item) => !isHrefComingSoon(item.href, comingSoon));
-  const extras = ordered.filter((item) => isHrefComingSoon(item.href, comingSoon));
+  const isSoon = (item: AppNavItem) => isHrefComingSoon(item.href, comingSoon);
+  const isSpecial = (item: AppNavItem) => APP_NAV_SPECIAL_HREFS.includes(item.href);
+  const special = ordered.filter((item) => !isSoon(item) && isSpecial(item));
+  const core = ordered.filter((item) => !isSoon(item) && !isSpecial(item));
+  const extras = ordered.filter(isSoon);
   const captureHidden = hidden.has("page.capture");
   const mod = useModKeyLabel();
   const shortcut = mod === "⌘" ? "⌘K" : "Ctrl K";
@@ -291,16 +310,24 @@ export function AppSidebar({
           />
         ))}
 
-        {/* The divider labels the group below it, so it goes when the group does. */}
-        {extras.length > 0 && (
-          <div className="my-2 flex items-center gap-2 px-2 lg:px-3">
-            <div className="h-px flex-1 bg-border/60" />
-            <span className="hidden text-3xs font-medium uppercase tracking-wider text-muted-foreground-subtle lg:inline">
-              Coming soon
-            </span>
-            <div className="hidden h-px flex-1 bg-border/60 lg:block" />
-          </div>
+        {/* A divider labels the group below it, so it goes when the group does. */}
+        {special.length > 0 && (
+          <>
+            <GroupDivider label="Special features" />
+            {special.map((item) => (
+              <SidebarNavLink
+                soon={comingSoon}
+                key={item.href}
+                item={item}
+                pathname={pathname}
+                hiddenFromUsers={tagged(item)}
+                tiers={tiersOf(item)}
+              />
+            ))}
+          </>
         )}
+
+        {extras.length > 0 && <GroupDivider label="Coming soon" />}
 
         {extras.map((item) => (
           <SidebarNavLink

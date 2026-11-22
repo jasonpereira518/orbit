@@ -15,7 +15,6 @@ import { FREE_CONTACT_LIMIT } from "@/lib/plan-limits";
 import { CREDIT_PACK_CREDITS, CREDIT_PACK_PRICE_CENTS, FOUNDING_AMOUNT_OFF_CENTS, FOUNDING_MONTHS } from "@/lib/stripe-config";
 import { PLAN_CONFIG, formatPlanPrice } from "@/lib/plans/plan-config";
 import { LEGAL_LAST_UPDATED } from "@/lib/legal";
-import { TIMELINE_DAILY_CONTACT_CAP } from "@/lib/timeline-cost";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -268,11 +267,9 @@ export default function TermsPage() {
           </p>
           <p>
             Some AI work runs in the background: search indexing, and — after
-            a LinkedIn import — deriving timeline events from the imported
-            conversations, without you turning anything on first. The cap of{" "}
-            {TIMELINE_DAILY_CONTACT_CAP} conversations a day only counts the
-            conversations that reach the model; a thread with a single message
-            gets a rule-based note instead, with no AI call. On every plan, background AI
+            a LinkedIn import — reading the imported conversations, without you
+            turning anything on first. A thread with nothing in it to understand
+            gets no AI call. On every plan, background AI
             work on Orbit&apos;s accounts uses credits too, and pauses once
             half a month&apos;s credits or fewer remain, so what you ask for
             yourself comes first. Settings shows the last 30 days of AI usage
@@ -289,6 +286,22 @@ export default function TermsPage() {
             </strong>
             . You remain responsible for every message that leaves your account,
             regardless of which tool drafted it.
+          </p>
+          <p>
+            Radar&apos;s suggestions can be wrong, including the people and
+            events it finds on the web: a person may not be who Radar thinks,
+            and an event may move or be cancelled. Check before you act on one.
+            Radar never contacts anyone for you. It suggests and drafts, and it
+            only schedules reminders when you ask or turn on autopilot. You are
+            responsible for any introduction or message you send.
+          </p>
+          <p>
+            Cosmo, Orbit&apos;s voice assistant, can mishear you and can be
+            wrong. It reads an email back before sending it and sends only after
+            you say &ldquo;send it&rdquo; or click; you are responsible for what
+            you confirm. When it fills in a form for you, check it before you
+            save or send it. How many minutes of Cosmo a month your plan
+            includes may change.
           </p>
         </DocSection>
 

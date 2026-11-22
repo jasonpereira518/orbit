@@ -192,6 +192,40 @@ async function main() {
   check("sweep includes enabled user", users.includes(USER));
   check("sweep excludes disabled user", !users.includes(OFF_USER));
 
+  console.log("\ndeep read");
+  await reset(USER);
+  async function signalOnly(name: string, signal: string, body: string) {
+    const [c] = await db.insert(contacts).values({ userId: USER, fullName: name, source: "linkedin" }).returning();
+    await db.insert(interactions).values({
+      userId: USER, contactId: c.id, interactionType: signal === "invitation_sent" ? "reach_out" : "note",
+      interactionDate: new Date("2022-09-21T12:00:00Z"), source: "linkedin_export",
+      externalId: `li-export:${signal}:k-${name}:${c.id}`, rawNotes: body, aiSummary: "x", topics: [],
+    });
+    return c.id;
+  }
+  const invited = await signalOnly("Invited Only", "invitation_received", "Their LinkedIn connection request:\nGreat meeting you at HackNC!");
+  const noted = await signalOnly("Noted Only", "note", "Met at HackNC, works on payments");
+  const deep = { deepRead: true };
+  check("an invitation alone makes a contact pending with deep read", (await claimPendingContacts(USER, 10, new Set(), undefined, deep)).includes(invited));
+  check("…and not without it", !(await claimPendingContacts(USER, 10, new Set())).includes(invited));
+  check("your own note alone never makes a contact pending", !(await claimPendingContacts(USER, 10, new Set(), undefined, deep)).includes(noted));
+  check("the count agrees with the claim", (await pendingRelationshipContactCount(USER, undefined, deep)) === 1 && (await pendingRelationshipContactCount(USER)) === 0);
+  const inv = (await loadMessageWindows(USER, [invited], { deepRead: true })).get(invited);
+  check("the invitation is read, as theirs", inv?.messages.length === 1 && inv.messages[0].speaker === "Invited", JSON.stringify(inv?.messages));
+  check("without deep read there is no window", !(await loadMessageWindows(USER, [invited])).has(invited));
+
+  // A first pass reads from the start: 2,100 messages (over the 2,000-row limit), oldest first.
+  const long = await seed(USER, "Long Thread", Array.from({ length: 2_100 }, (_, i): [string, string] => [
+    new Date(Date.UTC(2020, 0, 1) + i * 3_600_000).toISOString(), `message number ${i}`,
+  ]));
+  const first = (await loadMessageWindows(USER, [long.contactId], { deepRead: true })).get(long.contactId);
+  check("a first deep read starts at the oldest message", first?.messages[0].text === "message number 0", first?.messages[0]?.text);
+  const today = (await loadMessageWindows(USER, [long.contactId])).get(long.contactId);
+  check("without deep read it still starts in the recent past", today?.messages[0].text !== "message number 0");
+  await db.insert(relationshipDigests).values({ contactId: long.contactId, userId: USER, watermarkAt: long.rows[10].interactionDate, watermarkInteractionId: long.rows[10].id });
+  const second = (await loadMessageWindows(USER, [long.contactId], { deepRead: true })).get(long.contactId);
+  check("a later deep pass reads as today (no start-first)", second?.messages[0].text !== "message number 11");
+
   await reset(USER);
   await reset(OFF_USER);
   console.log("\nsmoke-relationship-pending: all checks passed");

@@ -19,6 +19,7 @@ import { lifetimeTierFor } from "@/lib/billing-stripe";
 import { resolvePlan } from "@/lib/entitlements";
 import { monthStart } from "@/lib/infra-costs";
 import { FEATURE_KEYS, PLAN_CONFIG } from "@/lib/plans/plan-config";
+import { num } from "@/lib/admin-metrics";
 import { monthlyCostSeries, speechMicrosSql, speechSpendByUser, type MonthlyCosts } from "@/lib/money-costs";
 
 /**
@@ -59,11 +60,6 @@ function toDate(value: Date | string | null | undefined): Date {
   return value instanceof Date ? value : new Date(String(value));
 }
 
-function num(value: string | number | null | undefined): number {
-  if (value == null) return 0;
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
 
 /* ------------------------------------------------------------ MRR over time -------- */
 
@@ -102,7 +98,7 @@ export async function mrrMovementSeries(
     bounds.map((b) => mrrMovement(b.start, b.end))
   );
   return results.map((movement, i) => ({
-    bucketStart: bounds[i]!.start,
+    bucketStart: bounds[i].start,
     ...movement,
   }));
 }

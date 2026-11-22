@@ -14,7 +14,11 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import sharp from "sharp";
 import { POST } from "../src/app/api/avatars/encode/route";
-import { downloadAndPersistAvatar } from "../src/lib/contact-avatar";
+import {
+  downloadAndPersistAvatar,
+  isTruncatedJpeg,
+  largerLinkedInPhotoUrl,
+} from "../src/lib/contact-avatar";
 
 const SECRET = "smoke-cron-secret";
 const ENCODE_URL = "http://encoder.test/api/avatars/encode";
@@ -82,7 +86,7 @@ async function dimensions(dataUrl: string) {
 }
 
 async function main() {
-  // A photo bigger than the 256px avatar, small enough to inline unresized (the fallback).
+  // A photo bigger than the 384px avatar, small enough to inline unresized (the fallback).
   const photo = await sharp({
     create: { width: 600, height: 400, channels: 3, background: { r: 30, g: 120, b: 200 } },
   })
@@ -101,16 +105,21 @@ async function main() {
     .jpeg({ quality: 95 })
     .toBuffer();
 
+  // A real-looking photo that stopped arriving partway: a progressive JPEG cut at 55%.
+  const progressive = await sharp(photo).jpeg({ quality: 85, progressive: true }).toBuffer();
+  const cut = progressive.subarray(0, Math.floor(progressive.length * 0.55));
+
   // The photos are served over HTTP: a `data:` URL already counts as a durable avatar, so
   // `downloadAndPersistAvatar` would hand it back without encoding anything.
   const server = createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "image/jpeg" });
-    res.end(req.url === "/noise.jpg" ? noise : photo);
+    res.end(req.url === "/noise.jpg" ? noise : req.url === "/cut.jpg" ? cut : photo);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const photoUrl = `${origin}/photo.jpg`;
   const noiseUrl = `${origin}/noise.jpg`;
+  const cutUrl = `${origin}/cut.jpg`;
   // The fixture server is on loopback, which the production SSRF guard refuses, so photos
   // are fetched through the unguarded seam (still `globalThis.fetch`, so the stubs apply).
   const loopback = { fetch: (url: string, init: RequestInit) => fetch(url, init) };
@@ -128,7 +137,7 @@ async function main() {
     assert(ok.status === 200, "valid bearer + image: 200");
     assert(ok.headers.get("content-type") === "image/jpeg", "answers image/jpeg");
     const meta = await sharp(Buffer.from(await ok.arrayBuffer())).metadata();
-    assert(meta.width === 256 && meta.height === 256 && meta.format === "jpeg", "a 256x256 JPEG");
+    assert(meta.width === 384 && meta.height === 384 && meta.format === "jpeg", "a 384x384 JPEG");
 
     assert((await post(Buffer.from("not an image at all"), bearer)).status === 422, "garbage bytes: 422");
     assert((await post(Buffer.alloc(0), bearer)).status === 422, "empty body: 422");
@@ -160,7 +169,7 @@ async function main() {
         assert(up.calls.length === 1, "one call to the encoder route");
         assert(up.calls[0].headers.get("authorization") === `Bearer ${SECRET}`, "it presents the bearer");
         const d = await dimensions(stored!);
-        assert(d.width === 256 && d.height === 256, "and what is stored is the encoder's 256x256 output");
+        assert(d.width === 384 && d.height === 384, "and what is stored is the encoder's 384x384 output");
       });
 
       // The encoder failing must degrade to the unresized photo, exactly as an undecodable
@@ -192,13 +201,32 @@ async function main() {
       assert(stored, "a photo is stored");
       assert(local.calls.length === 0, "off Vercel there is no HTTP hop: sharp is called directly");
       const d = await dimensions(stored!);
-      assert(d.width === 256 && d.height === 256, "and it is still 256x256");
+      assert(d.width === 384 && d.height === 384, "and it is still 384x384");
+
+      // A photo that was cut off must never be stored raw: it would show as a blocky,
+      // half-drawn face forever. Not stored at all, so the next source gets its turn.
+      assert(isTruncatedJpeg(cut) && !isTruncatedJpeg(photo), "the fixture is truncated, the real photo is not");
+      assert(
+        (await downloadAndPersistAvatar("c5", cutUrl, loopback)) === null,
+        "a truncated JPEG is refused, not stored raw"
+      );
     });
   });
 
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+
+  console.log("larger LinkedIn size");
+  const small =
+    "https://media.licdn.com/dms/image/v2/D4E03AQ/profile-displayphoto-shrink_100_100/profile-displayphoto-shrink_100_100/0/1?e=1&t=abc";
+  assert(
+    largerLinkedInPhotoUrl(small)?.includes("profile-displayphoto-shrink_800_800/profile-displayphoto-shrink_800_800/0/1?e=1&t=abc"),
+    "both size segments are raised and the signed query is kept"
+  );
+  assert(largerLinkedInPhotoUrl(small.replaceAll("100_100", "800_800")) === null, "already 800px: left alone");
+  assert(largerLinkedInPhotoUrl("https://example.com/profile-displayphoto-shrink_100_100/x") === null, "not LinkedIn: left alone");
+  assert(largerLinkedInPhotoUrl("https://media.licdn.com/dms/image/v2/x/company-logo_100_100/y") === null, "not a profile photo: left alone");
 
   console.log("avatar encoder smoke tests passed");
 }

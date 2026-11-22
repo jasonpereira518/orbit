@@ -10,6 +10,8 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { requireUserId } from "@/lib/auth";
 import { actionFailure } from "@/lib/action-failure";
+import { parseInput } from "@/lib/action";
+import { beginChatImportSchema } from "@/lib/chat-import-input";
 import {
   appendStagedRows,
   beginStaging,
@@ -50,8 +52,10 @@ export async function beginChatImport(input: {
   selfNames: string[];
 }): Promise<{ importId: string } | Refusal> {
   const userId = await requireUserId();
+  const parsed = parseInput(beginChatImportSchema, input, "chat-imports.begin");
+  if (!parsed.ok) return refusal(parsed.error);
   try {
-    return await beginStaging(userId, input);
+    return await beginStaging(userId, parsed.value);
   } catch (err) {
     return failure(err, "Couldn’t start that import — try again", "chat-imports.begin");
   }

@@ -20,12 +20,12 @@ import { getSendCapability, listMailboxes } from "@/lib/email/sender";
 import {
   generateRecruiterDraftsBatch,
   isRecruiterIntent,
-  type RecruiterIntent,
 } from "@/lib/recruiter-drafts";
 import { RECRUITER_BATCH_LIMIT, type RecruiterDraft, type SendDraftsResult } from "@/lib/recruiter-message-types";
 import { pooledIdsForViewer, resolveRecruiterPii } from "@/lib/recruiters";
-import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { type ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
+import { sleep } from "@/lib/async";
 
 /** Spacing between sends in a batch, so an approved batch trickles rather than bursts. */
 const SEND_SPACING_MS = 1200;
@@ -42,7 +42,7 @@ function toDraft(
     recruiterName: recruiter.fullName,
     recruiterFirm: recruiter.firm,
     recruiterEmail,
-    intent: row.intent as RecruiterIntent,
+    intent: row.intent,
     subject: row.subject,
     body: row.body,
     status: row.status,
@@ -382,7 +382,7 @@ export async function sendRecruiterDrafts(
       }
 
       if (index < rows.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, SEND_SPACING_MS));
+        await sleep(SEND_SPACING_MS);
       }
     }
 

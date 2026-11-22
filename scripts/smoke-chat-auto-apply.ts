@@ -66,6 +66,7 @@ function scripted(rounds: ToolStep[]) {
         addResults(results) {
           sentBack.push(...results);
         },
+        addUserText() {},
       };
     },
   };
@@ -233,6 +234,7 @@ async function main() {
               throw new Error("provider went away");
             },
             addResults() {},
+            addUserText() {},
           };
         },
       });

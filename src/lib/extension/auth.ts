@@ -13,13 +13,13 @@
  * instead of a 302 to an HTML sign-in page), and `auth()` resolves it here.
  */
 
-import { timingSafeEqual } from "node:crypto";
 import { auth } from "@clerk/nextjs/server";
 import {
   bootstrapAuthenticatedUser,
   isClerkConfigured,
   type AuthenticatedUser,
 } from "@/lib/auth";
+import { safeEqual } from "@/lib/crypto";
 import { isHeldByStealth } from "@/lib/site-access";
 
 export class ExtensionUnauthorizedError extends Error {
@@ -41,13 +41,6 @@ export class ExtensionRateLimitError extends Error {
 /** Header carrying the local-dev shared secret. */
 export const DEV_SECRET_HEADER = "x-orbit-dev-secret";
 
-function safeEquals(a: string, b: string) {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
-}
-
 /**
  * Local development has no Clerk keys (see `isDemoMode`), and src/proxy.ts falls
  * back to a non-Clerk middleware, so there is no session for the extension to
@@ -60,7 +53,7 @@ function devUserId(req: Request): string | null {
   const expected = process.env.EXTENSION_DEV_SECRET?.trim();
   if (!expected) return null;
   const provided = req.headers.get(DEV_SECRET_HEADER)?.trim();
-  if (!provided || !safeEquals(provided, expected)) return null;
+  if (!provided || !safeEqual(provided, expected)) return null;
   return process.env.EXTENSION_DEV_USER_ID?.trim() || "demo-user";
 }
 

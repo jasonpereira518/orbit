@@ -1,4 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ABSOLUTE_TIER_CUTOFFS } from "@/lib/closeness";
 import type { NetworkMetrics } from "@/lib/network-metrics";
 import { cn } from "@/lib/utils";
 
@@ -132,8 +133,9 @@ export function NetworkDepthChart({
             })}
           </div>
           <p className="text-xs text-muted-foreground">
-            Strength, recency, cadence, and goal alignment combined — measured on
-            its own terms, not ranked against the rest of your network
+            Close means an absolute score of {Math.round(ABSOLUTE_TIER_CUTOFFS.inner * 100)}% or more,
+            Warm {Math.round(ABSOLUTE_TIER_CUTOFFS.mid * 100)}–{Math.round(ABSOLUTE_TIER_CUTOFFS.inner * 100) - 1}%,
+            Cool below that. Each contact&apos;s own percentage is also weighed against the rest of your network. Scores combine strength, recency, cadence, and goal fit.
           </p>
         </div>
 

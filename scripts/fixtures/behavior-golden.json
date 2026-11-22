@@ -23,6 +23,7 @@
       "dueFollowUps": 5,
       "strongConnections": 19,
       "pendingReminders": 8,
+      "dueReminders": 3,
       "topCompany": null
     },
     "recentContacts": [
@@ -230,6 +231,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -256,6 +261,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -282,6 +291,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -308,6 +321,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -334,6 +351,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -360,6 +381,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "task",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -386,6 +411,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "call",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -412,6 +441,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "task",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -435,22 +468,31 @@
         "id": "<user_goals:Raise a pre-seed round from Triangle and developer-tools inv>",
         "userId": "demo-user",
         "text": "Raise a pre-seed round from Triangle and developer-tools investors",
+        "progress": null,
+        "category": null,
         "active": 1,
-        "createdAt": "<ts>"
+        "createdAt": "<ts>",
+        "updatedAt": "<ts>"
       },
       {
         "id": "<user_goals:Hire a founding engineer who has shipped retrieval systems>",
         "userId": "demo-user",
         "text": "Hire a founding engineer who has shipped retrieval systems",
+        "progress": null,
+        "category": null,
         "active": 1,
-        "createdAt": "<ts>"
+        "createdAt": "<ts>",
+        "updatedAt": "<ts>"
       },
       {
         "id": "<user_goals:Land a developer-tools partnership with an AI lab>",
         "userId": "demo-user",
         "text": "Land a developer-tools partnership with an AI lab",
+        "progress": null,
+        "category": null,
         "active": 1,
-        "createdAt": "<ts>"
+        "createdAt": "<ts>",
+        "updatedAt": "<ts>"
       }
     ],
     "networkMetrics": {
@@ -2630,7 +2672,11 @@
         "dueAt": "<ts>",
         "urgency": "due",
         "reminderId": "<reminders:Send Sarah the retrieval write-up>",
-        "contactId": "<contacts:Sarah Chen>"
+        "contactId": "<contacts:Sarah Chen>",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null
       },
       {
         "id": "followup:<contacts:Sarah Chen>:<date>",
@@ -2653,7 +2699,11 @@
         "dueAt": "<ts>",
         "urgency": "due",
         "reminderId": "<reminders:Send Grace the quarterly update>",
-        "contactId": "<contacts:Grace Whitfield>"
+        "contactId": "<contacts:Grace Whitfield>",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null
       },
       {
         "id": "followup:<contacts:Grace Whitfield>:<date>",
@@ -2676,7 +2726,11 @@
         "dueAt": "<ts>",
         "urgency": "due",
         "reminderId": "<reminders:Add James to the monthly update>",
-        "contactId": "<contacts:James Okafor>"
+        "contactId": "<contacts:James Okafor>",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null
       },
       {
         "id": "followup:<contacts:James Okafor>:<date>",
@@ -2699,7 +2753,11 @@
         "dueAt": "<ts>",
         "urgency": "upcoming",
         "reminderId": "<reminders:Send Maya the showcase one-liner>",
-        "contactId": "<contacts:Maya Thompson>"
+        "contactId": "<contacts:Maya Thompson>",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null
       },
       {
         "id": "reminder:<reminders:Reply to Elena about the two students>:<date>",
@@ -2710,7 +2768,11 @@
         "dueAt": "<ts>",
         "urgency": "upcoming",
         "reminderId": "<reminders:Reply to Elena about the two students>",
-        "contactId": "<contacts:Dr. Elena Vasquez>"
+        "contactId": "<contacts:Dr. Elena Vasquez>",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null
       },
       {
         "id": "reminder:<reminders:Draft the October investor update>:<date>",
@@ -2721,7 +2783,11 @@
         "dueAt": "<ts>",
         "urgency": "upcoming",
         "reminderId": "<reminders:Draft the October investor update>",
-        "contactId": null
+        "contactId": null,
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null
       },
       {
         "id": "followup:<contacts:Maya Thompson>:<date>",
@@ -2756,7 +2822,11 @@
         "dueAt": "<ts>",
         "urgency": "upcoming",
         "reminderId": "<reminders:Call Tom about API versioning>",
-        "contactId": "<contacts:Tom Bennett>"
+        "contactId": "<contacts:Tom Bennett>",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null
       },
       {
         "id": "followup:<contacts:Fatima Nasser>:<date>",
@@ -2791,7 +2861,11 @@
         "dueAt": "<ts>",
         "urgency": "upcoming",
         "reminderId": "<reminders:Book a venue for the Orbit user dinner>",
-        "contactId": null
+        "contactId": null,
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null
       },
       {
         "id": "followup:<contacts:Victor Reyes>:<date>",
@@ -2850,7 +2924,11 @@
         "dueAt": "<ts>",
         "urgency": "info",
         "suggestedReminderId": "<suggested_reminders:Send Nina the pricing draft>",
-        "contactId": "<contacts:Nina Petrova>"
+        "contactId": "<contacts:Nina Petrova>",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null
       },
       {
         "id": "suggested_reminder:<suggested_reminders:Send Daniel the hiring scorecard>",
@@ -2861,10 +2939,18 @@
         "dueAt": "<ts>",
         "urgency": "info",
         "suggestedReminderId": "<suggested_reminders:Send Daniel the hiring scorecard>",
-        "contactId": "<contacts:Daniel Osei>"
+        "contactId": "<contacts:Daniel Osei>",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null
       }
     ],
     "dueCount": 8,
+    "dueBreakdown": {
+      "reminders": 3,
+      "followUps": 5
+    },
     "totalCount": 23,
     "canUseExtension": true,
     "alerts": [],
@@ -2878,6 +2964,7 @@
     "lastName": "Chen",
     "preferredName": null,
     "nameGuess": null,
+    "fieldSources": null,
     "company": "OpenAI",
     "companyId": "<companies:OpenAI>",
     "title": "Partnerships Lead",
@@ -2896,6 +2983,7 @@
     "workHistoryDueAt": null,
     "workHistoryMisses": 0,
     "workHistoryMissSlug": null,
+    "workHistoryJevSkippedAt": null,
     "relationshipScore": 4,
     "statedCloseness": 4,
     "priorityLevel": 2,
@@ -3036,6 +3124,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -3177,6 +3269,8 @@
     ],
     "outreach": {
       "apollo": false,
+      "brightdata": false,
+      "brightDataZone": "web_unlocker1",
       "resend": false,
       "twilio": false,
       "twilioFromNumber": null
@@ -4050,7 +4144,7 @@
                   "maxLength": 500
                 },
                 "notes": {
-                  "description": "Replaces the existing notes.",
+                  "description": "Added to the end of their notes, dated; existing notes are kept.",
                   "type": "string",
                   "maxLength": 5000
                 },
@@ -4655,6 +4749,100 @@
             }
           },
           {
+            "name": "list_radar_cards",
+            "title": "Radar suggestions",
+            "description": "Who Orbit's radar currently suggests reaching out to, and why — job changes, news, events, going quiet, goals — the same cards the radar page shows.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "default": 5,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "list_radar_finds",
+            "title": "Radar finds",
+            "description": "What radar's weekly web search found for the user that is not in their network yet: events near them, people to meet (each with someone they know who can introduce them), and programs with deadlines. Every find has a link the search returned. Nothing here is a contact until the user saves it on the radar page.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {}
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "what_needs_attention",
+            "title": "What needs attention",
+            "description": "What's waiting for the user right now: reminders and follow-ups due, notes to review, replies to their feedback, and account problems (a disconnected mailbox, a missing AI key). The same list as the notification bell.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "default": 8,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 15
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "radar_briefing",
+            "title": "Radar briefing",
+            "description": "Radar's briefing in one call: how many people it suggests today and this week, the top few with why, and how many drafts are ready.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {}
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "integration_status",
+            "title": "Integration status",
+            "description": "Which apps the user has connected to Orbit (Notion, Granola and others), whether each is working or needs reconnecting, and when it last synced.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {}
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
             "name": "list_my_recruiters",
             "title": "The user's recruiters",
             "description": "Recruiters the user has logged: name, firm, specialty, the user's status with them and their own rating.",
@@ -5064,6 +5252,75 @@
               "required": [
                 "opportunityId",
                 "status"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "schedule_recommendation",
+            "title": "Act on a radar card",
+            "description": "Act on one of radar's suggestions (id from list_radar_cards) by scheduling a follow-up reminder with that person in 3, 7 or 14 days.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "recommendationId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "days": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "const": 3
+                    },
+                    {
+                      "type": "number",
+                      "const": 7
+                    },
+                    {
+                      "type": "number",
+                      "const": 14
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "recommendationId",
+                "days"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "snooze_recommendation",
+            "title": "Snooze a radar card",
+            "description": "Snooze one of radar's suggestions (id from list_radar_cards) for a week (1w) or a month (1m).",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "recommendationId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "length": {
+                  "type": "string",
+                  "enum": [
+                    "1w",
+                    "1m"
+                  ]
+                }
+              },
+              "required": [
+                "recommendationId",
+                "length"
               ]
             },
             "execution": {
@@ -5579,6 +5836,7 @@
       "lastName": "Chen",
       "preferredName": null,
       "nameGuess": null,
+      "fieldSources": null,
       "company": "OpenAI",
       "companyId": "<companies:OpenAI>",
       "title": "Partnerships Lead",
@@ -5597,6 +5855,7 @@
       "workHistoryDueAt": null,
       "workHistoryMisses": 0,
       "workHistoryMissSlug": null,
+      "workHistoryJevSkippedAt": null,
       "relationshipScore": 4,
       "statedCloseness": 4,
       "priorityLevel": 2,
@@ -5783,6 +6042,10 @@
           "status": "pending",
           "reminderType": "manual",
           "actionKind": "follow_up",
+          "priority": "normal",
+          "category": "action_item",
+          "timingRationale": null,
+          "importanceReason": null,
           "createdBy": "user",
           "noteBatchId": null,
           "importId": null,
@@ -6305,6 +6568,7 @@
       "dueFollowUps": 4,
       "strongConnections": 20,
       "pendingReminders": 11,
+      "dueReminders": 2,
       "topCompany": null
     },
     "recentContacts": [
@@ -6493,6 +6757,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -6519,6 +6787,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -6545,6 +6817,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -6571,6 +6847,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -6597,6 +6877,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "task",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -6623,6 +6907,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -6649,6 +6937,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "extension",
         "noteBatchId": null,
         "importId": null,
@@ -6675,6 +6967,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "call",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -6701,6 +6997,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "task",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -6727,6 +7027,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "extension",
         "noteBatchId": null,
         "importId": null,
@@ -6753,6 +7057,10 @@
         "status": "pending",
         "reminderType": "manual",
         "actionKind": "follow_up",
+        "priority": "normal",
+        "category": "action_item",
+        "timingRationale": null,
+        "importanceReason": null,
         "createdBy": "user",
         "noteBatchId": null,
         "importId": null,
@@ -6776,22 +7084,31 @@
         "id": "<user_goals:Raise a pre-seed round from Triangle and developer-tools inv>",
         "userId": "demo-user",
         "text": "Raise a pre-seed round from Triangle and developer-tools investors",
+        "progress": null,
+        "category": null,
         "active": 1,
-        "createdAt": "<ts>"
+        "createdAt": "<ts>",
+        "updatedAt": "<ts>"
       },
       {
         "id": "<user_goals:Hire a founding engineer who has shipped retrieval systems>",
         "userId": "demo-user",
         "text": "Hire a founding engineer who has shipped retrieval systems",
+        "progress": null,
+        "category": null,
         "active": 1,
-        "createdAt": "<ts>"
+        "createdAt": "<ts>",
+        "updatedAt": "<ts>"
       },
       {
         "id": "<user_goals:Land a developer-tools partnership with an AI lab>",
         "userId": "demo-user",
         "text": "Land a developer-tools partnership with an AI lab",
+        "progress": null,
+        "category": null,
         "active": 1,
-        "createdAt": "<ts>"
+        "createdAt": "<ts>",
+        "updatedAt": "<ts>"
       }
     ],
     "networkMetrics": {
@@ -6817,6 +7134,7 @@
         "preferredName": null,
         "company": "OpenAI",
         "title": "Golden Title",
+        "profileImageUrl": null,
         "goalRelevance": 1,
         "reason": "goal",
         "companyName": null
@@ -6827,6 +7145,7 @@
         "preferredName": null,
         "company": "Bellwether Ventures",
         "title": "Head of Talent",
+        "profileImageUrl": null,
         "goalRelevance": 1,
         "reason": "goal",
         "companyName": null
@@ -6837,6 +7156,7 @@
         "preferredName": null,
         "company": "Linear",
         "title": "Engineering Lead",
+        "profileImageUrl": null,
         "goalRelevance": 1,
         "reason": "goal",
         "companyName": null
@@ -6847,6 +7167,7 @@
         "preferredName": null,
         "company": "Figma",
         "title": "Design Lead",
+        "profileImageUrl": null,
         "goalRelevance": 1,
         "reason": "goal",
         "companyName": null
@@ -6857,6 +7178,7 @@
         "preferredName": null,
         "company": "Stripe",
         "title": "Staff Software Engineer",
+        "profileImageUrl": null,
         "goalRelevance": 0.666667,
         "reason": "goal",
         "companyName": null
@@ -9095,6 +9417,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.526255,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9136,7 +9459,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Amara Diallo>",
@@ -9171,6 +9495,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.454951,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9212,7 +9537,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Andre Silva>",
@@ -9245,6 +9571,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.324546,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9286,7 +9613,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Ben Carter>",
@@ -9322,6 +9650,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.49756,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9363,7 +9692,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Chris Nowak>",
@@ -9396,6 +9726,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.27669,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9437,7 +9768,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Daniel Osei>",
@@ -9470,6 +9802,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.418147,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9511,7 +9844,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:David Kim>",
@@ -9546,6 +9880,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.40021,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9587,7 +9922,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Dr. Elena Vasquez>",
@@ -9623,6 +9959,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.771154,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9664,7 +10001,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Fatima Nasser>",
@@ -9700,6 +10038,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.409512,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9741,7 +10080,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Golden Mcpperson>",
@@ -9763,10 +10103,10 @@
       "closeness": 19,
       "full_name": "Golden Mcpperson",
       "key_facts": [],
-      "last_name": null,
+      "last_name": "Mcpperson",
       "ai_summary": null,
       "company_id": null,
-      "first_name": null,
+      "first_name": "Golden",
       "name_guess": null,
       "search_tsv": "'golden':1A 'golden-mcp@example.com':3C 'mcpperson':2A",
       "met_context": null,
@@ -9774,6 +10114,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.255,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9815,7 +10156,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Golden Newperson>",
@@ -9837,10 +10179,10 @@
       "closeness": 50,
       "full_name": "Golden Newperson",
       "key_facts": [],
-      "last_name": null,
+      "last_name": "Newperson",
       "ai_summary": "Golden Newperson is Engineer at Acme. Recent conversations covered: Golden: met at the extension test..",
       "company_id": "<companies:Acme>",
-      "first_name": null,
+      "first_name": "Golden",
       "name_guess": null,
       "search_tsv": "'..':20 'acme':3B,10 'at':9,16 'conversations':12 'covered':13 'engineer':4B,8 'extension':18 'golden':1A,5,14 'is':7 'met':15 'newperson':2A,6 'recent':11 'test':19 'the':17",
       "met_context": null,
@@ -9848,6 +10190,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.51086,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9889,7 +10232,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Grace Whitfield>",
@@ -9925,6 +10269,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.442721,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9966,7 +10311,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Hassan Ali>",
@@ -9999,6 +10345,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.37256,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10042,7 +10389,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:James Okafor>",
@@ -10079,6 +10427,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.532241,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10120,7 +10469,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Leo Fernandez>",
@@ -10153,6 +10503,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.354222,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10194,7 +10545,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Marcus Lee>",
@@ -10230,6 +10582,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.586005,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10271,7 +10624,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Marcus Webb>",
@@ -10307,6 +10661,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.602105,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10351,7 +10706,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Maya Thompson>",
@@ -10387,6 +10743,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.552619,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10428,7 +10785,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Nina Petrova>",
@@ -10464,6 +10822,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.74794,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10505,7 +10864,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Olivia Brooks>",
@@ -10538,6 +10898,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.28665,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10579,7 +10940,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Priya Nair>",
@@ -10615,6 +10977,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.679665,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10659,7 +11022,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Rachel Adeyemi>",
@@ -10692,6 +11056,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.350052,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10733,7 +11098,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Sarah Chen>",
@@ -10770,6 +11136,16 @@
       "cadence_days": null,
       "linkedin_url": "https://www.linkedin.com/in/sarah-chen-demo",
       "closeness_raw": 0.914428,
+      "field_sources": {
+        "email": {
+          "s": "calendar",
+          "at": "<ts>"
+        },
+        "title": {
+          "s": "user",
+          "at": "<ts>"
+        }
+      },
       "linkedin_slug": "sarah-chen-demo",
       "mastodon_acct": null,
       "opportunities": [],
@@ -10814,7 +11190,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Sofia Marchetti>",
@@ -10849,6 +11226,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.562079,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10892,7 +11270,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Tom Bennett>",
@@ -10927,6 +11306,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.542824,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10970,7 +11350,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Victor Reyes>",
@@ -11006,6 +11387,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.569512,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -11050,7 +11432,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     },
     {
       "id": "<contacts:Yuki Tanaka>",
@@ -11083,6 +11466,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.548583,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -11127,7 +11511,8 @@
       "profile_image_source": null,
       "closeness_computed_at": "<ts>",
       "work_history_miss_slug": null,
-      "profile_image_checked_at": null
+      "profile_image_checked_at": null,
+      "work_history_jev_skipped_at": null
     }
   ],
   "db: interactions": [
@@ -12332,7 +12717,9 @@
       "status": "pending",
       "list_id": "<reminder_lists:Fundraising>",
       "user_id": "demo-user",
+      "category": "action_item",
       "due_date": "<ts>",
+      "priority": "normal",
       "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:James Okafor>",
@@ -12348,6 +12735,8 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "timing_rationale": null,
+      "importance_reason": null,
       "calendar_event_key": null,
       "source_interaction_id": null
     },
@@ -12358,7 +12747,9 @@
       "status": "pending",
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
+      "category": "action_item",
       "due_date": "<ts>",
+      "priority": "normal",
       "import_id": null,
       "item_hash": null,
       "contact_id": null,
@@ -12374,6 +12765,8 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "timing_rationale": null,
+      "importance_reason": null,
       "calendar_event_key": null,
       "source_interaction_id": null
     },
@@ -12384,7 +12777,9 @@
       "status": "pending",
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
+      "category": "action_item",
       "due_date": "<ts>",
+      "priority": "normal",
       "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Tom Bennett>",
@@ -12400,6 +12795,8 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "timing_rationale": null,
+      "importance_reason": null,
       "calendar_event_key": null,
       "source_interaction_id": null
     },
@@ -12410,7 +12807,9 @@
       "status": "pending",
       "list_id": "<reminder_lists:Fundraising>",
       "user_id": "demo-user",
+      "category": "action_item",
       "due_date": "<ts>",
+      "priority": "normal",
       "import_id": null,
       "item_hash": null,
       "contact_id": null,
@@ -12426,6 +12825,8 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "timing_rationale": null,
+      "importance_reason": null,
       "calendar_event_key": null,
       "source_interaction_id": null
     },
@@ -12436,7 +12837,9 @@
       "status": "pending",
       "list_id": null,
       "user_id": "demo-user",
+      "category": "action_item",
       "due_date": "<ts>",
+      "priority": "normal",
       "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Golden Newperson>",
@@ -12452,6 +12855,8 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "timing_rationale": null,
+      "importance_reason": null,
       "calendar_event_key": null,
       "source_interaction_id": null
     },
@@ -12462,7 +12867,9 @@
       "status": "pending",
       "list_id": null,
       "user_id": "demo-user",
+      "category": "action_item",
       "due_date": "<ts>",
+      "priority": "normal",
       "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Sarah Chen>",
@@ -12478,6 +12885,8 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "timing_rationale": null,
+      "importance_reason": null,
       "calendar_event_key": null,
       "source_interaction_id": null
     },
@@ -12488,7 +12897,9 @@
       "status": "pending",
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
+      "category": "action_item",
       "due_date": null,
+      "priority": "normal",
       "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Sarah Chen>",
@@ -12504,6 +12915,8 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "timing_rationale": null,
+      "importance_reason": null,
       "calendar_event_key": null,
       "source_interaction_id": null
     },
@@ -12514,7 +12927,9 @@
       "status": "pending",
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
+      "category": "action_item",
       "due_date": "<ts>",
+      "priority": "normal",
       "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Dr. Elena Vasquez>",
@@ -12530,6 +12945,8 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "timing_rationale": null,
+      "importance_reason": null,
       "calendar_event_key": null,
       "source_interaction_id": null
     },
@@ -12540,7 +12957,9 @@
       "status": "pending",
       "list_id": "<reminder_lists:Fundraising>",
       "user_id": "demo-user",
+      "category": "action_item",
       "due_date": "<ts>",
+      "priority": "normal",
       "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Grace Whitfield>",
@@ -12556,6 +12975,8 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "timing_rationale": null,
+      "importance_reason": null,
       "calendar_event_key": null,
       "source_interaction_id": null
     },
@@ -12566,7 +12987,9 @@
       "status": "pending",
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
+      "category": "action_item",
       "due_date": "<ts>",
+      "priority": "normal",
       "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Maya Thompson>",
@@ -12582,6 +13005,8 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "timing_rationale": null,
+      "importance_reason": null,
       "calendar_event_key": null,
       "source_interaction_id": null
     },
@@ -12592,7 +13017,9 @@
       "status": "pending",
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
+      "category": "action_item",
       "due_date": "<ts>",
+      "priority": "normal",
       "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Sarah Chen>",
@@ -12608,6 +13035,8 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "timing_rationale": null,
+      "importance_reason": null,
       "calendar_event_key": null,
       "source_interaction_id": null
     },
@@ -12618,7 +13047,9 @@
       "status": "done",
       "list_id": "<reminder_lists:Inbox>",
       "user_id": "demo-user",
+      "category": "action_item",
       "due_date": "<ts>",
+      "priority": "normal",
       "import_id": null,
       "item_hash": null,
       "contact_id": "<contacts:Nina Petrova>",
@@ -12634,6 +13065,8 @@
       "source_excerpt": null,
       "raw_date_phrase": null,
       "confidence_score": null,
+      "timing_rationale": null,
+      "importance_reason": null,
       "calendar_event_key": null,
       "source_interaction_id": null
     }

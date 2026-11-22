@@ -229,6 +229,20 @@ export async function scanSource(userId: string, provider: CloudProvider, deps: 
   }
 }
 
+/** Whether any drive is due: the same predicate `claimDueSources` claims by. */
+export async function hasDueSources(now: Date): Promise<boolean> {
+  const db = await getDb();
+  return (
+    rowsOf(
+      await db.execute(sql`
+        SELECT 1 FROM cloud_note_sources
+         WHERE next_scan_at <= ${now} AND (lease_until IS NULL OR lease_until < ${now})
+         LIMIT 1
+      `),
+    ).length > 0
+  );
+}
+
 /** Claim due drives — the lease stops two overlapping cron runs scanning one drive twice. */
 export async function claimDueSources(limit: number, now: Date): Promise<Array<{ userId: string; provider: CloudProvider }>> {
   const db = await getDb();

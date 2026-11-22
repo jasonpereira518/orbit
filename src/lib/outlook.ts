@@ -569,10 +569,6 @@ const OUTLOOK_RECRUITER_TERMS = [
   '\\"your background\\"',
   '\\"role at\\"',
 ].join(" OR ");
-
-/** Kept for callers that want the unbounded whole-mailbox query. */
-export const OUTLOOK_RECRUITER_SEARCH_QUERY = `"${OUTLOOK_RECRUITER_TERMS}"`;
-
 /** KQL wants a plain `YYYY-MM-DD`. */
 function kqlDate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -646,6 +642,21 @@ export async function listOutlookMessagePage(
     messages: data.value || [],
     nextLink: data["@odata.nextLink"] || null,
   };
+}
+
+/**
+ * The newest messages in Sent Items, newest first: what the user wrote themselves. The writing
+ * style profile reads these (`@/lib/writing-style-profile`); `$search` cannot scope to a folder.
+ */
+export async function listOutlookSentIds(accessToken: string, top = 40): Promise<string[]> {
+  const res = await graphFetchWithRetry(
+    `https://graph.microsoft.com/v1.0/me/mailFolders/sentitems/messages?$orderby=sentDateTime%20desc&$top=${top}&$select=id`,
+    { headers: { Authorization: `Bearer ${accessToken}` }, timeoutMs: 30_000 }
+  );
+  if (res.status === 401) throw new ReauthRequiredError(OUTLOOK_SESSION_EXPIRED);
+  if (!res.ok) throw new Error(`Outlook sent list failed: ${(await res.text()).slice(0, 200)}`);
+  const data = (await res.json()) as { value?: OutlookMessageRef[] };
+  return (data.value ?? []).map((m) => m.id).filter(Boolean);
 }
 
 /**

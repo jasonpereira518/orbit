@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { getVercelOidcTokenSync } from "@vercel/oidc";
 import { putAvatarBlob, putSharedAvatarBlob } from "@/lib/avatar-blob";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { linkedinSlug } from "@/lib/duplicates";
@@ -57,8 +58,33 @@ export class AvatarStorageError extends Error {
   }
 }
 
-/** True when Vercel Blob has credentials to talk to a store. */
+/**
+ * True when Vercel Blob has credentials to talk to a store: a read-write token, or a store
+ * connected through OIDC (`BLOB_STORE_ID`) plus an OIDC token to sign in with.
+ *
+ * On Vercel the OIDC token is NOT an env var at runtime: it arrives on each request as the
+ * `x-vercel-oidc-token` header. `getVercelOidcTokenSync` reads that header (then the env var,
+ * which is what `vercel env pull` gives local dev), the same lookup the Blob SDK makes. Reading
+ * only `process.env.VERCEL_OIDC_TOKEN` made production report "no storage" for an OIDC store,
+ * so every photo went inline and the shared photo pool never filled.
+ */
 export function hasBlobStorage(): boolean {
+  if (process.env.BLOB_READ_WRITE_TOKEN?.trim()) return true;
+  if (!process.env.BLOB_STORE_ID?.trim()) return false;
+  try {
+    return Boolean(getVercelOidcTokenSync().trim());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The pre-OIDC check, env vars only. Email attachments are written `access: "private"`, and
+ * Orbit's one store is public, where private writes fail; they stay off in production (as
+ * before) until a private store is connected. Use {@link hasBlobStorage} everywhere else.
+ * ponytail: drop this once a private store exists and attachments get their own credentials.
+ */
+export function hasBlobTokenInEnv(): boolean {
   return Boolean(
     process.env.BLOB_READ_WRITE_TOKEN?.trim() ||
       (process.env.VERCEL_OIDC_TOKEN?.trim() && process.env.BLOB_STORE_ID?.trim())
@@ -264,7 +290,9 @@ export type AvatarTarget = { contactId: string } | { sharedSlug: string };
 export async function fetchLinkedInPhoto(
   linkedinUrl: string,
   userId: string | null,
-  target: AvatarTarget
+  target: AvatarTarget,
+  /** `skipDirect`: the caller already asked LinkedIn directly (the photo queue); go straight to the quota'd tiers. */
+  opts?: { skipDirect?: boolean }
 ): Promise<{ url: string; source: AvatarQuotaSource } | null> {
   // A shared-pool photo is stored under `sharedSlug`, so it must be looked up by exactly that
   // slug too. Re-deriving it from the URL can name a different person (`/IN/a/in/b`).
@@ -274,7 +302,7 @@ export async function fetchLinkedInPhoto(
   let deferred: AvatarSourceRateLimitError | null = null;
 
   // Tier 1: Direct LinkedIn public profile scrape (100% free, zero third-party quota)
-  if (!isLinkedInDirectRateLimited()) {
+  if (!opts?.skipDirect && !isLinkedInDirectRateLimited()) {
     try {
       const directImageUrl = await fetchLinkedInOgImageDirect(slug);
       if (directImageUrl && ("contactId" in target || isLinkedInProfilePhoto(directImageUrl))) {
@@ -356,10 +384,12 @@ export async function fetchGravatarPhotoUrl(
   const normalized = email.trim().toLowerCase();
   if (!normalized.includes("@")) return null;
   const hash = createHash("sha256").update(normalized, "utf8").digest("hex");
-  return downloadAndPersistAvatar(
-    contactId,
-    `https://gravatar.com/avatar/${hash}?s=256&d=404`
-  );
+  return downloadAndPersistAvatar(contactId, gravatarAvatarUrl(hash));
+}
+
+/** Gravatar's image URL for an address's sha256 (lowercased, trimmed); `d=404`, see above. */
+export function gravatarAvatarUrl(sha256Hex: string): string {
+  return `https://gravatar.com/avatar/${sha256Hex}?s=256&d=404`;
 }
 
 /**
@@ -392,7 +422,12 @@ async function downloadAndPersist(
   if (isDurableAvatarUrl(imageUrl)) return "contactId" in target ? imageUrl : null;
   if (isUnfetchableImageUrl(imageUrl)) return null;
 
-  const downloaded = await downloadImageBytes(imageUrl, deps);
+  // The bigger LinkedIn size first, the URL we were given if that is refused (the signed
+  // query string may not allow a size it was not issued for). A quota error from the first
+  // try is not swallowed: the second would only repeat it.
+  const larger = largerLinkedInPhotoUrl(imageUrl);
+  const downloaded =
+    (larger && (await downloadImageBytes(larger, deps))) || (await downloadImageBytes(imageUrl, deps));
   if (!downloaded) return null;
   return persistAvatar(target, downloaded.buf, downloaded.contentType, imageUrl);
 }
@@ -422,6 +457,30 @@ function isVectorContentType(contentType: string): boolean {
 function looksLikeSvg(buf: Buffer): boolean {
   const head = buf.subarray(0, 1024).toString("utf8").trimStart().toLowerCase();
   return head.startsWith("<") || head.includes("<svg");
+}
+
+/**
+ * A JPEG starts FFD8 and ends FFD9. One with the first and not the last was cut short. Looks
+ * at the final few bytes rather than the very last two: some encoders pad after the marker.
+ */
+export function isTruncatedJpeg(buf: Buffer): boolean {
+  if (buf.byteLength < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return false;
+  return !buf.subarray(-16).includes(Buffer.from([0xff, 0xd9]));
+}
+
+/**
+ * LinkedIn serves each photo at the size named in its URL (`profile-displayphoto-shrink_100_100`
+ * is a 100px thumbnail). A capture from a feed or list holds the small one, which is what made
+ * some photos so soft. Ask for the 800px one instead; null when the URL is not a LinkedIn photo
+ * or is already big enough. The caller falls back to the original if LinkedIn refuses.
+ */
+export function largerLinkedInPhotoUrl(url: string): string | null {
+  if (!isLinkedInProfilePhoto(url)) return null;
+  const bigger = url.replace(
+    /(profile-(?:display|framed)photo-shrink_)(\d+)_(\d+)/g,
+    (m, prefix: string, w: string) => (Number(w) >= 800 ? m : `${prefix}800_800`)
+  );
+  return bigger === url ? null : bigger;
 }
 
 /**
@@ -560,6 +619,12 @@ async function encodeAvatar(
     ) {
       return null;
     }
+    // A JPEG cut off mid-download is the one image the encoder is RIGHT to refuse. Stored
+    // raw, browsers still draw it: sharp where the data ran out, a coarse blocky band
+    // across the face where the last scan was half-sent, and it stays that way forever
+    // because a stored photo is never looked at again. Refuse it, so the caller tries the
+    // next source instead.
+    if (isTruncatedJpeg(buf)) return null;
     return { buf, contentType };
   }
 }

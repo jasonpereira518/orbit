@@ -18,15 +18,19 @@ import {
   looksLikeLinkedInProfile,
   looksLikeLinkedInSkills,
 } from "@/lib/linkedin-you-shape";
-import type { CareerProfile } from "@/db/schema";
+import type { CareerEducation, CareerPosition, CareerProfile, CareerYearMonth } from "@/db/schema";
 
 export const MAX_SKILLS = 100;
+export const MAX_POSITIONS = 50;
+export const POSITION_DESCRIPTION_MAX = 500;
 export const MAX_ROLE_KEYWORDS = 10;
 /** `setSchools` keeps ten, at most 120 characters each. */
 export const MAX_SCHOOLS = 10;
 const SCHOOL_MAX = 120;
 const TERM_MAX = 60;
 const LINE_MAX = 200;
+/** LinkedIn's own headline limit, so an imported headline is never cut short. */
+export const HEADLINE_MAX = 220;
 const SUMMARY_MAX = 600;
 
 export type LinkedInProfileFields = NonNullable<CareerProfile["profile"]>;
@@ -76,7 +80,7 @@ export function parseLinkedInProfileCsv(text: string): LinkedInProfileFields {
   }
   const row = rows[0];
   const out: LinkedInProfileFields = {};
-  const headline = cleanSingleLine(csvGet(row, "Headline"), LINE_MAX);
+  const headline = cleanSingleLine(csvGet(row, "Headline"), HEADLINE_MAX);
   const industry = cleanSingleLine(csvGet(row, "Industry"), LINE_MAX);
   const location = cleanSingleLine(csvGet(row, "Geo Location"), LINE_MAX);
   const summary = cleanSingleLine(csvGet(row, "Summary"), SUMMARY_MAX);
@@ -106,6 +110,82 @@ export function parseLinkedInPositionsCsv(text: string): { title: string; compan
     if (title && company) return { title, company };
   }
   return null;
+}
+
+const MONTHS = [
+  "january", "february", "march", "april", "may", "june",
+  "july", "august", "september", "october", "november", "december",
+];
+
+/**
+ * A LinkedIn date cell. The export writes "May 2026" for roles and "2020" for schools; a
+ * 4-digit year anywhere gives the year, and an English month name or its 3-letter short form
+ * before it gives the month. Anything else ("Present", "", a translated month) gives no month,
+ * or no date at all. Never `Date.parse`: it reads "2020" as a UTC instant and "May" as nothing.
+ */
+export function parseLinkedInYearMonth(raw: string | undefined): CareerYearMonth | undefined {
+  const s = (raw ?? "").trim().toLowerCase();
+  const y = /\b(\d{4})\b/.exec(s);
+  if (!y) return undefined;
+  const year = Number(y[1]);
+  if (year < 1900 || year > 2100) return undefined;
+  const word = /([a-z]+)\.?\s*$/.exec(s.slice(0, y.index).trim())?.[1];
+  const idx = word ? MONTHS.findIndex((m) => m === word || m.slice(0, 3) === word) : -1;
+  return idx >= 0 ? { year, month: idx + 1 } : { year };
+}
+
+/** Every role in Positions.csv, past and current, in file order (LinkedIn writes newest first). */
+export function parseLinkedInPositionHistoryCsv(text: string): CareerPosition[] {
+  const { fields, rows } = rowsOf(text);
+  if (!looksLikeLinkedInPositions(fields)) {
+    throw new LinkedInExportError("That doesn't look like LinkedIn's Positions.csv.");
+  }
+  const out: CareerPosition[] = [];
+  for (const row of rows) {
+    const title = cleanSingleLine(csvGet(row, "Title"), LINE_MAX);
+    const company = cleanSingleLine(csvGet(row, "Company Name"), LINE_MAX);
+    if (!title || !company) continue;
+    const p: CareerPosition = { title, company };
+    const start = parseLinkedInYearMonth(csvGet(row, "Started On"));
+    const finished = csvGet(row, "Finished On").trim();
+    // A filled-in end date we cannot read still means the role ended (the current-role parser
+    // above reads it the same way); only an empty cell or "Present" is current. Unreadable, the
+    // end is the start, so no overlap is ever claimed for years nobody wrote down.
+    const end =
+      parseLinkedInYearMonth(finished) ?? (finished && !/^(present|current|now)$/i.test(finished) ? start : undefined);
+    const location = cleanSingleLine(csvGet(row, "Location"), LINE_MAX);
+    const description = cleanSingleLine(csvGet(row, "Description"), POSITION_DESCRIPTION_MAX);
+    if (start) p.start = start;
+    if (end) p.end = end;
+    if (location) p.location = location;
+    if (description) p.description = description;
+    out.push(p);
+    if (out.length >= MAX_POSITIONS) break;
+  }
+  return out;
+}
+
+/** Every school in Education.csv with its degree and years. Notes and Activities are not read. */
+export function parseLinkedInEducationHistoryCsv(text: string): CareerEducation[] {
+  const { fields, rows } = rowsOf(text);
+  if (!looksLikeLinkedInEducation(fields)) {
+    throw new LinkedInExportError("That doesn't look like LinkedIn's Education.csv.");
+  }
+  const out: CareerEducation[] = [];
+  for (const row of rows) {
+    const school = cleanSingleLine(csvGet(row, "School Name"), SCHOOL_MAX);
+    if (!school) continue;
+    const e: CareerEducation = { school };
+    const degree = cleanSingleLine(csvGet(row, "Degree Name"), LINE_MAX);
+    const start = parseLinkedInYearMonth(csvGet(row, "Start Date"));
+    const end = parseLinkedInYearMonth(csvGet(row, "End Date"));
+    if (degree) e.degree = degree;
+    if (start) e.start = start;
+    if (end) e.end = end;
+    out.push(e);
+    if (out.length >= MAX_SCHOOLS) break;
+  }
+  return out;
 }
 
 export function parseLinkedInSkillsCsv(text: string): string[] {

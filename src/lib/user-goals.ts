@@ -42,29 +42,78 @@ export async function listActiveGoalsForUser(
   const db = await getDb();
   return db.query.userGoals.findMany({
     where: and(eq(userGoals.userId, userId), eq(userGoals.active, 1)),
-    columns: { id: true, text: true },
+    columns: { id: true, text: true, progress: true, category: true, createdAt: true, updatedAt: true },
     orderBy: [desc(userGoals.createdAt)],
     ...(options.limit ? { limit: options.limit } : {}),
   });
 }
 
 /** A deleted goal, exactly as `restoreGoalForUser` needs it to put it back. */
-export type GoalSnapshot = { id: string; text: string; active: number; createdAt: string };
+export type GoalSnapshot = {
+  id: string;
+  text: string;
+  progress?: string | null;
+  category?: string | null;
+  active: number;
+  createdAt: string;
+};
 
 /** Longest goal text Settings and chat accept. */
 export const MAX_GOAL_CHARS = 200;
+export const MAX_PROGRESS_CHARS = 500;
+/** A goal's category is a short tag ("Career", "Fundraising"). */
+export const MAX_GOAL_CATEGORY_CHARS = 60;
 
 /**
  * Add one active goal. The body of `addGoal` (src/actions/goals.ts), user-scoped so chat's
  * writes (@/lib/tools/chat-writes) can call it; revalidation stays with the callers.
  */
-export async function addGoalForUser(userId: string, text: string) {
+export async function addGoalForUser(
+  userId: string,
+  text: string,
+  options?: { progress?: string | null; category?: string | null }
+) {
   const trimmed = text.trim();
   if (!trimmed) throw new UserFacingError("Write the goal first");
   if (trimmed.length > MAX_GOAL_CHARS) throw new UserFacingError("Keep the goal under 200 characters");
+  const progressTrimmed = options?.progress?.trim() || null;
+  if (progressTrimmed && progressTrimmed.length > MAX_PROGRESS_CHARS) {
+    throw new UserFacingError("Keep goal progress under 500 characters");
+  }
   const db = await getDb();
-  const [row] = await db.insert(userGoals).values({ userId, text: trimmed, active: 1 }).returning();
+  const [row] = await db
+    .insert(userGoals)
+    .values({
+      userId,
+      text: trimmed,
+      progress: progressTrimmed,
+      category: options?.category?.trim().slice(0, MAX_GOAL_CATEGORY_CHARS) || null,
+      active: 1,
+    })
+    .returning();
   return row;
+}
+
+/** Update the progress notes/status of an existing goal. */
+export async function updateGoalProgressForUser(
+  userId: string,
+  id: string,
+  progress: string | null
+) {
+  const trimmed = progress?.trim() || null;
+  if (trimmed && trimmed.length > MAX_PROGRESS_CHARS) {
+    throw new UserFacingError("Keep goal progress under 500 characters");
+  }
+  const db = await getDb();
+  const [row] = await db
+    .update(userGoals)
+    .set({
+      progress: trimmed,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(userGoals.id, id), eq(userGoals.userId, userId)))
+    .returning();
+  return row ?? null;
 }
 
 /** Hard-delete one of the user's goals — see `deleteGoal` for why — returning what Undo needs. */
@@ -75,7 +124,14 @@ export async function deleteGoalForUser(userId: string, id: string): Promise<Goa
     .where(and(eq(userGoals.id, id), eq(userGoals.userId, userId)))
     .returning();
   return deleted
-    ? { id: deleted.id, text: deleted.text, active: deleted.active, createdAt: deleted.createdAt.toISOString() }
+    ? {
+        id: deleted.id,
+        text: deleted.text,
+        progress: deleted.progress,
+        category: deleted.category,
+        active: deleted.active,
+        createdAt: deleted.createdAt.toISOString(),
+      }
     : null;
 }
 
@@ -92,7 +148,15 @@ export async function restoreGoalForUser(userId: string, snapshot: GoalSnapshot)
   const db = await getDb();
   const inserted = await db
     .insert(userGoals)
-    .values({ id: snapshot.id, userId, text, active: snapshot.active === 0 ? 0 : 1, createdAt })
+    .values({
+      id: snapshot.id,
+      userId,
+      text,
+      progress: snapshot.progress ?? null,
+      category: snapshot.category ?? null,
+      active: snapshot.active === 0 ? 0 : 1,
+      createdAt,
+    })
     .onConflictDoNothing()
     .returning();
   return { restored: inserted.length > 0 };

@@ -1,12 +1,12 @@
 /**
- * Drains the connector outbox. Rides the ten-minute ops schedule like the webhook drain: a
- * write that failed can wait ten minutes, and its own route keeps its latency off the sweep.
+ * Drains the connector outbox. Rides the hourly tick like the webhook drain: a write
+ * that failed once can wait an hour, and its own route keeps its latency off the sweep.
  *
  * Delivery is dispatched through the registry, so this route never learns a provider's API.
  */
 import { NextResponse } from "next/server";
 import { connectorById } from "@/lib/connectors/registry";
-import { drainOutbox } from "@/lib/connectors/outbox";
+import { drainOutbox, hasDueOutbox } from "@/lib/connectors/outbox";
 import { finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { isInternalRequest } from "@/lib/internal-auth";
 import { reportError } from "@/lib/report-error";
@@ -19,6 +19,8 @@ export async function POST(request: Request) {
   if (!isInternalRequest(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  // An empty outbox is the usual case: no ledger rows for it.
+  if (!(await hasDueOutbox())) return NextResponse.json({ ok: true, idle: true });
   const handle = await startCronRun("connectors.outbox");
   try {
     // 40s of a 60s budget, leaving room for the ledger write.

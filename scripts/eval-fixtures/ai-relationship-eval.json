@@ -121,6 +121,51 @@
         { "at": "2026-09-27T10:00:00Z", "from": "them", "text": "[2026-09-27 10:00 Sam] Happy birthday!!\n[2026-09-27 10:01 Me] Thank you!!" }
       ],
       "expect": { "facts": [], "commitments": [], "reminders": 0, "openThreads": 0, "trivial": true }
+    },
+    {
+      "id": "deep-met-at-event",
+      "contactName": "Maya Chen",
+      "now": "2026-09-30T12:00:00Z",
+      "deepRead": true,
+      "messages": [
+        { "at": "2022-11-02T15:00:00Z", "from": "them", "text": "It was great meeting you at HackNC back in September! Would love to stay in touch." },
+        { "at": "2022-11-02T16:00:00Z", "from": "me", "text": "Likewise, it was fun building together that weekend." },
+        { "at": "2022-11-16T15:00:00Z", "from": "them", "text": "Thanks again for the coffee yesterday, it was super helpful." }
+      ],
+      "expect": {"facts": [], "commitments": [], "reminders": 0, "openThreads": 0, "origin": {"phrase": "HackNC", "precision": "month"}, "events": 1}
+    },
+    {
+      "id": "deep-introduced",
+      "contactName": "Sam Rivera",
+      "now": "2026-09-30T12:00:00Z",
+      "deepRead": true,
+      "messages": [
+        { "at": "2023-03-01T15:00:00Z", "from": "them", "text": "Hi! Priya Shah introduced us over email last week. She said you know a lot about payments infrastructure." },
+        { "at": "2023-03-01T17:00:00Z", "from": "me", "text": "Great to meet you, Sam. Any friend of Priya's is a friend of mine." }
+      ],
+      "expect": {"facts": [], "commitments": [], "reminders": 0, "openThreads": 0, "origin": {"phrase": "Priya"}}
+    },
+    {
+      "id": "deep-recruiter",
+      "contactName": "Jordan Lee",
+      "now": "2026-09-30T12:00:00Z",
+      "deepRead": true,
+      "messages": [
+        { "at": "2025-02-10T15:00:00Z", "from": "them", "text": "Hi, I'm a technical recruiter at Stripe. We have a Software Engineer opening on the payments team that looks like a strong fit for your background." },
+        { "at": "2025-02-10T18:00:00Z", "from": "me", "text": "Thanks for reaching out! I'm not looking right now, but happy to stay in touch." }
+      ],
+      "expect": {"facts": [], "commitments": [], "reminders": 0, "openThreads": 0, "kind": "recruiter", "events": 0}
+    },
+    {
+      "id": "deep-plan-not-a-meeting",
+      "contactName": "Alex Kim",
+      "now": "2026-09-30T12:00:00Z",
+      "deepRead": true,
+      "messages": [
+        { "at": "2024-05-01T15:00:00Z", "from": "them", "text": "We should meet up at the fintech conference in Austin next month!" },
+        { "at": "2024-05-01T16:00:00Z", "from": "me", "text": "Yes, let's plan on it. I'll be there all three days." }
+      ],
+      "expect": {"facts": [], "commitments": [], "reminders": 0, "openThreads": 0, "origin": null, "events": 0}
     }
   ]
 }

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { IntentLink } from "@/components/ui/intent-link";
 import { useMemo, useState, useTransition } from "react";
-import { formatDistanceToNow } from "date-fns";
+import { longRelativeLabel } from "@/lib/relative-date";
 import {
   Check,
   Coffee,
@@ -194,7 +194,7 @@ function ContactSection({ item }: { item: ReminderRow }) {
         </IntentLink>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {item.contactLastTouch
-            ? `Last in touch ${formatDistanceToNow(new Date(item.contactLastTouch), { addSuffix: true })}`
+            ? `Last in touch ${longRelativeLabel(new Date(item.contactLastTouch))}`
             : "No logged conversations yet"}
         </p>
         <div className="mt-3 flex flex-wrap gap-1.5">
@@ -265,6 +265,21 @@ function ProvenanceSection({ item }: { item: ReminderRow }) {
       </SectionHeading>
       <div className="space-y-2 text-sm">
         <div className="flex flex-wrap items-center gap-1.5">
+          {item.priority === "critical" && (
+            <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">
+              Critical
+            </span>
+          )}
+          {item.priority === "high" && (
+            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+              High Priority
+            </span>
+          )}
+          {item.category === "waiting_on" && (
+            <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-3xs font-medium text-sky-700 dark:text-sky-300">
+              Waiting on them
+            </span>
+          )}
           <span
             className={cn(
               "rounded-full px-2 py-0.5 text-3xs font-medium uppercase tracking-wide",
@@ -283,6 +298,16 @@ function ProvenanceSection({ item }: { item: ReminderRow }) {
             </span>
           )}
         </div>
+        {item.timingRationale && (
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Timing:</span> {item.timingRationale}
+          </p>
+        )}
+        {item.importanceReason && (
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Why it matters:</span> {item.importanceReason}
+          </p>
+        )}
         {item.sourceExcerpt && (
           <blockquote className="rounded-lg border-l-2 border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
             {item.rawDatePhrase && (

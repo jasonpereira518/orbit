@@ -36,6 +36,7 @@ import { persistEventCover } from "@/lib/events/cover";
 import { attendedEventFilter } from "@/lib/events/store";
 import type { FetchPageDeps } from "@/lib/events/guarded-fetch";
 import { reportAndContinue, reportError } from "@/lib/report-error";
+import { sleep } from "@/lib/async";
 
 /** How long a claimed event is off-limits to another pass. */
 const LEASE_MS = 10 * 60 * 1000;
@@ -58,10 +59,6 @@ export type ClaimedEnrichment = {
   url: string;
   attempts: number;
 };
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function hostOf(url: string): string | null {
   try {

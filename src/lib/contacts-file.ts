@@ -6,6 +6,8 @@ import {
   looksLikeMessagesExport,
   stripLinkedInConnectionsPreamble,
 } from "@/lib/linkedin-connections";
+import { nameKey } from "@/lib/names/key";
+import { displayNameFor } from "@/lib/names/from-identifier";
 
 /**
  * Address-book file parsing: vCard (.vcf) and the contacts CSVs Google and Outlook export.
@@ -464,7 +466,7 @@ function rowFromParts(parts: {
   const family = tidy(parts.family);
   const assembled = tidy([given, tidy(parts.additional), family].filter(Boolean).join(" "));
   const email = parts.email.trim();
-  const fullName = tidy(parts.displayName) || assembled || (email ? email.split("@")[0] : "");
+  const fullName = displayNameFor({ name: tidy(parts.displayName) || assembled, email, linkedinUrl: parts.linkedinUrl });
   if (!fullName) return null;
   return {
     fullName,
@@ -814,14 +816,6 @@ function parseContactsCsv(text: string): {
 // Shared
 // ---------------------------------------------------------------------------------------------
 
-function nameKey(value: string) {
-  return value
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
 
 /**
  * Collapse contacts that appear more than once in the same file — common, because exports

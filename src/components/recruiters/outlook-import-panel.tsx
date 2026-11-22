@@ -1,8 +1,9 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { Loader2 } from "lucide-react";
 import { type OutlookConnectionStatus, type OutlookScanStatus } from "@/actions/outlook";
+import { type RecruitingCycle } from "@/lib/recruiter-scan-state";
 import { Button } from "@/components/ui/button";
 import {
   SESSION_EXPIRED_LINE,
@@ -25,6 +26,7 @@ export function OutlookImportPanel({
   returnTo?: string;
 }) {
   const [pending, startTransition] = useTransition();
+  const [cycle, setCycle] = useState<RecruitingCycle>("current");
   const conn = useMicrosoftConnection({ returnTo: returnTo ?? "", enabled: false });
   // One handler for the header link and the button. The recruiter scan asks for mail access;
   // a paused calendar sync is reconnected as "calendar", which was already granted, so
@@ -75,7 +77,7 @@ export function OutlookImportPanel({
               : connection.connected && connection.hasMailScope
                 ? `Connected as ${connection.emailAddress}. Orbit searches your whole mailbox for recruiter threads and writes a private summary of each one.`
                 : connection.connected
-                  ? `Connected as ${connection.emailAddress}, without permission to read mail. Allow mail access to scan for recruiters.`
+                  ? `Microsoft is connected as ${connection.emailAddress}, but Orbit can't read your mail yet. Allow mail access to find your recruiters.`
                   : "Search your whole mailbox for recruiters, the companies they hired for, and a summary of every conversation."}
           </p>
           {connection.status === "disarmed" ? (
@@ -101,23 +103,34 @@ export function OutlookImportPanel({
                   : "Connect Outlook"}
             </Button>
           ) : (
-            <>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={cycle}
+                onChange={(e) => setCycle(e.target.value as RecruitingCycle)}
+                disabled={busy || running}
+                className="h-9 rounded-lg border border-input bg-card px-2.5 text-xs text-foreground"
+                aria-label="Recruiting cycle window"
+              >
+                <option value="current">Current cycle (Auto)</option>
+                <option value="july">Fall cycle (Since Jul 1)</option>
+                <option value="january">Spring cycle (Since Jan 1)</option>
+              </select>
               <Button
                 disabled={busy || running}
-                onClick={() => startTransition(() => runStart())}
+                onClick={() => startTransition(() => runStart({ cycle }))}
               >
-                {running ? "Scanning…" : scan ? "Scan again" : "Scan mailbox"}
+                {running ? "Scanning…" : scan ? "Scan again" : "Scan cycle"}
               </Button>
               <DisconnectAccountDialog
                 provider="outlook"
                 disabled={busy || running}
                 onConfirm={(opts) => {
-                  conn.disconnect(opts).then(() => {
+                  void conn.disconnect(opts).then(() => {
                     resetScan();
                   });
                 }}
               />
-            </>
+            </div>
           )}
         </div>
       </div>

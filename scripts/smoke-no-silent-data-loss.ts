@@ -381,7 +381,8 @@ async function main() {
       title: "Director",
       email: "pat.fold@example.com",
     },
-    writeOpts
+    // The contact form: the person typed this record, so its fields are written as given.
+    { ...writeOpts, nameBy: "user" as const }
   );
   check(
     "the same person by email folds into the existing row",
@@ -400,6 +401,20 @@ async function main() {
     "the fold-in really did replace the company, which is why it must be reported",
     folded?.company === "Beta LLC",
     `got "${folded?.company}"`
+  );
+
+  // An automated record (an import, a lookup) only fills blanks: it is reported as a match,
+  // and the company the contact already has is kept.
+  const automated = await resolveOrCreateContact(
+    USER,
+    { fullName: "Pat Fold", company: "Gamma Co", email: "pat.fold@example.com" },
+    writeOpts
+  );
+  const kept = await db.query.contacts.findFirst({ where: eq(contacts.id, first.contactId) });
+  check(
+    "an automated fold-in is reported and never replaces the company",
+    automated.outcome === "matched" && kept?.company === "Beta LLC",
+    `got "${automated.outcome}", "${kept?.company}"`
   );
 
   // Clean up after ourselves.

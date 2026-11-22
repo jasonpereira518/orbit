@@ -1,7 +1,19 @@
+import { FEEDBACK_RECIPIENT } from "@/lib/feedback-report";
+import { captureBellTitle } from "@/lib/capture/job-staleness";
+import { unreadRepliesFor } from "@/lib/feedback-thread";
 import { and, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { getDb, rowsOf } from "@/db";
-import { aiSuggestions, captureJobs, cloudNoteFiles, contacts, reminders, suggestedReminders } from "@/db/schema";
+import {
+  aiSuggestions,
+  captureJobs,
+  cloudNoteFiles,
+  contacts,
+  reminders,
+  suggestedReminders,
+  type ReminderPriority,
+  type ReminderCategory,
+} from "@/db/schema";
 import { entitlementsFromSettings, getEntitlements } from "@/lib/entitlements";
 import {
   getAccountAlerts,
@@ -10,9 +22,47 @@ import {
 } from "@/lib/account-health";
 import type { AccountAlert } from "@/lib/account-alerts";
 import { alertableContactSql, alertableReminderSql } from "@/lib/met-contact";
+import { getDueCounts } from "@/lib/due-counts";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
+import { dueDayOf, ymdInZone } from "@/lib/reminder-due-bucket";
 
 /** A canonical (lower-case) uuid, the only text `id = x::uuid` matches as the JS compare would (as in reminders.ts). */
 const CANONICAL_UUID_RE = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
+
+/**
+ * The panel rows that may raise an OS notification now: due, not already notified, and past
+ * their due TIME. A row's urgency "due" follows the whole-day rule (a reminder due at 5pm is
+ * due all day in the bell), so the clock is checked here or it would notify, and spend its id,
+ * at the start of the day. Shared by the app pulse and the desktop poll.
+ */
+export function desktopNotificationItems(
+  items: ReadonlyArray<{
+    id: string;
+    urgency: string;
+    dueAt: string | null;
+    title: string;
+    body: string | null;
+    url: string;
+    priority?: ReminderPriority;
+    importanceReason?: string | null;
+    timingRationale?: string | null;
+  }>,
+  now: Date,
+  notified: ReadonlySet<string>,
+  limit: number
+) {
+  return items
+    .filter((i) => i.urgency === "due" && (!i.dueAt || new Date(i.dueAt) <= now) && !notified.has(i.id))
+    .slice(0, limit)
+    .map((i) => {
+      let title = i.title;
+      // Plain words, not emoji: the same label the bell's chip shows.
+      if (i.priority === "critical") title = `Critical: ${i.title}`;
+      else if (i.priority === "high") title = `High priority: ${i.title}`;
+      const contextParts = [i.importanceReason || i.timingRationale, i.body].filter(Boolean);
+      return { id: i.id, title, body: contextParts.join(" · ") || undefined, url: i.url };
+    });
+}
 
 /** Upcoming follow-ups are shown this far ahead; further out is noise. */
 const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
@@ -39,7 +89,7 @@ const UPCOMING_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 export async function loadNotificationPanel(
   userId: string,
   now: Date,
-  opts: { withAlerts: boolean; radar?: boolean; cloudNotes?: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
+  opts: { withAlerts: boolean; radar?: boolean; cloudNotes?: boolean; tz?: string; dueCounts?: boolean } & Partial<AccountHealthContext> = { withAlerts: true }
 ) {
   const db = await getDb();
   const context: AccountHealthContext | undefined = opts.settings
@@ -49,6 +99,7 @@ export async function loadNotificationPanel(
       }
     : undefined;
 
+  const tzPromise = opts.tz ? Promise.resolve(opts.tz) : viewerTimeZone(userId);
   const [
     pendingReminders,
     contactRows,
@@ -59,6 +110,9 @@ export async function loadNotificationPanel(
     captureRows,
     radarRows,
     cloudNoteRows,
+    feedbackReplies,
+    tz,
+    due,
   ] = await Promise.all([
     db.query.reminders.findMany({
       // Only what is allowed to alert: the user's own reminders, and generated ones about
@@ -137,14 +191,19 @@ export async function loadNotificationPanel(
       orderBy: (j, { desc: descOrder }) => [descOrder(j.updatedAt)],
       limit: 3,
     }),
-    // Radar's live list, as one summary line: how many and who's first. Never items, so
-    // never "due", so never a badge or a desktop notification (an unconfirmed guess must
-    // not reach either). One indexed read; empty for anyone Radar has never run for.
+    // Radar's live list, as one summary line: how many and who's first. Never items, so never
+    // a desktop notification (Radar's own alerts are push, `src/lib/radar/moments.ts`, with
+    // their own daily cap). Today's moments — the ones that won't keep — count on the bell's
+    // badge (Radar PR 9b); the rest of the week's plan never does. One indexed read; empty for
+    // anyone Radar has never run for.
     opts.radar
       ? db.execute(sql`
           SELECT count(*)::int AS n,
                  count(*) FILTER (WHERE r.draft ->> 'inputsHash' = r.inputs_hash)::int AS drafts,
-                 (array_agg(coalesce(nullif(btrim(c.preferred_name), ''), c.full_name) ORDER BY r.score DESC, r.id))[1:3] AS names
+                 (array_agg(coalesce(nullif(btrim(c.preferred_name), ''), c.full_name) ORDER BY r.score DESC, r.id))[1:3] AS names,
+                 count(*) FILTER (WHERE r.bucket = 'today')::int AS today,
+                 (array_agg(coalesce(nullif(btrim(c.preferred_name), ''), c.full_name) ORDER BY r.score DESC, r.id)
+                    FILTER (WHERE r.bucket = 'today'))[1:2] AS today_names
             FROM recommendations r
             JOIN contacts c ON c.id = r.contact_id AND c.user_id = r.user_id
            WHERE r.user_id = ${userId} AND r.status = 'pending' AND r.expires_at > ${now}
@@ -172,13 +231,23 @@ export async function loadNotificationPanel(
           .orderBy(desc(cloudNoteFiles.modifiedAt))
           .limit(50)
       : [],
+    // The operator answered their feedback and they haven't opened it yet.
+    unreadRepliesFor(userId),
+    // The one count of what is due (reminders + follow-ups); the lists above only draw rows.
+    tzPromise,
+    // Skipped by the desktop poll (`dueCounts: false`), which reads only `items`.
+    opts.dueCounts === false
+      ? Promise.resolve({ reminders: 0, followUps: 0, total: 0 })
+      : tzPromise.then((z) => getDueCounts(userId, z, now)),
   ]);
-  const radarRow = radarRows ? rowsOf<{ n: number; drafts: number; names: string[] | null }>(radarRows)[0] : undefined;
+  const radarRow = radarRows
+    ? rowsOf<{ n: number; drafts: number; names: string[] | null; today: number; today_names: string[] | null }>(radarRows)[0]
+    : undefined;
   const radarCount = Number(radarRow?.n ?? 0);
 
   type PanelItem = {
     id: string;
-    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder" | "capture_review" | "cloud_notes";
+    kind: "reminder" | "follow_up" | "suggestion" | "suggested_reminder" | "capture_review" | "cloud_notes" | "feedback_reply";
     title: string;
     body: string | null;
     url: string;
@@ -188,9 +257,15 @@ export async function loadNotificationPanel(
     suggestionId?: string;
     suggestedReminderId?: string;
     contactId?: string | null;
+    /** Feedback replies only: the reply carried a thank-you that's still wrapped. */
+    gift?: boolean;
     /** Follow-ups only: the contact's role and company, so the UI can tint the company. */
     contactTitle?: string | null;
     company?: string | null;
+    priority?: ReminderPriority;
+    category?: ReminderCategory;
+    timingRationale?: string | null;
+    importanceReason?: string | null;
   };
 
   const items: PanelItem[] = [];
@@ -230,7 +305,9 @@ export async function loadNotificationPanel(
     const dueAt = r.dueDate ? new Date(r.dueDate) : null;
     // An undated reminder is not overdue work. It used to count as "due now", so a note
     // captured without a date went straight into the bell's due count.
-    const isDue = dueAt !== null && dueAt <= now;
+    // The whole-day rule (the same one `getDueCounts` and the Reminders page use): a reminder due
+    // later today is due today. The OS-notification poll still waits for `dueAt <= now`.
+    const isDue = dueAt !== null && (dueDayOf(dueAt, tz) ?? "") <= ymdInZone(now, tz);
     items.push({
       // Scoped by due date, exactly as the follow-up id below is.
       //
@@ -248,6 +325,10 @@ export async function loadNotificationPanel(
       urgency: isDue ? "due" : "upcoming",
       reminderId: r.id,
       contactId: r.contactId,
+      priority: r.priority,
+      category: r.category,
+      timingRationale: r.timingRationale,
+      importanceReason: r.importanceReason,
     });
   }
 
@@ -272,7 +353,7 @@ export async function loadNotificationPanel(
 
   for (const s of suggestions) {
     const related = Array.isArray(s.relatedContactIds)
-      ? (s.relatedContactIds as string[])
+      ? (s.relatedContactIds)
       : [];
     items.push({
       id: `suggestion:${s.id}`,
@@ -307,6 +388,10 @@ export async function loadNotificationPanel(
       urgency: "info",
       suggestedReminderId: s.id,
       contactId: s.contactId,
+      priority: s.priority,
+      category: s.category,
+      timingRationale: s.timingRationale,
+      importanceReason: s.importanceReason,
     });
   }
 
@@ -319,9 +404,9 @@ export async function loadNotificationPanel(
       kind: "capture_review",
       title: isFailed
         ? "Couldn’t read your notes"
-        : `${n} ${n === 1 ? "person" : "people"} ready to review`,
+        : captureBellTitle(n),
       body: isFailed ? job.error : "From your last capture — pick up where you left off.",
-      url: "/capture",
+      url: `/capture?job=${job.id}`,
       dueAt: null,
       urgency: "info",
     });
@@ -346,20 +431,48 @@ export async function loadNotificationPanel(
     });
   }
 
+  // "Due" so it counts on the badge and, for anyone with desktop notifications on, reaches the
+  // OS once — the id carries the message time, so a LATER reply notifies again rather than
+  // being deduped against the first by `desktop_notified_ids`.
+  for (const reply of feedbackReplies) {
+    const firstLine = reply.latest.split("\n")[0].slice(0, 120);
+    items.push({
+      id: `feedback-reply:${reply.feedbackId}:${reply.at.getTime()}`,
+      kind: "feedback_reply",
+      // A thank-you still waiting to be unwrapped is the headline; the reply comes with it.
+      title: reply.giftWaiting
+        ? `${FEEDBACK_RECIPIENT} sent you a thank-you`
+        : `${FEEDBACK_RECIPIENT} replied to your feedback`,
+      body: reply.giftWaiting ? `+${reply.thanksCredits} AI credits — open to unwrap` : firstLine,
+      gift: reply.giftWaiting,
+      url: `/feedback/${reply.feedbackId}`,
+      dueAt: reply.at.toISOString(),
+      urgency: "due",
+    });
+  }
+
   const urgencyRank = { due: 0, upcoming: 1, info: 2 } as const;
+  const priorityRank = { critical: 0, high: 1, normal: 2, low: 3 } as const;
   items.sort((a, b) => {
     const ur = urgencyRank[a.urgency] - urgencyRank[b.urgency];
     if (ur !== 0) return ur;
+    const prA = a.priority ? priorityRank[a.priority] : 2;
+    const prB = b.priority ? priorityRank[b.priority] : 2;
+    const pr = prA - prB;
+    if (pr !== 0) return pr;
     const aTime = a.dueAt ? new Date(a.dueAt).getTime() : Number.POSITIVE_INFINITY;
     const bTime = b.dueAt ? new Date(b.dueAt).getTime() : Number.POSITIVE_INFINITY;
     return aTime - bTime;
   });
 
-  const dueCount = items.filter((i) => i.urgency === "due").length;
+  // Reminders and follow-ups come from `getDueCounts` (the rows above are capped and drawn, not
+  // counted); the only other "due" rows are feedback replies.
+  const dueCount = due.total + items.filter((i) => i.urgency === "due" && i.kind === "feedback_reply").length;
 
   return {
     items,
     dueCount,
+    dueBreakdown: { reminders: due.reminders, followUps: due.followUps },
     totalCount: items.length,
     // Drives the extension promo in the panel: paid plans get an install link,
     // everyone else gets the pitch and a route to the plans page.
@@ -371,7 +484,13 @@ export async function loadNotificationPanel(
      */
     radar:
       radarCount > 0
-        ? { count: radarCount, drafts: Number(radarRow?.drafts ?? 0), names: radarRow?.names ?? [] }
+        ? {
+            count: radarCount,
+            drafts: Number(radarRow?.drafts ?? 0),
+            names: radarRow?.names ?? [],
+            today: Number(radarRow?.today ?? 0),
+            todayNames: radarRow?.today_names ?? [],
+          }
         : undefined,
     /**
      * Account health, as a SIBLING of `items` and never an entry in it. That placement is

@@ -65,10 +65,10 @@ export function CoverPaletteProbe({
         // time and every event would come out beige.
         const buckets = new Map<string, { n: number; r: number; g: number; b: number }>();
         for (let i = 0; i < data.length; i += 4) {
-          const r = data[i]!;
-          const g = data[i + 1]!;
-          const b = data[i + 2]!;
-          if (data[i + 3]! < 200) continue;
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          if (data[i + 3] < 200) continue;
           const max = Math.max(r, g, b);
           const min = Math.min(r, g, b);
           if (max < 40 || min > 225) continue;
@@ -90,7 +90,7 @@ export function CoverPaletteProbe({
         const hex =
           "#" +
           [best.r, best.g, best.b]
-            .map((sum) => Math.round(sum / best!.n).toString(16).padStart(2, "0"))
+            .map((sum) => Math.round(sum / best.n).toString(16).padStart(2, "0"))
             .join("");
         // Fire and forget: a failed sample must never surface as an error to someone who
         // only wanted to look at their event.

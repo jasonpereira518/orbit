@@ -21,7 +21,9 @@ import {
   reopenReminderAction,
   rescheduleReminderAction,
   restoreReminderAction,
+  snoozeOverdueFromNotes,
   undoBulkReminderAction,
+  undoSnoozeOverdueFromNotes,
   unsnoozeReminderAction,
   type BulkReminderOp,
 } from "@/actions/reminders";
@@ -44,6 +46,8 @@ import {
   bucketForDay,
   DUE_BUCKET_LABELS,
   resolveTimeZone,
+  shortDayLabel,
+  snoozePresets,
   TZ_COOKIE,
   type DueBucket,
 } from "@/lib/reminder-due-bucket";
@@ -53,12 +57,15 @@ import type {
   ReminderRow as ReminderRowData,
   RemindersPage,
 } from "@/lib/reminders-page";
+import { UserFacingError } from "@/lib/errors";
 import { isQueuedOffline } from "@/lib/offline-queue-store";
 import { runToastAction } from "@/lib/toast";
 import type { TriageCommand } from "@/lib/triage-keys";
 import { cn } from "@/lib/utils";
 
 const SEARCH_DEBOUNCE_MS = 250;
+/** Fewer overdue note reminders than this is a to-do list, not a backlog worth a banner. */
+const BACKLOG_BANNER_MIN = 20;
 /** Where the detail pane sits inline rather than in a sheet: Tailwind's `xl`. */
 const INLINE_DETAIL_QUERY = "(min-width: 80rem)";
 
@@ -122,6 +129,7 @@ export function RemindersStage({
   filters: urlFilters,
   suggested,
   openCreate = false,
+  createDefaults = null,
   calendar,
 }: {
   target: RailTarget;
@@ -133,6 +141,8 @@ export function RemindersStage({
   suggested: SuggestedReminderRow[] | null;
   /** Arrived from the palette's "New reminder". */
   openCreate?: boolean;
+  /** What the palette read out of a typed sentence, to pre-fill the form with. */
+  createDefaults?: { title: string | null; due: string | null } | null;
   calendar?: CalendarSyncSummary;
 }) {
   const router = useRouter();
@@ -458,7 +468,7 @@ export function RemindersStage({
       const res = await runToastAction({
         run: async () => {
           const result = await bulkReminderAction(ids, op);
-          if (!result.ok) throw new Error(result.error);
+          if (!result.ok) throw new UserFacingError(result.error);
           return result.value;
         },
         success: (v) => success(v.count),
@@ -469,6 +479,34 @@ export function RemindersStage({
       setBusy(false);
       refresh();
       return res !== undefined;
+    });
+  }
+
+  /** The backlog banner's one click: everything overdue from notes goes to next Monday. */
+  function snoozeBacklog() {
+    const toYmd = snoozePresets(today).nextWeek;
+    setBusy(true);
+    void runToastAction({
+      run: async () => {
+        const result = await snoozeOverdueFromNotes(toYmd);
+        if (!result.ok) throw new UserFacingError(result.error);
+        if (result.value.partial && result.value.count === 0) {
+          throw new UserFacingError("Couldn’t snooze those — try again?");
+        }
+        return result.value;
+      },
+      success: (v) =>
+        v.partial
+          ? `Snoozed ${plural(v.count)}, but some couldn’t be snoozed. You can undo these`
+          : v.left > 0
+            ? `Snoozed ${plural(v.count)} until ${shortDayLabel(toYmd)}, ${v.left} left`
+            : `Snoozed ${plural(v.count)} until ${shortDayLabel(toYmd)}`,
+      failure: "Couldn’t snooze those — try again?",
+      refresh,
+      undo: (v) => (v.count > 0 ? () => undoSnoozeOverdueFromNotes(v.undoToken) : null),
+    }).finally(() => {
+      setBusy(false);
+      refresh();
     });
   }
 
@@ -612,7 +650,9 @@ export function RemindersStage({
   const groups = groupItems(items, today, isDoneView);
   const empty =
     EMPTY_COPY[target.kind === "list" ? "list" : target.view] ?? EMPTY_COPY.today;
-  const defaultDue = target.kind === "view" && target.view === "today" ? today : null;
+  // A date the palette read out of what was typed beats the Today view's own default.
+  const defaultDue =
+    createDefaults?.due ?? (target.kind === "view" && target.view === "today" ? today : null);
   const total = page.total ?? items.length;
 
   const detailPane = detailItem ? (
@@ -691,6 +731,7 @@ export function RemindersStage({
                 }}
                 compactTrigger
                 defaultDue={defaultDue}
+                defaultTitle={createDefaults?.title ?? null}
               />
             </div>
             {!isSuggested && (
@@ -737,6 +778,30 @@ export function RemindersStage({
                   </span>
                 }
               />
+              {target.kind === "view" && target.view === "today" && counts.overdueFromNotes >= BACKLOG_BANNER_MIN && (
+                <div
+                  role="region"
+                  aria-label="Overdue reminders from your notes"
+                  className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-amber-500/10 px-3 py-2 text-sm sm:px-4"
+                >
+                  <p>
+                    <span className="font-medium tabular-nums">{counts.overdueFromNotes}</span> overdue reminders from your notes
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" className="h-8" disabled={busy} onClick={snoozeBacklog}>
+                      Snooze them
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8"
+                      onClick={() => changeFilters({ sources: ["notes"] })}
+                    >
+                      Review
+                    </Button>
+                  </div>
+                </div>
+              )}
               <div
                 ref={scrollerRef}
                 className={cn(

@@ -59,6 +59,14 @@ export const CHAT_COMMANDS: readonly ChatCommand[] = [
     prefill: { text: "Who should I introduce @ to?", mention: false },
   },
   {
+    id: "cmd:remember",
+    slug: "remember",
+    label: "Remember something",
+    hint: "Keep a fact or preference in mind for future chats",
+    keywords: "remember memory keep in mind preference from now on always",
+    prefill: { text: "Remember that ", mention: false },
+  },
+  {
     id: "cmd:remind",
     slug: "remind",
     label: "New reminder",
@@ -97,7 +105,7 @@ export type SlashQuery = {
 export function slashQueryAt(text: string, caret: number): SlashQuery | null {
   if (caret < 1 || caret > text.length) return null;
   for (let i = caret - 1; i >= 0 && caret - i <= SLASH_QUERY_MAX_LEN + 1; i--) {
-    const ch = text[i]!;
+    const ch = text[i];
     if (ch === "/") {
       if (i !== 0 && text[i - 1] !== "\n") return null;
       return { start: i, query: text.slice(i + 1, caret) };

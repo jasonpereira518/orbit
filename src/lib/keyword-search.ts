@@ -240,5 +240,3 @@ export function rankKeywordSearch(
 
   return hits.sort((a, b) => b.score - a.score).slice(0, limit);
 }
-
-export const MATCHED_FIELD_LABELS = FIELD_LABELS;

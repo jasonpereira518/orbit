@@ -16,13 +16,15 @@ import "./smoke/_env";
 import { eq, like } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { aiResultCache, contacts, noteBatches, rateLimitBuckets, userSettings } from "../src/db/schema";
-import { collapseSamePeople, looksLikeOrganization } from "../src/lib/capture/person-cleanup";
+import { collapseSamePeople } from "../src/lib/capture/person-cleanup";
+import { isPersonName } from "../src/lib/names/classify";
 import type { BulkNotePersonPreview } from "../src/lib/capture/types";
 import { fillFromDossier, lookUpNewPeople, wouldCreate } from "../src/lib/capture/web-lookup";
 import { createContactForUser } from "../src/lib/contact-writes";
 import { DUPLICATE_MERGE_CONFIDENCE, findLooseNameCandidates, type LooseNameSubject } from "../src/lib/duplicates";
 import { isSelf } from "../src/lib/meeting-digest";
-import { nameUpgrades, saveNoteBatch, type SaveNoteBatchInput } from "../src/lib/note-batch-save";
+import { saveNoteBatch, type SaveNoteBatchInput } from "../src/lib/note-batch-save";
+import { shouldReplaceName } from "../src/lib/names/compare";
 import { RateLimitedError } from "../src/lib/rate-limit";
 import { hashSourceNote } from "../src/lib/suggested-reminder-utils";
 import { ensureUserSettings } from "../src/lib/user-settings";
@@ -55,11 +57,14 @@ function selfChecks() {
 function orgChecks() {
   console.log("organizations");
   for (const name of ["Acme Labs", "Sequoia Capital", "University of Michigan", "Growth Team", "IBM", "Y Combinator 2024", "Smith & Co"]) {
-    check(`"${name}" reads as an org`, looksLikeOrganization(name));
+    check(`"${name}" is not a person`, !isPersonName(name));
   }
-  check("a name equal to its own company is an org", looksLikeOrganization("Stripe", "Stripe"));
+  check("a name equal to its own company is not a person", !isPersonName("Stripe", { company: "Stripe" }));
+  for (const name of ["the recruiter", "jane@acme.com", "Speaker 1", "Unknown"]) {
+    check(`"${name}" is not a person`, !isPersonName(name));
+  }
   for (const name of ["Sarah Chen", "Ai Nakamura", "José Ruiz", "Mary-Kate O'Neil", "Priya"]) {
-    check(`"${name}" is a person`, !looksLikeOrganization(name, "Stripe"));
+    check(`"${name}" is a person`, isPersonName(name, { company: "Stripe" }));
   }
 }
 
@@ -116,10 +121,10 @@ function looseMatchChecks() {
   check("  a shared company puts its Sarah first", sarahStripe[0]?.contact.id === "sarah-a" && sarahStripe[0].confidence === 0.7);
   check("a preferred name matches ('Kit')", findLooseNameCandidates(existing, { fullName: "Kit" })[0]?.contact.id === "kat");
 
-  check("name upgrade: Sarah → Sarah Chen", nameUpgrades("Sarah", "Sarah Chen"));
-  check("never shrinks: Sarah Chen ← Sarah", !nameUpgrades("Sarah Chen", "Sarah"));
-  check("never swaps: Michael Torres ← Mike Torres", !nameUpgrades("Michael Torres", "Mike Torres"));
-  check("replaces a handle", nameUpgrades("sarahc92", "Sarah Chen"));
+  check("name upgrade: Sarah → Sarah Chen", shouldReplaceName("Sarah", "Sarah Chen"));
+  check("never shrinks: Sarah Chen ← Sarah", !shouldReplaceName("Sarah Chen", "Sarah"));
+  check("never swaps: Michael Torres ← Mike Torres", !shouldReplaceName("Michael Torres", "Mike Torres"));
+  check("replaces a handle", shouldReplaceName("sarahc92", "Sarah Chen"));
 }
 
 // ── web lookup ────────────────────────────────────────────────────────────────────────

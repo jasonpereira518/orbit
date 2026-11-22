@@ -166,12 +166,25 @@ function SuggestionRow({
             </div>
           ) : (
             <>
-              <p className="truncate text-sm font-medium text-foreground">
-                {title}
-              </p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {item.priority === "critical" && (
+                  <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">
+                    Critical
+                  </span>
+                )}
+                {item.priority === "high" && (
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                    High
+                  </span>
+                )}
+                <p className="truncate text-sm font-medium text-foreground">
+                  {title}
+                </p>
+              </div>
               <p className="text-xs text-muted-foreground">
                 {formatDue(new Date(item.dueDate))}
                 {item.contactName ? ` · ${item.contactName}` : ""}
+                {item.timingRationale ? ` · ${item.timingRationale}` : ""}
               </p>
             </>
           )}

@@ -14,9 +14,11 @@ import { eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { siteSettings } from "@/db/schema";
 import { recordAdminAction } from "@/lib/admin-audit";
+import { reportError } from "@/lib/report-error";
 
 /** Long enough to keep the read off the hot path, short enough that a toggle lands quickly. */
-const TTL_MS = 10_000;
+// 60 s: every uptime probe of the waitlist root renders this page, and a shorter memo kept Neon awake.
+const TTL_MS = 60_000;
 
 const globalForDemo = globalThis as unknown as {
   orbitWaitlistDemo?: { value: boolean; at: number };
@@ -41,7 +43,7 @@ export async function getWaitlistDemoEnabled(options: { fresh?: boolean } = {}):
     return value;
   } catch (err) {
     if (options.fresh) throw err;
-    console.error("[waitlist-demo] site_settings read failed", err);
+    reportError(err, { where: "waitlist.demo.read", level: "warning" });
     return cached?.value ?? true;
   }
 }

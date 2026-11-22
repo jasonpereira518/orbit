@@ -123,7 +123,7 @@ async function main() {
   }
   const set = buildChatPrompt({ ...args, writingPreferences: NOTES });
   check("chat: the notes end the user message", set.user.endsWith(renderWritingPreferences(NOTES)));
-  check("chat: the notes are not in the system prompt", !set.systemCore.includes("exclamation") && !set.systemCore.includes("Sign off with Jason"));
+  check("chat: the notes are not in the system prompt", !set.systemCore.includes("Never use exclamation marks.") && !set.systemCore.includes("Sign off with Jason"));
   check("chat: the system prompt gains one line saying they never outrank grounding", set.systemCore.includes("never outrank grounding") && !base.systemCore.includes("never outrank grounding"));
   check("chat: the rest of the user message is unchanged", norm(set.user).startsWith(norm(base.user)));
 

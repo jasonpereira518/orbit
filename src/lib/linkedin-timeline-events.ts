@@ -36,7 +36,8 @@ const eventsSchema = z.object({
   ),
 });
 
-function stableHash(input: string) {
+/** Exported for the relationship engine's deep read, which must write the same reach-out id. */
+export function stableHash(input: string) {
   let h = 0;
   for (let i = 0; i < input.length; i++) {
     h = (h * 31 + input.charCodeAt(i)) | 0;

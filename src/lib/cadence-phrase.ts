@@ -15,6 +15,7 @@
  * Unknown phrasing returns null rather than a guess. A wrong cadence is worse than none: it
  * silently retunes the dormancy thresholds for that person.
  */
+import { addLocalDaysAtNoon } from "@/lib/dates";
 import { atLocalNoon } from "@/lib/interaction-date";
 import { NUMBER_WORDS } from "@/lib/relative-date";
 
@@ -137,12 +138,6 @@ export function parseCadencePhrase(phrase: string): ParsedCadence | null {
   return null;
 }
 
-function addDays(d: Date, n: number) {
-  const out = new Date(d);
-  out.setDate(out.getDate() + n);
-  return atLocalNoon(out);
-}
-
 /**
  * The next occurrence of a cadence, counted from the conversation it was agreed in.
  *
@@ -168,8 +163,8 @@ export function nextCadenceOccurrence(anchor: Date, days: number, today: Date): 
   const elapsedDays = (floor.getTime() - base.getTime()) / DAY_MS;
   // At least one period: the next occurrence is never the conversation itself.
   const periods = Math.max(1, Math.ceil(elapsedDays / days));
-  let next = addDays(base, periods * days);
+  let next = addLocalDaysAtNoon(base, periods * days);
   // One corrective step covers any rounding at a DST edge; it is not a loop in disguise.
-  if (next < floor) next = addDays(next, days);
+  if (next < floor) next = addLocalDaysAtNoon(next, days);
   return next;
 }

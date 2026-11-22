@@ -6,6 +6,7 @@ import { internalAccountSql } from "@/lib/analytics-internal";
 import { MICROS_PER_CREDIT } from "@/lib/credits/grants";
 import { speechMicrosSql } from "@/lib/money-costs";
 import type { Plan } from "@/lib/plans/plan-config";
+import { num } from "@/lib/admin-metrics";
 
 /**
  * The Money section's view of credits (pricing v2): packs as one-time revenue, what the
@@ -19,11 +20,6 @@ import type { Plan } from "@/lib/plans/plan-config";
  * the operator bought to test checkout is not revenue, a liability, or a top spender.
  */
 
-function num(value: string | number | null | undefined): number {
-  if (value == null) return 0;
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
 
 export type CreditsMoney = {
   packs: {

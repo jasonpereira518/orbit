@@ -3,9 +3,10 @@ import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
+import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
 import { FeedbackWidgetLazy } from "@/components/feedback/feedback-widget-lazy";
 import { SurveyPromptLazy } from "@/components/surveys/survey-prompt-lazy";
-import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
+import { COSMO_SURFACE_KEY, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { shouldShowTermsNotice } from "@/lib/legal";
 import { AppShell } from "@/components/layout/app-shell";
 import { ViewerPlanProvider } from "@/components/viewer-plan";
@@ -15,11 +16,17 @@ import { TermsUpdateNotice } from "@/components/legal/terms-update-notice";
 import { PresenceHeartbeat } from "@/components/layout/presence-heartbeat";
 import { LearnedBrandColors } from "@/components/layout/learned-brand-colors";
 import { registerLearnedBrands } from "@/lib/brand-colors";
-import { learnOrgBrandColors, loadOrgBrandColors } from "@/lib/org-brand-learn";
+import {
+  EMPTY_ORG_BRAND_COLORS,
+  learnOrgBrandColors,
+  loadOrgBrandColors,
+  peekOrgBrandColors,
+} from "@/lib/org-brand-learn";
 import { OfflineSync } from "@/components/layout/offline-sync";
 import { MeetingSessionProvider } from "@/components/capture/meeting-session";
+import { VoiceDock } from "@/components/chat/voice/voice-dock";
 import { captureAttribution } from "@/lib/attribution-capture";
-import { captureRadarTimeZone } from "@/lib/radar/digest";
+import { captureRadarTimeZone, radarIsOnFromSettings } from "@/lib/radar/digest";
 import { TZ_COOKIE, isValidTimeZone } from "@/lib/reminder-due-bucket";
 import {
   bootstrapAuthenticatedUser,
@@ -148,22 +155,28 @@ export default async function AppLayout({
   // `linkedinReminder` arms the once-per-account "Is your LinkedIn export ready?" screen.
   // It is free on nearly every request: the settings row above answers it unless the
   // account is 24h–14d old and has not been shown it yet — only then is `imports` read.
-  // `brandColors` is the brand color Orbit has learned for each of the viewer's companies and
-  // schools that the curated table does not know, plus which ones it has not looked up yet.
-  // Those are learned after the response is sent, so a newly added company shows its own
-  // color from the next page load on. A failed read costs only the colors, never the page.
-  const [{ plan, canUseMeetings }, visibility, linkedinReminder, brandColors] = await Promise.all([
+  // Brand colors are cosmetic. A memo hit stays on the critical path; a miss used to block
+  // first bytes on a whole-network company/school scan (~120 ms DB at 25k). Serve empty on
+  // miss and fill the memo in `after()` so the next navigation has colors.
+  const brandHit = peekOrgBrandColors(userId);
+  const [{ plan, canUseMeetings }, visibility, linkedinReminder] = await Promise.all([
     getEntitlements(userId),
     resolveSurfaceVisibility(userId),
     getLinkedInReminderState(userId, settings),
-    loadOrgBrandColors(userId).catch(() => ({ learned: [], missing: [] })),
   ]);
+  const brandColors = brandHit ?? EMPTY_ORG_BRAND_COLORS;
   // The server-component realm has its own copy of the registry; the client component below
   // fills the SSR and browser ones.
   registerLearnedBrands(brandColors.learned);
-  if (brandColors.missing.length) {
-    after(() => learnOrgBrandColors(userId, brandColors.missing).catch(() => {}));
-  }
+  after(() => {
+    void loadOrgBrandColors(userId)
+      .then((colors) => {
+        if (colors.missing.length) {
+          return learnOrgBrandColors(userId, colors.missing);
+        }
+      })
+      .catch(() => {});
+  });
 
   // Whether included AI can run on this deployment at all — see ViewerPlanProvider.
   const includedAiAvailable = Object.values(managedKeysConfigured()).some(Boolean);
@@ -204,6 +217,7 @@ export default async function AppLayout({
       viewingAsUser={visibility.viewingAsUser}
       linkedinReminder={{ ...linkedinReminder, email: settings.email ?? null }}
       creditsIntroDue={creditsIntroDue}
+      radarOn={radarIsOnFromSettings(settings.radarEnabledAt, settings.radarPaused)}
       tour={{
         active: tourRailVisible(settings),
         stop: settings.tourStop,
@@ -227,6 +241,10 @@ export default async function AppLayout({
       {showTermsNotice && <TermsUpdateNotice />}
       {children}
       </AppShell>
+      {/* Above any page, like the meeting recorder: an Orbit Voice call keeps going when you
+          leave Chat, and docks at the middle right until you come back. Inside the meeting
+          provider so a call can start the recorder ("record this meeting"). */}
+      <VoiceDock orb={!visibility.hidden.has(COSMO_SURFACE_KEY)} tourActive={tourRailVisible(settings)} />
       </MeetingSessionProvider>
 
       {/* Deliberately a SIBLING of AppShell, not a child. AppShell early-returns a bare
@@ -240,7 +258,23 @@ export default async function AppLayout({
           dispatch an event AT this component, so leaving it mounted-but-hidden would turn
           them into buttons that do nothing. */}
       {!visibility.hidden.has(FEEDBACK_SURFACE_KEY) && (
-        <FeedbackWidgetLazy viewingAsUser={visibility.viewingAsUser} />
+        <>
+          {/* The desktop rail button, directly under the notifications bell. Rendered here, with the
+              page, rather than by the lazy widget: that is a client-only chunk, so a button it
+              rendered appeared a beat after the bell. A press before the widget has loaded is not
+              lost: `requestFeedbackOpen` waits until the widget subscribes. The offset matches the
+              bell's in `app-shell.tsx` and moves with the page's right edge the same way
+              (`--orbit-dock-w`, including the dock's 1.25rem tuck). Inline, not its own file: the
+              layout's server graph (scripts/smoke-server-graph.ts) is budgeted per file. */}
+          <div
+            className={`fixed right-5 z-30 hidden md:right-[calc(2rem+var(--orbit-dock-w)-min(1.25rem,var(--orbit-dock-w)))] md:block md:transition-[right] md:duration-slow md:ease-house ${
+              visibility.viewingAsUser ? "top-[5.5rem]" : "top-[4.25rem] md:top-[4.75rem]"
+            }`}
+          >
+            <FeedbackTrigger tooltip />
+          </div>
+          <FeedbackWidgetLazy viewingAsUser={visibility.viewingAsUser} />
+        </>
       )}
 
       {/* The micro-survey: renders nothing unless one is due, which is almost always. Not

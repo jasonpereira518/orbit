@@ -32,7 +32,7 @@ async function main() {
     "contact_id", "user_id", "what_they_do", "working_on", "summary", "topics", "open_threads",
     "message_count", "sources", "watermark_at", "watermark_interaction_id",
     "history_truncated_before", "attempts", "last_error", "batch_job_id", "batch_pending_until",
-    "run_id", "updated_at",
+    "run_id", "updated_at", "origin", "relationship",
   ]) {
     check(`relationship_digests.${c}`, digests.has(c));
   }

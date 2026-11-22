@@ -305,6 +305,7 @@ async function scans() {
   const notRecruiter = {
     isRecruiter: false, confidence: 0.1, fullName: null, firm: null,
     companiesMentioned: [], rolesDiscussed: [], summary: null,
+    roleInterviewingFor: null, linkedinUrl: null,
   };
   const common = { subject: "Role at Acme", snippet: "Recruiter here, open role for you", internalDate: Date.now() - 60_000, listUnsubscribe: "", listId: "", precedence: "" };
 

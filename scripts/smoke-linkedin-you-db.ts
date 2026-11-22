@@ -73,6 +73,19 @@ async function main() {
   check("the imported details are gone", cur.career === null);
   check("the line they typed is kept", cur.senderBio === "Backend engineer");
 
+  console.log("\nthe full history (deep read)");
+  const histPatch = patchYou("linkedin_positions", POSITIONS, ["role", "positions"], await loadYouCurrent(USER), NOW, { history: true });
+  await saveCareerPatch(USER, histPatch!);
+  cur = await loadYouCurrent(USER);
+  check("history is stored on career_profile", cur.career?.positions?.length === 1 && cur.career?.positions?.[0].start?.year === 2026, JSON.stringify(cur.career));
+  await clearCareerProfile(USER);
+  const cleared = (await loadYouCurrent(USER)).career;
+  check("Remove imported details clears the history", cleared?.positions === undefined && cleared?.education === undefined, JSON.stringify(cleared));
+  await saveCareerPatch(USER, { career: { positions: histPatch!.career.positions, historyCheckedAt: NOW.toISOString() }, senderBio: null, schools: null, message: "" });
+  await clearCareerProfile(USER);
+  const stamped = (await loadYouCurrent(USER)).career;
+  check("…and keeps the catch-up's stamp, so the history is not written back", stamped?.positions === undefined && stamped?.historyCheckedAt === NOW.toISOString(), JSON.stringify(stamped));
+
   await db.delete(userSettings).where(eq(userSettings.userId, USER));
   console.log(failures ? `\n${failures} check(s) failed` : "\nsmoke-linkedin-you-db: all checks passed");
   if (failures) process.exit(1);

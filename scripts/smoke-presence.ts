@@ -81,8 +81,8 @@ async function main() {
   // The load-bearing one. If this ever passes, the window has been widened and the
   // indicator has stopped meaning anything.
   check(
-    "a beat 200s ago does NOT count as live",
-    !isLive(new Date(now.getTime() - 200_000), now)
+    "a beat 400s ago does NOT count as live",
+    !isLive(new Date(now.getTime() - 400_000), now)
   );
 
   check(

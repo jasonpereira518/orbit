@@ -25,7 +25,10 @@ import {
 import { interactionTypeLabel } from "@/lib/interaction-types";
 import { FACT_LIST_CAP, mergeFactList } from "@/lib/fact-lists";
 import type { NameGuess } from "@/lib/contact-name-guess";
+import { isPersonName } from "@/lib/names/classify";
+import { formatPersonName } from "@/lib/names/parse";
 import {
+  contactChanges,
   contactIdentities,
   contactTags,
   contacts,
@@ -33,6 +36,16 @@ import {
   tags,
   type Interaction,
 } from "@/db/schema";
+import {
+  FIELD_KEYS,
+  decideFieldWrites,
+  stampsFor,
+  userStamps,
+  type FieldChange,
+  type FieldKey,
+  type FieldSource,
+  type FieldSources,
+} from "@/lib/contact-fields";
 import { PaywallError, getEntitlements, type Entitlements } from "@/lib/entitlements";
 import { PLAN_LABELS, availableOn, salePlansWith } from "@/lib/plans/plan-config";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
@@ -46,7 +59,7 @@ import {
 import { isMetContext } from "@/lib/met-context";
 import { generateAndStoreContactBrief } from "@/lib/contact-brief";
 import { markCohortDirty, rescoreContact } from "@/lib/closeness-materialize";
-import { claimIdentities, syncIdentitiesForContact } from "@/lib/contact-identity";
+import { claimIdentities, claimIdentitiesBulk, syncIdentitiesForContact } from "@/lib/contact-identity";
 import { identityKeysFor } from "@/lib/duplicates";
 import { normalizeBlueskyHandle, normalizeMastodonAcct } from "@/lib/social-handles";
 import {
@@ -61,6 +74,10 @@ import {
 } from "@/lib/contact-input";
 import { TEXT_LIMITS, cleanOptionalText, cleanTextList } from "@/lib/input/text";
 
+/**
+ * Knobs for trusted server paths (imports, outreach, extraction). @internal — never a parameter
+ * of an exported Server Action: an action id is callable by anyone, and these skip checks.
+ */
 export type ContactWriteOptions = {
   /** Skip path revalidation during bulk imports. */
   skipRevalidate?: boolean;
@@ -109,7 +126,104 @@ export type ContactWriteOptions = {
    * settings row the caller may already have. Omitted, they are read as before.
    */
   entitlements?: Entitlements;
+  /**
+   * "user": the person typed this name (the contact form, the "?" review). It is written as
+   * given and stamped `name_guess.source = "user"`, which every automated writer, the name
+   * sweep and `shouldReplaceName` treat as final. Set only from those two places.
+   */
+  nameBy?: "user";
+  /**
+   * Who is writing the sourced fields (`@/lib/contact-fields`). "user": written as given, and
+   * each field that changed is stamped as the person's. Any other source: only the values
+   * `decideFieldWrites` lets it write land; replacements and suggestions are logged to
+   * `contact_changes`. Absent: no gate and no stamp, for writers that touch no sourced field
+   * (names, photos, tags, ratings).
+   */
+  by?: FieldSource;
+  /** When the incoming facts were true (a job's start month). Defaults to now. */
+  at?: Date;
 };
+
+/** The sourced columns, read before a gated write. */
+const FIELD_SELECT = {
+  id: contacts.id,
+  fieldSources: contacts.fieldSources,
+  company: contacts.company,
+  title: contacts.title,
+  location: contacts.location,
+  school: contacts.school,
+  email: contacts.email,
+  phone: contacts.phone,
+  linkedinUrl: contacts.linkedinUrl,
+  xHandle: contacts.xHandle,
+  website: contacts.website,
+  industry: contacts.industry,
+};
+
+async function readSourcedFields(userId: string, ids: string[]) {
+  if (ids.length === 0) return new Map<string, { fieldSources: FieldSources | null } & Partial<Record<FieldKey, string | null>>>();
+  const db = await getDb();
+  const rows = await db
+    .select(FIELD_SELECT)
+    .from(contacts)
+    .where(and(eq(contacts.userId, userId), inArray(contacts.id, [...new Set(ids)])));
+  return new Map(rows.map((r) => [r.id, r]));
+}
+
+function sourcedPart(input: Partial<ContactInput>): Partial<Record<FieldKey, string | null | undefined>> {
+  const out: Partial<Record<FieldKey, string | null | undefined>> = {};
+  for (const k of FIELD_KEYS) if (k in input) out[k] = input[k];
+  return out;
+}
+
+/** `input` with its sourced fields replaced by the ones the gate let through. */
+function withGatedFields<T extends Partial<ContactInput>>(input: T, write: Partial<Record<FieldKey, string>>): T {
+  const out = { ...input };
+  for (const k of FIELD_KEYS) delete out[k];
+  return { ...out, ...write };
+}
+
+/**
+ * Log replacements and suggestions. One open suggestion per contact and field: a newer one
+ * replaces the older offer.
+ */
+async function recordFieldChanges(
+  userId: string,
+  rows: Array<{ contactId: string; source: FieldSource; change: FieldChange }>
+) {
+  if (rows.length === 0) return;
+  const db = await getDb();
+  await db
+    .insert(contactChanges)
+    .values(
+      rows.map(({ contactId, source, change }) => ({
+        userId,
+        contactId,
+        kind: "field",
+        field: change.field,
+        before: change.before,
+        after: change.after,
+        source,
+        status: change.status,
+      }))
+    )
+    .onConflictDoUpdate({
+      target: [contactChanges.contactId, contactChanges.field],
+      targetWhere: sql`status = 'suggested'`,
+      set: { after: sql`excluded.after`, source: sql`excluded.source`, createdAt: sql`now()` },
+    });
+}
+
+/**
+ * Offer a value for an empty field without writing it ("Updates to check"). For a finding
+ * that is probably right but not proven: the profile finder's uncorroborated match.
+ */
+export async function suggestFieldChange(userId: string, contactId: string, field: FieldKey, after: string, source: FieldSource) {
+  await recordFieldChanges(userId, [{ contactId, source, change: { field, before: null, after, status: "suggested" } }]);
+}
+
+const stampsSql = (stamps: FieldSources) =>
+  sql`COALESCE(${contacts.fieldSources}, '{}'::jsonb) || ${JSON.stringify(stamps)}::jsonb`;
 
 export type ContactInput = {
   fullName: string;
@@ -384,19 +498,35 @@ function contactInsertValues(
   userId: string,
   input: ContactInput,
   companyFields: { company: string | null; companyId: string | null },
-  now: Date
+  now: Date,
+  nameBy?: "user",
+  by?: FieldSource,
+  at?: Date
 ) {
   const metAt = safeTimestamp(input.dateMet);
+  // A person's name as sources hand it over ("DOE, JANE (Acme)") is stored formatted; a
+  // handle, address or anything else is stored as given, for the name sweep to read later.
+  // A name the user typed is theirs, as typed.
+  const formatted = nameBy === "user" ? null : formatPersonName(input.fullName);
+  const name = formatted && isPersonName(formatted.fullName, { email: input.email }) ? formatted : null;
   const firstInteractionAt =
     input.firstInteractionAt !== undefined
       ? safeTimestamp(input.firstInteractionAt)
       : metAt;
   return {
     userId,
-    fullName: input.fullName,
-    firstName: input.firstName,
-    lastName: input.lastName,
+    fullName: name?.fullName ?? input.fullName,
+    firstName: input.firstName ?? name?.firstName ?? undefined,
+    lastName: input.lastName ?? name?.lastName ?? undefined,
     preferredName: input.preferredName,
+    ...(nameBy === "user"
+      ? { nameGuess: { from: input.fullName, source: "user" as const, weak: false, at: now.toISOString() } }
+      : input.nameGuess !== undefined
+        ? { nameGuess: input.nameGuess }
+        : {}),
+    ...(by
+      ? { fieldSources: stampsFor({ ...sourcedPart(input), company: companyFields.company }, by, at ?? now) }
+      : {}),
     company: companyFields.company,
     companyId: companyFields.companyId,
     title: input.title,
@@ -528,7 +658,7 @@ export async function createContactForUser(
   const [contact] = await db
     .insert(contacts)
     .values({
-      ...contactInsertValues(userId, input, companyFields, now),
+      ...contactInsertValues(userId, input, companyFields, now, options?.nameBy, options?.by, options?.at),
       // Stale from birth: the embedding is built after the response (see deferEmbeddingRebuild).
       embeddingStaleAt: now,
     })
@@ -610,7 +740,29 @@ export async function createContactForUser(
     if (survivor) return survivor;
   }
 
+  if (options?.by !== "linkedin_export") deferExportFill(userId, contact.id);
   return contact;
+}
+
+/**
+ * After the response: a person added now may already be in the user's kept LinkedIn export
+ * (`@/lib/linkedin-export-facts`). Best-effort, like the avatar lookup; one indexed read and
+ * nothing more when there is no export. Imported lazily (it imports this module).
+ */
+function deferExportFill(userId: string, contactId: string) {
+  const task = async () => {
+    try {
+      const { fillFromStoredExport } = await import("@/lib/linkedin-export-facts");
+      await fillFromStoredExport(userId, [contactId]);
+    } catch {
+      // Swallowed: the next import or export upload fills them too.
+    }
+  };
+  try {
+    after(task);
+  } catch {
+    setTimeout(() => void task(), 0);
+  }
 }
 
 /**
@@ -813,7 +965,7 @@ export async function createContactsBulkForUser(
   );
 
   const values = admitted.map((input, i) => ({
-    ...contactInsertValues(userId, input, companyFieldsList[i], now),
+    ...contactInsertValues(userId, input, companyFieldsList[i], now, options?.nameBy, options?.by, options?.at),
     // Flagged, not embedded. `skipEmbedding` used to mean "the caller will embed these in
     // a batch"; it now means "the backfill will" — the same promise with the provider call
     // moved out of the write loop.
@@ -917,7 +1069,7 @@ export function foldMergesByContact(
   }
   return [...byId].map(([contactId, input]) => ({
     contactId,
-    input: input as Partial<ContactInput>,
+    input: input,
   }));
 }
 
@@ -941,6 +1093,11 @@ export function foldMergesByContact(
  * `undefined` means "leave alone", matching `updateContactForUser`'s `!== undefined`
  * checks: each field is passed as NULL and coalesced against the existing column. The two
  * interaction-timestamp columns are the one exception to "leave alone" — see below.
+ *
+ * FILL-ONLY columns: `first_name`, `last_name`, `source`, `how_met`, `met_context` and
+ * `date_met` take the incoming value only when the contact has none. An import is a source
+ * re-telling what it always says ("LinkedIn connection", the connection date); what the
+ * person or an earlier note recorded about where they met wins.
  *
  * KNOWN LIMITATION: COALESCE cannot tell "this field was explicitly normalized/resolved to
  * null" apart from "this field was never mentioned" — both arrive as SQL NULL in the VALUES
@@ -979,7 +1136,12 @@ export function foldMergesByContact(
 export async function bulkMergeContactsForUser(
   userId: string,
   merges: Array<{ contactId: string; input: Partial<ContactInput> }>,
-  companyResolve: CompanyResolver
+  companyResolve: CompanyResolver,
+  /**
+   * Which source these merges come from (`@/lib/contact-fields`). Defaults to "import": a
+   * file the user exported, which fills blanks and never replaces what Orbit already holds.
+   */
+  opts?: { source?: FieldSource; at?: Date }
 ): Promise<Date | null> {
   if (merges.length === 0) return null;
   // Same cleaning every other write path gets (audit M-05): imported text is the most
@@ -987,6 +1149,30 @@ export async function bulkMergeContactsForUser(
   merges = foldMergesByContact(merges).map((m) => ({ ...m, input: cleanContactFreeText(m.input) }));
   const db = await getDb();
   const now = new Date();
+
+  // The field-source gate. Losing values become NULL below, which COALESCE then leaves alone.
+  // ponytail: read-then-write without a lock; a writer landing in between is judged against
+  // the older value, and the next write of that field re-judges it.
+  const source = opts?.source ?? "import";
+  // Every email and phone a merge carries is the person's, written to the column or not: kept
+  // as identifiers so the next import or sync finds them by it. A LinkedIn URL or X handle
+  // is claimed only when it was written (a different one may be a namesake's).
+  const identityClaims = merges.map((m) => ({
+    contactId: m.contactId,
+    keys: identityKeysFor({ email: m.input.email, phone: m.input.phone }),
+  }));
+  const current = await readSourcedFields(userId, merges.map((m) => m.contactId));
+  const stampsById = new Map<string, FieldSources>();
+  const changeRows: Array<{ contactId: string; source: FieldSource; change: FieldChange }> = [];
+  merges = merges.map((m) => {
+    const cur = current.get(m.contactId);
+    const incoming = sourcedPart(m.input);
+    if (!cur || Object.keys(incoming).length === 0) return m;
+    const d = decideFieldWrites(cur, cur.fieldSources, incoming, source, opts?.at ?? now);
+    if (Object.keys(d.stamps).length) stampsById.set(m.contactId, d.stamps);
+    for (const change of d.changes) changeRows.push({ contactId: m.contactId, source, change });
+    return { ...m, input: withGatedFields(m.input, d.write) };
+  });
 
   // See `createContactsBulkForUser` above, and `CompanyResolver.prime` itself.
   await companyResolve.prime(
@@ -1019,27 +1205,42 @@ export async function bulkMergeContactsForUser(
       ${normalizeMetContext(v.metContext)}::text,
       ${safeTimestamp(v.dateMet)}::timestamptz,
       ${safeTimestamp(v.firstInteractionAt)}::timestamptz,
-      ${safeTimestamp(v.lastInteractionAt)}::timestamptz
+      ${safeTimestamp(v.lastInteractionAt)}::timestamptz,
+      ${v.location ?? null}::text,
+      ${v.school ?? null}::text,
+      ${v.xHandle ?? null}::text,
+      ${v.website ?? null}::text,
+      ${v.industry ?? null}::text,
+      ${JSON.stringify(stampsById.get(m.contactId) ?? {})}::jsonb
     )`;
   });
 
   await db.execute(sql`
     UPDATE contacts AS c
+    -- Sourced fields arrive already gated (decideFieldWrites): a value here won.
     SET company           = COALESCE(v.company, c.company),
         company_id        = COALESCE(v.company_id, c.company_id),
         title             = COALESCE(v.title, c.title),
         email             = COALESCE(v.email, c.email),
         phone             = COALESCE(v.phone, c.phone),
         linkedin_url      = COALESCE(v.linkedin_url, c.linkedin_url),
-        first_name        = COALESCE(v.first_name, c.first_name),
-        last_name         = COALESCE(v.last_name, c.last_name),
+        location          = COALESCE(v.location, c.location),
+        school            = COALESCE(v.school, c.school),
+        x_handle          = COALESCE(v.x_handle, c.x_handle),
+        website           = COALESCE(v.website, c.website),
+        industry          = COALESCE(v.industry, c.industry),
+        field_sources     = COALESCE(c.field_sources, '{}'::jsonb) || v.field_sources,
+        -- FILL-ONLY: the name parts, origin and where-met are what the person (or the first
+        -- source) said; a re-import must not turn "Met at AWS Summit" into "LinkedIn connection".
+        first_name        = COALESCE(NULLIF(c.first_name, ''), v.first_name),
+        last_name         = COALESCE(NULLIF(c.last_name, ''), v.last_name),
         profile_image_url = COALESCE(v.profile_image_url, c.profile_image_url),
         profile_image_source = CASE WHEN v.profile_image_url IS NULL THEN c.profile_image_source
                                     ELSE v.profile_image_source END,
-        source            = COALESCE(v.source, c.source),
-        how_met           = COALESCE(v.how_met, c.how_met),
-        met_context       = COALESCE(v.met_context, c.met_context),
-        date_met          = COALESCE(v.date_met, c.date_met),
+        source            = COALESCE(NULLIF(c.source, ''), v.source),
+        how_met           = COALESCE(NULLIF(c.how_met, ''), v.how_met),
+        met_context       = COALESCE(NULLIF(c.met_context, ''), v.met_context),
+        date_met          = COALESCE(c.date_met, v.date_met),
         -- WIDEN, not set-or-leave-alone — see this function's doc comment. A re-import
         -- can only push the known interaction window outward, never narrow it.
         first_interaction_at = LEAST(c.first_interaction_at, v.first_interaction_at),
@@ -1049,10 +1250,15 @@ export async function bulkMergeContactsForUser(
     FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(
       id, company, company_id, title, email, phone, linkedin_url,
       first_name, last_name, profile_image_url, profile_image_source, source, how_met, met_context, date_met,
-      first_interaction_at, last_interaction_at
+      first_interaction_at, last_interaction_at, location, school, x_handle, website, industry, field_sources
     )
     WHERE c.id = v.id AND c.user_id = ${userId}
   `);
+  await recordFieldChanges(userId, changeRows);
+  for (const [i, m] of merges.entries()) {
+    identityClaims[i].keys.push(...identityKeysFor({ linkedinUrl: m.input.linkedinUrl, xHandle: m.input.xHandle }));
+  }
+  await claimIdentitiesBulk(userId, identityClaims, source);
 
   return now;
 }
@@ -1115,10 +1321,51 @@ export async function updateContactForUser(
   options?: ContactWriteOptions
 ) {
   // Same contract as create, applied to whichever fields this patch actually carries.
-  const input = parseContactPatch(rawInput);
+  let input = parseContactPatch(rawInput);
 
   const db = await getDb();
   const staleAt = new Date();
+
+  // The field-source gate (`@/lib/contact-fields`). ponytail: read-then-write, so a second
+  // writer landing between the read and the UPDATE is judged against the older value; the
+  // window is one round trip, and the next write of that field re-judges it.
+  let stamps: FieldSources = {};
+  let changes: FieldChange[] = [];
+  const by = options?.by;
+  const incomingSourced = sourcedPart(input);
+  // Read once for the gate and for the identity sync below (what this write replaces).
+  const current = Object.keys(incomingSourced).length > 0 ? (await readSourcedFields(userId, [id])).get(id) : undefined;
+  // An email or phone the gate does not write is still this person's: kept as an identifier.
+  const extraIdentities = by && by !== "user" ? identityKeysFor({ email: input.email, phone: input.phone }) : [];
+  if (by) {
+    if (current) {
+      if (by === "user") {
+        stamps = userStamps(current, incomingSourced, staleAt);
+      } else {
+        const decision = decideFieldWrites(current, current.fieldSources, incomingSourced, by, options?.at ?? staleAt);
+        input = withGatedFields(input, decision.write);
+        stamps = decision.stamps;
+        changes = decision.changes;
+      }
+    }
+  }
+  // How you met, when the person sets it: the LinkedIn deep read never writes over it
+  // (`canReplaceMet`). Not a FieldKey, so no merge tier reads this stamp.
+  // Only on a real change: the contact form sends all three on every save.
+  if (by === "user" && (input.howMet !== undefined || input.dateMet !== undefined || input.metContext !== undefined)) {
+    const [was] = await (await getDb())
+      .select({ howMet: contacts.howMet, dateMet: contacts.dateMet, metContext: contacts.metContext })
+      .from(contacts)
+      .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
+      .limit(1);
+    const text = (v: string | null | undefined) => (v ?? "").trim();
+    const day = (v: string | Date | null | undefined) => safeTimestamp(v)?.toISOString().slice(0, 10) ?? "";
+    const changed =
+      (input.howMet !== undefined && text(input.howMet) !== text(was?.howMet)) ||
+      (input.dateMet !== undefined && day(input.dateMet) !== day(was?.dateMet)) ||
+      (input.metContext !== undefined && (normalizeMetContext(input.metContext) ?? "") !== text(was?.metContext));
+    if (changed) stamps = { ...stamps, met: { s: "user", at: staleAt.toISOString() } };
+  }
 
   const companyPatch =
     input.company !== undefined
@@ -1130,7 +1377,6 @@ export async function updateContactForUser(
   // writer for these columns and adding a second place that decides this is how the two
   // drift apart.
   const factPatch = options?.mergeFactLists ? mergedFactListsSql(input) : null;
-
 
   const [contact] = await db
     .update(contacts)
@@ -1145,7 +1391,12 @@ export async function updateContactForUser(
         : {}),
       ...(input.nameGuess !== undefined
         ? { nameGuess: input.nameGuess }
-        : input.fullName !== undefined
+        : input.fullName !== undefined && options?.nameBy === "user"
+          ? {
+              // The person named them: final, whatever a guess said before.
+              nameGuess: sql`jsonb_build_object('from', ${contacts.fullName}::text, 'source', 'user', 'weak', false, 'at', ${staleAt.toISOString()}::text)`,
+            }
+          : input.fullName !== undefined
           ? {
               // Old values on the right of SET: only a name that actually changed settles it.
               nameGuess: sql`CASE WHEN ${contacts.nameGuess} IS NOT NULL AND ${contacts.fullName} IS DISTINCT FROM ${input.fullName}
@@ -1218,10 +1469,15 @@ export async function updateContactForUser(
       ...(input.nextFollowUpAt !== undefined
         ? { nextFollowUpAt: safeTimestamp(input.nextFollowUpAt) }
         : {}),
+      ...(Object.keys(stamps).length ? { fieldSources: stampsSql(stamps) } : {}),
       updatedAt: new Date(),
     })
     .where(and(eq(contacts.id, id), eq(contacts.userId, userId)))
     .returning();
+
+  if (contact && by && by !== "user") {
+    await recordFieldChanges(userId, changes.map((change) => ({ contactId: id, source: by, change })));
+  }
 
   // Keep identity rows in step with the columns. An email corrected here must release the
   // old address and claim the new one, or duplicate prevention keeps matching on a value
@@ -1238,7 +1494,10 @@ export async function updateContactForUser(
       input.linkedinUrl !== undefined ||
       input.xHandle !== undefined)
   ) {
-    await syncIdentitiesForContact(userId, id, contact, input.source);
+    await syncIdentitiesForContact(userId, id, contact, input.source, current ?? {});
+  }
+  if (contact && extraIdentities.length) {
+    await claimIdentitiesBulk(userId, [{ contactId: id, keys: extraIdentities }], by);
   }
 
   // Only once the update matched the caller's own row. The UPDATE above is user-scoped, but
@@ -1423,39 +1682,6 @@ export async function logInteractionForUser(
 
   return row;
 }
-
-/**
- * The consequences of an interaction row that was written some other way.
- *
- * `logInteractionForUser` inserts the row and THEN does everything a new touch implies. A send
- * cannot work in that order: the row has to exist first, as the claim that stops a second click
- * emailing the same person, and the touch only really happened once the mail went. So the claim
- * inserts the row itself and calls this after a confirmed send — the same last-touch stamp,
- * embedding and brief refresh, closeness re-score and revalidation, in the same order, so a
- * sent email moves a contact's ring exactly as a logged one does.
- */
-export async function settleWrittenInteraction(
-  userId: string,
-  contactId: string,
-  when: Date,
-  options?: ContactWriteOptions
-) {
-  const db = await getDb();
-  await db
-    .update(contacts)
-    .set({ lastInteractionAt: when, updatedAt: new Date() })
-    .where(and(eq(contacts.id, contactId), eq(contacts.userId, userId)));
-  if (!options?.skipEmbedding) await scheduleEmbeddingRebuild(userId, contactId);
-  if (!options?.skipSummary) deferBriefRefresh(userId, contactId);
-  await scoreAfterWrite(userId, contactId, options);
-  if (!options?.skipRevalidate) {
-    revalidatePath(`/contacts/${contactId}`);
-    revalidatePath("/");
-    revalidatePath("/dashboard");
-    revalidatePath("/graph");
-  }
-}
-
 /**
  * `logInteractionForUser` for note pastes: keyed on `externalId` so a second paste of the
  * same note is a no-op rather than a duplicate timeline row. When the row already exists the

@@ -152,7 +152,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
   const router = useRouter();
   const [phase, setPhase] = useState<MeetingPhase>("setup");
   // The setup form lives in the shell (the calendar nudge fills it before this file loads).
-  const { title, attendeesText, includeMic, calendarEventKey, calendarSeriesId } = form;
+  const { title, attendeesText, includeMic, calendarEventKey, calendarSeriesId, calendarAgenda } = form;
   const attendeeEmailsRef = form.emailsRef;
   const [segments, setSegments] = useState<Record<number, SegmentView>>({});
   const [fatal, setFatal] = useState<string | null>(null);
@@ -486,6 +486,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
           recorderId: recorderIdRef.current,
           calendarEventKey,
           calendarSeriesId,
+          calendarAgenda,
         });
         if (!res.ok) {
           fatalRef.current = true;
@@ -513,7 +514,7 @@ export const MeetingEngine = memo(function MeetingEngine({ form }: { form: Meeti
       // session existed is numbered first, then the live sentences.
       liveStart(id);
     },
-    [attendeeEmailsRef, attendeesText, calendarEventKey, calendarSeriesId, includeMic, liveStart, openQueue, showTranscript, title, uploadChunk]
+    [attendeeEmailsRef, attendeesText, calendarAgenda, calendarEventKey, calendarSeriesId, includeMic, liveStart, openQueue, showTranscript, title, uploadChunk]
   );
 
   const handleEnd = useCallback(

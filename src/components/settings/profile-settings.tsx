@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { SignOutButton, UserButton } from "@clerk/nextjs";
 import { clerkAppearance } from "@/lib/clerk-appearance";
 import Link from "next/link";
 import type { CareerProfile } from "@/db/schema";
 import { clearLinkedInYou } from "@/actions/imports";
-import { saveSenderBio, saveSocialLinks } from "@/actions/settings";
+import { saveCity, saveSenderBio, saveSocialLinks } from "@/actions/settings";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { FormError } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,8 @@ import { integrationHref } from "@/components/settings/sections";
 import {
   Briefcase,
   Building2,
+  GraduationCap,
+  History,
   MapPin,
   Quote,
   RefreshCw,
@@ -27,6 +30,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SENDER_BIO_MAX_LENGTH } from "@/lib/sender-profile";
 import { toast } from "@/lib/toast";
 import { friendlyError } from "@/lib/errors";
@@ -51,12 +55,18 @@ const profileAvatarAppearance = {
 const LINKEDIN_BLUE = "#0A66C2";
 const SKILL_CHIPS = 6;
 
-type CareerRow = { icon: LucideIcon; label: string } & ({ value: string } | { chips: string[] });
+type CareerRow = { icon: LucideIcon; label: string } & (
+  | { value: string; /** Shown on hover/focus: LinkedIn's About summary under the headline. */ hint?: string }
+  | { chips: string[] }
+);
 
 /** The rows worth showing, skipping anything that was never imported. */
-function careerRows(c: CareerProfile): CareerRow[] {
+export function careerRows(c: CareerProfile): CareerRow[] {
   const rows: (CareerRow | null)[] = [
-    c.profile?.headline ? { icon: Quote, label: "Headline", value: c.profile.headline } : null,
+    // Word for word as LinkedIn has it; the About summary rides along on hover.
+    c.profile?.headline
+      ? { icon: Quote, label: "Headline", value: c.profile.headline, hint: c.profile.summary || undefined }
+      : null,
     c.role ? { icon: Briefcase, label: "Current role", value: `${c.role.title} at ${c.role.company}` } : null,
     c.profile?.industry ? { icon: Building2, label: "Industry", value: c.profile.industry } : null,
     c.profile?.location ? { icon: MapPin, label: "Location", value: c.profile.location } : null,
@@ -71,6 +81,32 @@ function careerRows(c: CareerProfile): CareerRow[] {
         }
       : null,
     c.roleKeywords?.length ? { icon: Target, label: "Job titles", chips: c.roleKeywords } : null,
+    // Certifications, honors, projects… from the kept export (#544).
+    c.background?.length
+      ? {
+          icon: Sparkles,
+          label: "Background",
+          chips: [
+            ...c.background.slice(0, SKILL_CHIPS).map((b) => b.title),
+            ...(c.background.length > SKILL_CHIPS ? [`+${c.background.length - SKILL_CHIPS} more`] : []),
+          ],
+        }
+      : null,
+    // Deep read: the full history. Listed so a history-only import still gets the card and its Remove.
+    c.positions?.length
+      ? {
+          icon: History,
+          label: "Work history",
+          value: `${c.positions.length} ${c.positions.length === 1 ? "role" : "roles"}, latest ${c.positions[0].title} at ${c.positions[0].company}`,
+        }
+      : null,
+    c.education?.length
+      ? {
+          icon: GraduationCap,
+          label: "Education",
+          value: `${c.education.length} ${c.education.length === 1 ? "school" : "schools"}: ${c.education.map((e) => e.school).join(", ")}`,
+        }
+      : null,
   ];
   return rows.filter((r): r is CareerRow => r !== null);
 }
@@ -175,12 +211,15 @@ export function AboutYouSettings({
 }) {
   const [bio, setBio] = useState(initialSenderBio);
   const [career, setCareer] = useState(initialCareer);
-  const [clearing, startClear] = useTransition();
-  const [bioPending, startBio] = useTransition();
+  const [clearing, startClear] = useGuardedTransition();
+  const [bioPending, startBio] = useGuardedTransition();
   // A failed save stays next to its button until the next attempt; the toast alone could
   // time out before it was read.
   const [bioError, setBioError] = useState<string | null>(null);
   const [clearError, setClearError] = useState<string | null>(null);
+  const [city, setCity] = useState(initialCareer?.city ?? initialCareer?.profile?.location ?? "");
+  const [cityPending, startCity] = useGuardedTransition();
+  const [cityError, setCityError] = useState<string | null>(null);
 
   return (
     <SettingsSection title="About you">
@@ -231,6 +270,46 @@ export function AboutYouSettings({
       </SettingsRow>
 
       <SettingsRow
+        title="City"
+        labelFor="your-city"
+        description="Where you are. Radar looks for events near you here."
+      >
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            startCity(async () => {
+              setCityError(null);
+              try {
+                const saved = await saveCity(city);
+                setCity(saved.city);
+                toast.success(saved.city ? "Saved" : "Cleared");
+              } catch (err) {
+                const message = friendlyError(err, "Couldn’t save that — try again?");
+                toast.error(message);
+                setCityError(message);
+              }
+            });
+          }}
+        >
+          <Input
+            id="your-city"
+            aria-describedby="your-city-description"
+            value={city}
+            maxLength={120}
+            autoComplete="address-level2"
+            placeholder="Austin, TX"
+            className="max-w-xs"
+            onChange={(e) => setCity(e.target.value)}
+          />
+          <Button type="submit" size="sm" disabled={cityPending}>
+            {cityPending ? "Saving…" : "Save"}
+          </Button>
+          <FormError className="basis-full">{cityError}</FormError>
+        </form>
+      </SettingsRow>
+
+      <SettingsRow
         title="From your LinkedIn"
         description="What Orbit learned about you from LinkedIn. It helps pick who’s worth reaching out to, and never overwrites what you wrote above."
       >
@@ -265,6 +344,22 @@ export function AboutYouSettings({
                           </span>
                         ))}
                       </span>
+                    ) : row.hint ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <span
+                              tabIndex={0}
+                              className="cursor-help rounded-sm underline decoration-border decoration-dotted underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+                            />
+                          }
+                        >
+                          {row.value}
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" align="start" className="max-w-sm leading-relaxed">
+                          {row.hint}
+                        </TooltipContent>
+                      </Tooltip>
                     ) : (
                       row.value
                     )}
@@ -333,7 +428,7 @@ export function AboutYouSettings({
 /** The links on your own star in Constellation. */
 export function SocialLinksSettings({ initialSocialLinks }: { initialSocialLinks: SocialLinks }) {
   const [socials, setSocials] = useState(initialSocialLinks);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [socialsError, setSocialsError] = useState<string | null>(null);
 
   return (

@@ -6,14 +6,20 @@ import { after } from "next/server";
 import { getDb } from "@/db";
 import {
   recruiters,
+  recruiterContactUnlocks,
   userRecruiterLinks,
   userSettings,
   type RecruiterLinkStatus,
 } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
 import { requireRecruitersUser } from "@/lib/plan-guards";
+import { getEntitlements } from "@/lib/entitlements";
+import { getCreditBalance, settleCredits } from "@/lib/credits/ledger";
+import { creditsToMicros } from "@/lib/credits/grants";
 import {
+  MIN_RECRUITERS_FOR_SHARING,
   communityScore,
+  getUserRecruiterCount,
   isViewerSharing,
   listPoolDiscoveries,
   pooledRecruiterIds,
@@ -24,9 +30,10 @@ import {
   rederiveSharedRecruiterPii,
   resolveRecruiterPii,
   toPublicRecruiter,
+  unlockedRecruiterIdsForViewer,
   type PublicRecruiter,
 } from "@/lib/recruiters";
-import { asActionResult } from "@/lib/errors";
+import { type ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { logRecruiterForUser, updateMyLinkForUser, type LogRecruiterInput } from "@/lib/recruiter-writes";
 import { reportError } from "@/lib/report-error";
 
@@ -49,9 +56,11 @@ export async function listDiscoverRecruiters(
     q,
     limit: 40,
   });
-  // Every row here is pooled by construction, and none is linked by this viewer: the shared
-  // values are what a sharing viewer may see.
-  return rows.map((r) => toPublicRecruiter(r, null, true));
+  const unlocked = await unlockedRecruiterIdsForViewer(
+    userId,
+    rows.map((r) => r.id)
+  );
+  return rows.map((r) => toPublicRecruiter(r, null, true, unlocked.has(r.id)));
 }
 
 export async function listMyRecruiters(): Promise<PublicRecruiter[]> {
@@ -63,7 +72,7 @@ export async function listMyRecruiters(): Promise<PublicRecruiter[]> {
     orderBy: [desc(userRecruiterLinks.updatedAt)],
   });
   const pooled = await pooledIdsForViewer(userId, links.map((l) => l.recruiterId));
-  return links.map((l) => toPublicRecruiter(l.recruiter, l, pooled.has(l.recruiterId)));
+  return links.map((l) => toPublicRecruiter(l.recruiter, l, pooled.has(l.recruiterId), true));
 }
 
 export async function getRecruiter(id: string): Promise<PublicRecruiter | null> {
@@ -89,21 +98,40 @@ export async function getRecruiter(id: string): Promise<PublicRecruiter | null> 
     if (!pooled.has(id)) return null;
   }
 
-  return toPublicRecruiter(row, link ?? null, (await pooledIdsForViewer(userId, [id])).has(id));
+  const isPooled = (await pooledIdsForViewer(userId, [id])).has(id);
+  const isUnlocked = link ? true : (await unlockedRecruiterIdsForViewer(userId, [id])).has(id);
+
+  return toPublicRecruiter(row, link ?? null, isPooled, isUnlocked);
 }
 
-/** Current sharing state, for the toggle card. */
-export async function getRecruiterSharing(): Promise<{ enabled: boolean }> {
+/** Current sharing state and recruiter count for the toggle card. */
+export async function getRecruiterSharing(): Promise<{
+  enabled: boolean;
+  recruiterCount: number;
+  minRequired: number;
+}> {
   const userId = await requireUserId();
-  return { enabled: await isViewerSharing(userId) };
+  const [enabled, recruiterCount] = await Promise.all([
+    isViewerSharing(userId),
+    getUserRecruiterCount(userId),
+  ]);
+  return { enabled, recruiterCount, minRequired: MIN_RECRUITERS_FOR_SHARING };
 }
 
 /**
- * Flip the global opt-in. The rating resweep is deferred because one flip re-aggregates
- * every recruiter this user links to, and the toggle should return immediately.
+ * Flip the global opt-in. Requires at least 5 recruiters logged to enable sharing.
  */
 export async function setRecruiterSharing(enabled: boolean) {
   const userId = await requireRecruitersUser();
+  if (enabled) {
+    const count = await getUserRecruiterCount(userId);
+    if (count < MIN_RECRUITERS_FOR_SHARING) {
+      throw new UserFacingError(
+        `You need at least ${MIN_RECRUITERS_FOR_SHARING} recruiters in your list to join the shared pool (you currently have ${count}/${MIN_RECRUITERS_FOR_SHARING})`
+      );
+    }
+  }
+
   const db = await getDb();
   await db
     .update(userSettings)
@@ -121,6 +149,95 @@ export async function setRecruiterSharing(enabled: boolean) {
 
   revalidateRecruiterPaths();
   return { enabled };
+}
+
+/**
+ * Unlock a shared community recruiter's contact information (email, LinkedIn) using 1 credit.
+ * Once unlocked, it stays permanently accessible for this user.
+ */
+export async function unlockRecruiterContact(recruiterId: string): Promise<
+  ActionResult<{ email: string | null; linkedinUrl: string | null; phone: string | null }>
+> {
+  return asActionResult(async () => {
+    const userId = await requireRecruitersUser();
+    const sharing = await isViewerSharing(userId);
+    if (!sharing) {
+      throw new UserFacingError(
+        "You must share at least 5 recruiters with the pool to unlock recruiter contact details"
+      );
+    }
+
+    const db = await getDb();
+    const recruiter = await db.query.recruiters.findFirst({
+      where: eq(recruiters.id, recruiterId),
+    });
+    if (!recruiter) {
+      throw new UserFacingError("Recruiter not found");
+    }
+
+    // 1. Check if already unlocked or user's own recruiter
+    const ownLink = await db.query.userRecruiterLinks.findFirst({
+      where: and(
+        eq(userRecruiterLinks.userId, userId),
+        eq(userRecruiterLinks.recruiterId, recruiterId)
+      ),
+    });
+    if (ownLink) {
+      return {
+        email: ownLink.email || recruiter.email,
+        linkedinUrl: ownLink.linkedinUrl || recruiter.linkedinUrl,
+        phone: ownLink.phone || recruiter.phone,
+      };
+    }
+
+    const existingUnlock = await db.query.recruiterContactUnlocks.findFirst({
+      where: and(
+        eq(recruiterContactUnlocks.userId, userId),
+        eq(recruiterContactUnlocks.recruiterId, recruiterId)
+      ),
+    });
+    if (existingUnlock) {
+      return {
+        email: recruiter.email,
+        linkedinUrl: recruiter.linkedinUrl,
+        phone: recruiter.phone,
+      };
+    }
+
+    // 2. Check user's spendable credits
+    const { plan } = await getEntitlements(userId);
+    const settings = await db.query.userSettings.findFirst({
+      where: eq(userSettings.userId, userId),
+    });
+    const balance = await getCreditBalance(userId, plan, settings);
+    if (balance.spendable < creditsToMicros(1)) {
+      throw new UserFacingError(
+        "You need at least 1 credit to unlock this recruiter’s contact details"
+      );
+    }
+
+    // 3. Settle 1 credit in the ledger
+    const ledgerOp = "recruiter.unlock";
+    await settleCredits({
+      userId,
+      operation: ledgerOp,
+      micros: creditsToMicros(1),
+    });
+
+    // 4. Record the permanent unlock
+    await db.insert(recruiterContactUnlocks).values({
+      userId,
+      recruiterId,
+      costCredits: 1,
+    });
+
+    revalidateRecruiterPaths(recruiterId);
+    return {
+      email: recruiter.email,
+      linkedinUrl: recruiter.linkedinUrl,
+      phone: recruiter.phone,
+    };
+  });
 }
 
 /** Per-recruiter exception to the global opt-in. */

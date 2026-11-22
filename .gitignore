@@ -50,6 +50,9 @@ next-env.d.ts
 # Subagent-driven-development scratch workspace (ledger, briefs, review packages)
 .superpowers/
 
+# TypeScript 7 for the Vercel type-check (scripts/ts7/package.json — own lockfile)
+scripts/ts7/node_modules/
+
 # browser extension (separate project — own lockfile, not deployed)
 extension/node_modules/
 extension/dist/
@@ -66,6 +69,9 @@ extension/public/inject/
 
 # constellation bench fixtures (scripts/bench/constellation-fixtures.ts)
 /.bench-data/
+
+# node:test golden mismatches (src/test-support/golden.ts writes <golden>.actual)
+*.actual
 
 # latency harness (latency/README.md): per-tier PGlite databases, API keys, and raw runs
 /latency/.data/

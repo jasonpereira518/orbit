@@ -6,8 +6,7 @@
  * network latency into it would make Orbit's alert cadence hostage to how slow a customer's
  * endpoint happens to be today.
  *
- * Driven by the ten-minute GitHub Actions schedule in .github/workflows/ops.yml, the only
- * scheduler.
+ * Started hourly by the tick (src/lib/schedules.ts), the only scheduler.
  */
 import { NextResponse } from "next/server";
 import { finishCronRun, startCronRun } from "@/lib/cron-runs";
@@ -15,6 +14,7 @@ import { isInternalRequest } from "@/lib/internal-auth";
 import {
   drainDueDeliveries,
   emitDueFollowupEvents,
+  hasWebhookWork,
   purgeExpiredIdempotencyKeys,
 } from "@/lib/webhooks/dispatch";
 import { reportAndContinue, reportError } from "@/lib/report-error";
@@ -28,6 +28,12 @@ export async function POST(request: Request) {
   // Before any write — an unauthenticated probe must not be able to insert ledger rows.
   if (!isInternalRequest(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  // Nothing due, nobody subscribed to follow-ups, nothing to purge: no ledger rows either.
+  const now = Date.now();
+  if (!(await hasWebhookWork(new Date(now), new Date(now - IDEMPOTENCY_RETENTION_MS)))) {
+    return NextResponse.json({ ok: true, idle: true });
   }
 
   const handle = await startCronRun("webhooks.drain");

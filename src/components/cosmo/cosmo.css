@@ -1,0 +1,202 @@
+/* Where the pointer is inside the idle orb, -1..1 per axis. Registered so the colours glide. */
+@property --cosmo-px {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+@property --cosmo-py {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+/* Cosmo's idle orb: the live canvas orb's colours, drawn in CSS so an idle page runs no loop.
+   The orb itself never moves under the pointer; its lights do — the pink drifts toward it, the
+   cyan away, and the core warms a little while it's there. */
+.cosmo-idle {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 9999px;
+  background:
+    radial-gradient(
+      circle at calc(34% + var(--cosmo-px) * 22%) calc(30% + var(--cosmo-py) * 22%),
+      rgb(244 114 182 / 0.85),
+      transparent 46%
+    ),
+    radial-gradient(
+      circle at calc(70% - var(--cosmo-px) * 14%) calc(66% - var(--cosmo-py) * 14%),
+      rgb(34 211 238 / 0.8),
+      transparent 50%
+    ),
+    radial-gradient(circle at 50% 50%, rgb(167 139 250 / 0.9), #160c3a 72%);
+  box-shadow:
+    0 0 0 1px rgb(167 139 250 / 0.35),
+    0 10px 28px -8px rgb(76 29 149 / 0.6);
+  animation: cosmo-breathe 4.8s ease-in-out infinite;
+  transition:
+    --cosmo-px 0.35s cubic-bezier(0.22, 1, 0.36, 1),
+    --cosmo-py 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.cosmo-idle:hover,
+.cosmo-idle:focus-visible {
+  animation-duration: 2.4s;
+}
+.cosmo-idle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cosmo-idle {
+    transition: none;
+  }
+  .cosmo-idle:hover,
+  .cosmo-idle:focus-visible {
+    animation-duration: 4.8s;
+  }
+}
+/* Something worth a word: a slow gold halo, so the orb reads as "I have something" before the chip. */
+.cosmo-idle[data-nudge] {
+  box-shadow:
+    0 0 0 1px rgb(167 139 250 / 0.35),
+    0 0 0 4px rgb(251 191 36 / 0.28),
+    0 10px 28px -8px rgb(76 29 149 / 0.6);
+}
+.cosmo-chip {
+  animation: cosmo-chip-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes cosmo-chip-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cosmo-chip {
+    animation: none;
+  }
+}
+/* On a phone the shared corner band ends a few pixels into the bottom nav's lifted pill: Cosmo
+   keeps clear of it. 0 at md, where there is no nav. */
+:root {
+  --cosmo-gap: 0.75rem;
+}
+@media (min-width: 48rem) {
+  :root {
+    --cosmo-gap: 0px;
+  }
+}
+
+/* On a phone with the keyboard up, Cosmo tucks into a slim tab on its side edge. */
+.cosmo-tab {
+  width: 0.75rem;
+  height: 3.5rem;
+  background: linear-gradient(180deg, rgb(244 114 182 / 0.9), rgb(167 139 250 / 0.95), rgb(34 211 238 / 0.9));
+  box-shadow: 0 6px 18px -6px rgb(76 29 149 / 0.6);
+}
+.cosmo-tab[data-side="right"] {
+  right: 0;
+  border-radius: 9999px 0 0 9999px;
+}
+.cosmo-tab[data-side="left"] {
+  left: 0;
+  border-radius: 0 9999px 9999px 0;
+}
+/* The ring around whatever Cosmo is pointing at: a spotlight without the scrim. */
+.cosmo-ring {
+  border-radius: 0.875rem;
+  box-shadow:
+    0 0 0 2px rgb(167 139 250 / 0.95),
+    0 0 0 7px rgb(167 139 250 / 0.22);
+  animation: cosmo-ring 1.8s ease-in-out infinite;
+}
+@keyframes cosmo-ring {
+  50% {
+    box-shadow:
+      0 0 0 2px rgb(34 211 238 / 0.95),
+      0 0 0 10px rgb(34 211 238 / 0.16);
+  }
+}
+@keyframes cosmo-breathe {
+  50% {
+    filter: brightness(1.12) saturate(1.1);
+    box-shadow:
+      0 0 0 1px rgb(167 139 250 / 0.5),
+      0 10px 34px -6px rgb(124 58 237 / 0.7);
+  }
+}
+/* Dragging: a grabbing hand everywhere over Cosmo, a lifted shadow, and a dashed outline where it
+   will land when let go (it moves as the target slot changes). */
+.cosmo-root[data-dragging],
+.cosmo-root[data-dragging] * {
+  cursor: grabbing !important;
+}
+.cosmo-root[data-dragging] .cosmo-idle {
+  box-shadow:
+    0 0 0 1px rgb(167 139 250 / 0.45),
+    0 18px 36px -10px rgb(76 29 149 / 0.7);
+}
+.cosmo-landing {
+  border: 2px dashed rgb(167 139 250 / 0.7);
+  background: rgb(167 139 250 / 0.08);
+  animation: cosmo-landing-in 0.16s ease-out;
+  transition:
+    left 0.16s cubic-bezier(0.22, 1, 0.36, 1),
+    top 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes cosmo-landing-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cosmo-landing {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* The docked bar arriving (back from Chat, or a call starting) and leaving for Chat's stage:
+   it holds still while the orb lifts off, then fades down in the hand-off's last moments. */
+.cosmo-live {
+  animation: cosmo-bar-in 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.cosmo-live[data-handoff] {
+  animation: cosmo-bar-out 1.2s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+@keyframes cosmo-bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes cosmo-bar-out {
+  0%,
+  55% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cosmo-live {
+    animation: none;
+  }
+  .cosmo-live[data-handoff] {
+    animation: cosmo-fade-out 0.6s linear forwards;
+  }
+  @keyframes cosmo-fade-out {
+    to {
+      opacity: 0;
+    }
+  }
+}
+
+/* Cosmo just pressed this: a quick violet press ring, so it's clear the click was Cosmo's. */
+[data-cosmo-pressed] {
+  outline: 2px solid rgb(167 139 250 / 0.9);
+  outline-offset: 2px;
+  transition: outline-color 0.4s ease-out;
+}

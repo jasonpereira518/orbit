@@ -89,6 +89,7 @@ export function CaptureFlow({
   canUseSync = false,
   drive = null,
   initialMeeting = null,
+  candidateKey = null,
   cloudNotes = null,
   openCloudReview = false,
   showImports = false,
@@ -106,6 +107,8 @@ export function CaptureFlow({
    * starts with its people seeded. `eventId` rides on the job so the save marks people as met.
    */
   initialMeeting?: { notes: string; hints: CaptureParseHints; eventId?: string | null } | null;
+  /** An upcoming calendar event key to prefill/suggest on /meetings. */
+  candidateKey?: string | null;
   defaultMode?: CaptureMode;
   hasApiKey?: boolean;
   /** The AI gate's reason when `hasApiKey` is false — which notice to show. */
@@ -626,6 +629,7 @@ export function CaptureFlow({
             )}
             {mode === "meeting" && (
               <MeetingCaptureTab
+                candidateKey={candidateKey}
                 resumable={resumableMeeting}
                 hasApiKey={hasApiKey}
                 aiReason={aiReason}

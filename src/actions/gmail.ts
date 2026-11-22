@@ -21,6 +21,7 @@ import {
   GMAIL_SCAN_IMPORT_TYPE,
   runGmailRecruiterScanJob,
 } from "@/lib/gmail-scan-processor";
+import { type RecruitingCycle } from "@/lib/recruiter-scan-state";
 import {
   hasCalendarScope,
   buildGmailAuthUrl,
@@ -42,7 +43,7 @@ import { deleteEventConnection } from "@/lib/events/connections";
 import { purgeUserData } from "@/lib/user-data";
 import { deleteEmailIntelData } from "@/lib/email-intel/store";
 import { DISCONNECT_DELETE_CATEGORIES } from "@/lib/data-categories";
-import { ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
+import { type ActionResult, asActionResult, UserFacingError } from "@/lib/errors";
 import { demoWorkspaceEmail, isDemoWorkspace } from "@/lib/demo-workspace";
 import { demoGmailConnectionStatus } from "@/lib/demo-workspace-connections";
 import { recordDemoRecruiterScan } from "@/lib/demo-workspace-actions";
@@ -177,12 +178,6 @@ export async function startGmailOAuth(input: {
       `Gmail is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI.${hint}`,
     );
   }
-
-  // Safe diagnostic — redirect URI only, never secret/tokens
-  console.info("[gmail-oauth] starting auth", {
-    redirectUri: summary.redirectUri,
-    hasClientId: summary.hasClientId,
-  });
 
   // returnTo is a same-origin path only — never an absolute/external URL.
   const safeReturnTo = safeReturnPath(input.returnTo) ?? "";
@@ -358,7 +353,9 @@ function toScanStatus(row: typeof imports.$inferSelect): GmailScanStatus {
  * backstop), so it survives navigation, a closed tab, and a dead invocation. The client
  * only polls.
  */
-export async function startGmailRecruiterScan(): Promise<
+export async function startGmailRecruiterScan(opts?: {
+  cycle?: RecruitingCycle;
+}): Promise<
   ActionResult<{ importId: string }>
 > {
   return asActionResult(async () => {
@@ -415,11 +412,15 @@ export async function startGmailRecruiterScan(): Promise<
         status: "processing",
         totalRows: null,
         rowsProcessed: 0,
-        stats: { discoveryComplete: false, messagesScanned: 0 },
+        stats: {
+          discoveryComplete: false,
+          messagesScanned: 0,
+          cycle: opts?.cycle ?? "current",
+        },
       })
       .returning();
 
-    after(() => startJobInOwnInvocation(row.id, runGmailRecruiterScanJob).catch(() => {}));
+    after(() => startJobInOwnInvocation(row.id, runGmailRecruiterScanJob));
     revalidatePath("/recruiters");
     return { importId: row.id };
   });

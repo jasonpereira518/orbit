@@ -19,10 +19,10 @@ import { resolveAiAccess, type AiAccess } from "@/lib/ai-access";
 import { guardModelOutput } from "@/lib/ai-security";
 import { friendlyError } from "@/lib/errors";
 import { chooseCompletionKey } from "@/lib/managed-ai-policy";
-import { RADAR_CAPS } from "@/lib/radar/score";
 import type { RadarAiNote, RadarEvidence, RadarReason, RecommendationKind } from "@/lib/radar/types";
 import { buildRadarWhyPrompt, radarWhyInputs } from "@/lib/radar/why-prompt";
-import { reportUnlessQuiet } from "@/lib/report-error";
+import { scrubPunctuation } from "@/lib/message-format";
+import { loadRelationshipContexts, relationshipFactLines, type RelationshipContext } from "@/lib/relationship-context";
 
 const noteSchema = z.object({ why: z.string(), opener: z.string() });
 
@@ -48,6 +48,8 @@ type NoteTarget = {
   contactName: string;
   title: string | null;
   company: string | null;
+  /** LinkedIn deep read: how you met and where you overlapped. */
+  relationship?: string[];
 };
 
 async function writeNote(
@@ -77,7 +79,8 @@ async function writeNote(
     return null;
   }
   const why = guardModelOutput(parsed.why.trim(), { system }).text.slice(0, WHY_MAX).trim();
-  const opener = guardModelOutput(parsed.opener.trim(), { system }).text.slice(0, OPENER_MAX).trim();
+  // A line the user sends, so the house bans apply (`@/lib/message-format`).
+  const opener = scrubPunctuation(guardModelOutput(parsed.opener.trim(), { system }).text).slice(0, OPENER_MAX).trim();
   if (!why && !opener) return null;
 
   const note: RadarAiNote = { why, opener, inputsHash: target.inputsHash, generatedAt: new Date().toISOString() };
@@ -105,6 +108,7 @@ async function loadTargets(userId: string, where: ReturnType<typeof sql>, limit:
     reasons: RadarReason[];
     evidence: RadarEvidence[];
     inputs_hash: string;
+    contact_id: string;
     full_name: string;
     preferred_name: string | null;
     title: string | null;
@@ -112,7 +116,7 @@ async function loadTargets(userId: string, where: ReturnType<typeof sql>, limit:
   }>(
     await db.execute(sql`
       SELECT r.id, r.kind, r.reasons, r.evidence, r.inputs_hash,
-             c.full_name, c.preferred_name, c.title, c.company
+             c.id AS contact_id, c.full_name, c.preferred_name, c.title, c.company
         FROM recommendations r
         JOIN contacts c ON c.id = r.contact_id AND c.user_id = r.user_id
        WHERE r.user_id = ${userId} AND r.status = 'pending' AND ${where}
@@ -120,7 +124,9 @@ async function loadTargets(userId: string, where: ReturnType<typeof sql>, limit:
        LIMIT ${limit}
     `)
   );
+  const deep = await loadRelationshipContexts(userId, rows.map((r) => r.contact_id)).catch(() => new Map<string, RelationshipContext>());
   return rows.map((r) => ({
+    relationship: relationshipFactLines(deep.get(r.contact_id)),
     id: r.id,
     kind: r.kind,
     reasons: r.reasons ?? [],
@@ -130,41 +136,6 @@ async function loadTargets(userId: string, where: ReturnType<typeof sql>, limit:
     title: r.title,
     company: r.company,
   }));
-}
-
-/**
- * Notes for the cards a person sees first, during a run: the top of the pending list,
- * where the stored note is missing or was written from different facts. Sequential, under
- * one deadline, so a slow provider costs the run its notes rather than its schedule.
- */
-export async function explainTopForRun(
-  userId: string,
-  access: AiAccess,
-  opts: { budgetMs: number }
-): Promise<number> {
-  const signal = AbortSignal.timeout(Math.max(1_000, opts.budgetMs));
-  const top = await loadTargets(userId, sql`TRUE`, RADAR_CAPS.today);
-  const db = await getDb();
-  const current = rowsOf<{ id: string }>(
-    await db.execute(sql`
-      SELECT id FROM recommendations
-       WHERE user_id = ${userId} AND status = 'pending'
-         AND ai_note IS NOT NULL AND ai_note ->> 'inputsHash' = inputs_hash
-    `)
-  );
-  const fresh = new Set(current.map((r) => r.id));
-  let written = 0;
-  for (const target of top) {
-    if (fresh.has(target.id)) continue;
-    if (signal.aborted) break;
-    try {
-      if (await writeNote(userId, target, access, signal)) written++;
-    } catch (err) {
-      reportUnlessQuiet(err, { where: "job.radar.why", userId, level: "warning" });
-      if (signal.aborted) break;
-    }
-  }
-  return written;
 }
 
 /** One card's note on demand, from the page. */

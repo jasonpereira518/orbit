@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { formatDistanceToNow } from "date-fns";
 import { CalendarSync, Check, Copy, ExternalLink } from "lucide-react";
 import {
@@ -34,7 +35,7 @@ export function ReminderCalendarSync({ initial }: { initial: CalendarSyncSummary
   const [fresh, setFresh] = useState<CalendarFeedStatus | null>(null);
   const [confirmingNew, setConfirmingNew] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
 
   // A refreshed page is newer than what this row last knew.
   const [syncedFrom, setSyncedFrom] = useState(initial);

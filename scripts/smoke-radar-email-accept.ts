@@ -53,7 +53,7 @@ async function main() {
   await db.delete(emailThreads).where(inArray(emailThreads.userId, [U, V]));
   await db.delete(contacts).where(inArray(contacts.userId, [U, V]));
   for (const u of [U, V]) await ensureUserSettings(u);
-  await db.update(userSettings).set({ emailIntelEnabled: 1 }).where(eq(userSettings.userId, U));
+  await db.update(userSettings).set({ emailIntelEnabled: 1, compedPlan: "orbit" /* the free tier shows one card per kind */ }).where(eq(userSettings.userId, U));
 
   const dana = await addContact(U, "Dana Kim", "Technical Recruiter", "dana@northwind.example");
   const eli = await addContact(U, "Eli Park", "Payments Engineer", null);

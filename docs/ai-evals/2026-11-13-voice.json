@@ -1,0 +1,41 @@
+{
+  "runs": 2,
+  "cases": 46,
+  "report": {
+    "gpt-4.1": {
+      "passed": 83,
+      "total": 92,
+      "ms": 110850,
+      "failures": [
+        "Where do I add a new reminder? → called open_page, wanted point_at",
+        "¿Quién de mis contactos trabaja en Stripe? → called who_do_i_know_at",
+        "Open the new reminder form for me. → called open_page, wanted click",
+        "Start a reminder to call Ada next Monday. → called search_contacts, wanted click|create_reminder",
+        "How do I add a contact? → no tool",
+        "Where do I add a new reminder? → called open_page, wanted point_at",
+        "¿Quién de mis contactos trabaja en Stripe? → called who_do_i_know_at",
+        "Open the new reminder form for me. → called open_page, wanted click",
+        "Start a reminder to call Ada next Monday. → called search_contacts, wanted click|create_reminder"
+      ]
+    },
+    "gpt-4o-mini": {
+      "passed": 80,
+      "total": 92,
+      "ms": 110545,
+      "failures": [
+        "Where do I add a new reminder? → called open_page, wanted point_at",
+        "How do I add a contact? → no tool",
+        "When did I last talk to this person? → query_interactions input lacks \"5b0c8d62-7a49-4a8e-9f7f-1f0e3a0c2d11\"",
+        "¿Quién de mis contactos trabaja en Stripe? → called who_do_i_know_at",
+        "Type 'Call Ada about the intro' as the title. → called create_reminder, wanted type_into",
+        "Open the new reminder form for me. → called reminders.new, wanted click",
+        "Where do I add a new reminder? → called open_page, wanted point_at",
+        "How do I add a contact? → no tool",
+        "When did I last talk to this person? → no tool",
+        "¿Quién de mis contactos trabaja en Stripe? → called who_do_i_know_at",
+        "Open the new reminder form for me. → called reminders.new, wanted click",
+        "Type 'Call Ada about the intro' as the title. → called create_reminder, wanted type_into"
+      ]
+    }
+  }
+}

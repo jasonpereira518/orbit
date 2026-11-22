@@ -234,12 +234,6 @@ async function main() {
   check("overdueCount matches", counts.overdueCount === jsOverdue,
     `sql ${counts.overdueCount} vs js ${jsOverdue}`);
 
-  const jsDue = all.filter(
-    (c) => c.nextFollowUpAt && new Date(c.nextFollowUpAt).getTime() <= now
-  ).length;
-  check("dueFollowUpCount uses <= where overdueCount uses <", counts.dueFollowUpCount === jsDue,
-    `sql ${counts.dueFollowUpCount} vs js ${jsDue}`);
-
   console.log("\nVocabularies…");
   const vocab = await getDashboardVocabularies(USER);
   const jsCompanies = [...new Set(all.map((c) => (c.company || "").trim()).filter(Boolean))].sort();
@@ -262,7 +256,7 @@ async function main() {
   console.log("\nAn empty account…");
   const empty = await getDashboardCounts("smoke-dashboard-aggregates-nobody");
   check("counts are zero, not null", empty.totalContacts === 0 && empty.dormantCount === 0 &&
-    empty.overdueCount === 0 && empty.dueFollowUpCount === 0, JSON.stringify(empty));
+    empty.overdueCount === 0, JSON.stringify(empty));
   const emptyVocab = await getDashboardVocabularies("smoke-dashboard-aggregates-nobody");
   check("vocabularies are empty arrays",
     emptyVocab.companies.length === 0 && emptyVocab.schools.length === 0 && emptyVocab.tags.length === 0);

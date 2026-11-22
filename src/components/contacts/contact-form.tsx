@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { toast } from "@/lib/toast";
 import {
   createContact,
@@ -64,7 +65,7 @@ export function ContactForm({
   compact?: boolean;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [lookingUp, setLookingUp] = useState(false);
   // A save that failed on the server. The toast can time out or be missed; this stays by the
   // button until the next attempt.
@@ -276,7 +277,7 @@ export function ContactForm({
               onSuccess?.({ id: contactId });
               if (redirectOnSuccess) router.push(`/contacts/${contactId}`);
             } else {
-              const c = await createContact(payload);
+              const c = await createContact(payload, { typedName: true });
               await queueWorkHistory(c.id, payload.linkedinUrl);
               toast.success("Added to your orbit");
               onSuccess?.({ id: c.id });
@@ -303,7 +304,7 @@ export function ContactForm({
                 required
                 value={form.fullName}
                 onChange={(e) => set("fullName", e.target.value)}
-                placeholder="Jason Pereira"
+                placeholder="Full name"
               />
             </Field>
             <Field label="LinkedIn URL" description={lookingUp ? "Looking up profile…" : "Paste a profile URL to autofill role"}>
@@ -329,7 +330,7 @@ export function ContactForm({
                 autoComplete="off"
                 value={form.company}
                 onChange={(e) => set("company", e.target.value)}
-                placeholder="Amazon Web Services (AWS)"
+                placeholder="Company"
               />
             </Field>
             <Field label="Role">
@@ -337,7 +338,7 @@ export function ContactForm({
                 autoComplete="off"
                 value={form.title}
                 onChange={(e) => set("title", e.target.value)}
-                placeholder="Solutions Architect intern"
+                placeholder="Role"
               />
             </Field>
           </div>
@@ -359,7 +360,7 @@ export function ContactForm({
               required
               value={form.fullName}
               onChange={(e) => set("fullName", e.target.value)}
-              placeholder="Jason Pereira"
+              placeholder="Full name"
             />
           </Field>
           <Field label="Preferred name">
@@ -367,7 +368,7 @@ export function ContactForm({
               autoComplete="off"
               value={form.preferredName}
               onChange={(e) => set("preferredName", e.target.value)}
-              placeholder="Jason"
+              placeholder="Preferred name"
             />
           </Field>
         </div>
@@ -433,7 +434,7 @@ export function ContactForm({
               autoComplete="off"
               value={form.company}
               onChange={(e) => set("company", e.target.value)}
-              placeholder="Amazon Web Services (AWS)"
+              placeholder="Company"
             />
           </Field>
           <Field label="Role" description="Autofills from LinkedIn when available">
@@ -441,7 +442,7 @@ export function ContactForm({
               autoComplete="off"
               value={form.title}
               onChange={(e) => set("title", e.target.value)}
-              placeholder="Solutions Architect intern"
+              placeholder="Role"
             />
           </Field>
         </div>
@@ -461,7 +462,7 @@ export function ContactForm({
               onChange={(v) => set("school", v)}
               onSelect={selectSchool}
               suggestions={suggestions.schools}
-              placeholder="Columbia University"
+              placeholder="School"
             />
           </Field>
         </div>

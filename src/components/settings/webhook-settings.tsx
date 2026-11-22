@@ -12,7 +12,8 @@
  * classic way this feature wastes someone's afternoon, so the panel reports the handshake
  * result rather than a hopeful "saved".
  */
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Copy, KeyRound, Plus, Trash2, Webhook } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
@@ -31,25 +32,10 @@ import { AccountHeader, FeatureRow, LoadError } from "@/components/settings/acco
 import { StatusDot } from "@/components/settings/integration-ui";
 import { useConfirmFocus } from "@/components/settings/use-confirm-focus";
 import { TOAST_COPY } from "@/lib/toast-copy";
+import { withTimeout } from "@/lib/async";
 
 const LOAD_TIMEOUT_MS = 12_000;
 const TIMED_OUT = "orbit:timed-out";
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(TIMED_OUT)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
-}
 
 const EVENTS = [
   { id: "contact.created", label: "A contact is added" },
@@ -67,12 +53,12 @@ export function WebhookSettings() {
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [pending, startTransition] = useGuardedTransition();
   const deleteFocus = useConfirmFocus(confirmingDelete);
 
   const load = useCallback(() => {
     setError(null);
-    withTimeout(listWebhookEndpoints(), LOAD_TIMEOUT_MS)
+    withTimeout(listWebhookEndpoints(), LOAD_TIMEOUT_MS, TIMED_OUT)
       .then(setEndpoints)
       .catch((err: unknown) => {
         setEndpoints([]);

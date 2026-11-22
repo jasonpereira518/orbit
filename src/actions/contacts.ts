@@ -1,6 +1,7 @@
 "use server";
 
 import { after } from "next/server";
+import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { requirePageUser } from "@/lib/plan-guards";
 import { relatedSqlLower } from "@/lib/related-contacts-sql";
 import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
@@ -52,19 +53,19 @@ import {
   type LinkedInProfileEnrichment,
 } from "@/lib/apollo";
 import { kickWorkHistoryResearch } from "@/lib/work-history-research";
-import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { LINKEDIN_REFRESH_BATCH_SIZE } from "@/lib/outreach-types";
 import { buildLinkedInUrl } from "@/lib/outreach-channels";
 import {
   AVATAR_BACKFILL_BATCH_SIZE,
   AVATAR_BACKFILL_BUDGET_MS,
   downloadAndPersistAvatar,
-  fetchGravatarPhotoUrl,
   isLinkedInProfilePhoto,
+  isUnusableAvatarUrl,
   AvatarSourceRateLimitError,
 } from "@/lib/contact-avatar";
 import {
   adoptPhotoIntoSharedPool,
+  resolveGravatarCached,
   resolveLinkedInPhotoCached,
   sharedPhotoSlug,
   type ProfileImageSource,
@@ -77,11 +78,13 @@ import {
   splitHeadline,
 } from "@/lib/linkedin-scraper";
 import { readPublicWorkHistory, PUBLIC_WORK_HISTORY_DAYS } from "@/lib/public-work-history";
-import { isHandle } from "@/lib/contact-name-guess";
+import { guessName, isUsernameOrGenericName } from "@/lib/contact-name-guess";
+import { contactRefreshCandidatePredicate } from "@/lib/admin-contact-upkeep";
 import { clientAvatarUrlSql, sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import {
   buildGooglePhotoIndex,
   buildOutlookContactIndex,
+  buildProviderNameIndex,
   fetchOutlookContactPhoto,
 } from "@/lib/contact-avatar-connectors";
 import { draftFollowUpResult } from "@/lib/follow-up-drafts";
@@ -92,6 +95,8 @@ import {
   resolveAvatarNow,
   runAvatarBackfillBatch,
 } from "@/lib/avatar-backfill";
+import { runAvatarUpgradePass } from "@/lib/avatar-upgrade";
+import { reportError } from "@/lib/report-error";
 import { reindexInteractionPassages } from "@/lib/memory-backfill";
 import { traced } from "@/lib/perf-trace";
 import {
@@ -107,16 +112,17 @@ import {
   type RelatedContactCandidate,
 } from "@/lib/related-contacts";
 import { UNDO_DELAY_MS } from "@/lib/email/config";
+import { isLinkedInProfileUrl } from "@/lib/identity/linkedin";
 import { enqueueEmail, type EnqueueRefusal } from "@/lib/email/outbox";
 import { scheduleDispatch } from "@/lib/email/schedule";
 import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/email/sender";
 import { trackSearchPerformed } from "@/lib/search-events";
 import { TEXT_LIMITS, cleanOptionalText, cleanTextList } from "@/lib/input/text";
+import { deferStyleProfileBuild } from "@/lib/style-profile-defer";
+import { removeRelationshipKind } from "@/lib/relationship-engine/apply";
+import { isUuid } from "@/lib/ids";
 
-export type {
-  ContactInput,
-  ContactWriteOptions,
-} from "@/lib/contact-writes";
+export type { ContactInput } from "@/lib/contact-writes";
 
 export type {
   ContactListRow,
@@ -719,8 +725,9 @@ function clientContactInput<T extends Partial<ContactInput>>(input: T): T {
  * free plan's limit (audit H-01). Server callers that need options use the `*ForUser`
  * functions in `@/lib/contact-writes` directly.
  */
-export async function createContact(input: ContactInput) {
-  const { contact } = await createContactDetailed(input);
+/** `typedName`: the contact form, where the person typed the name; automation never renames it. */
+export async function createContact(input: ContactInput, opts?: { typedName?: boolean }) {
+  const { contact } = await createContactDetailed(input, opts);
   return contact;
 }
 
@@ -736,11 +743,12 @@ export async function createContact(input: ContactInput) {
  * Separate from `createContact` rather than a changed return type, so the outreach path
  * that only wants the row keeps working unchanged.
  */
-export async function createContactDetailed(input: ContactInput) {
+export async function createContactDetailed(input: ContactInput, opts?: { typedName?: boolean }) {
   const userId = await requirePageUser("page.contacts");
   const { contactId, outcome, reason } = await resolveOrCreateContact(
     userId,
-    clientContactInput(input)
+    clientContactInput(input),
+    opts?.typedName ? { nameBy: "user", by: "user" } : {}
   );
   const db = await getDb();
 
@@ -752,7 +760,7 @@ export async function createContactDetailed(input: ContactInput) {
       await resolveAvatarNow(db, userId, contactId, {
         persistRemote: downloadAndPersistAvatar,
         resolveLinkedIn: (id, url) => resolveLinkedInPhotoCached(id, url, userId),
-        resolveGravatar: fetchGravatarPhotoUrl,
+        resolveGravatar: resolveGravatarCached,
         deadline: Date.now() + 2500,
       });
     } catch {
@@ -773,8 +781,9 @@ export async function createContactDetailed(input: ContactInput) {
 // same server-only `options` — so it was never callable from a browser on purpose, yet an
 // action id was still minted for it. Importers call `createContactsBulkForUser` directly.
 
+/** A name in the patch is one the person typed (only the contact form sends one): final. */
 export async function updateContact(id: string, input: Partial<ContactInput>) {
-  return updateContactForUser(await requirePageUser("page.contacts"), id, clientContactInput(input));
+  return updateContactForUser(await requirePageUser("page.contacts"), id, clientContactInput(input), { nameBy: "user", by: "user" });
 }
 
 /**
@@ -786,16 +795,18 @@ export async function reviewContactName(id: string, name?: { firstName: string; 
   if (name) {
     const firstName = name.firstName.trim();
     const lastName = name.lastName.trim();
-    await updateContactForUser(userId, id, {
-      fullName: [firstName, lastName].filter(Boolean).join(" "),
-      firstName,
-      lastName,
-    });
+    await updateContactForUser(
+      userId,
+      id,
+      { fullName: [firstName, lastName].filter(Boolean).join(" "), firstName, lastName },
+      { nameBy: "user" }
+    );
   }
+  // Confirmed or typed, the name is now the person's: final for every automated writer.
   const db = await getDb();
   await db
     .update(contacts)
-    .set({ nameGuess: sql`${contacts.nameGuess} || '{"weak": false}'::jsonb` })
+    .set({ nameGuess: sql`${contacts.nameGuess} || '{"weak": false, "source": "user"}'::jsonb` })
     .where(and(eq(contacts.id, id), eq(contacts.userId, userId), sql`${contacts.nameGuess} IS NOT NULL`));
   revalidatePath("/contacts");
   revalidatePath(`/contacts/${id}`);
@@ -1049,6 +1060,15 @@ export async function reorderSameDayInteractions(
   return { ok: true as const };
 }
 
+/** "Not right?" on a contact's relationship kind (LinkedIn deep read): hide it for good. */
+export async function removeContactRelationshipKind(contactId: string) {
+  const userId = await requirePageUser("page.contacts");
+  if (!isUuid(contactId)) return { ok: false as const };
+  const ok = await removeRelationshipKind(userId, contactId);
+  revalidatePath(`/contacts/${contactId}`);
+  return { ok };
+}
+
 export async function regenerateContactSummary(contactId: string) {
   const userId = await requirePageUser("page.contacts");
   const out = await generateAndStoreContactBrief(userId, contactId, {
@@ -1064,10 +1084,10 @@ export type LinkedInRefreshTarget = {
   id: string;
   fullName: string;
   email: string | null;
-  linkedinUrl: string;
+  linkedinUrl: string | null;
 };
 
-/** Contacts that have a LinkedIn URL and can be refreshed. */
+/** Contacts that can be refreshed: LinkedIn profiles, handle names to fix, or missing avatars. */
 export async function listLinkedInRefreshTargets(): Promise<{
   targets: LinkedInRefreshTarget[];
   hasApollo: boolean;
@@ -1076,28 +1096,21 @@ export async function listLinkedInRefreshTargets(): Promise<{
   const db = await getDb();
   const apiKey = await getApolloApiKey(userId);
 
-  // Filtered in SQL rather than fetched-then-filtered: this used to pull every contact on
-  // the account (indexed only by userId) just to throw away everyone without a LinkedIn
-  // URL. `contacts_user_linkedin_idx` covers `(userId, linkedinUrl)`, so the predicate below
-  // is served by the same index instead of a full account scan.
-  const rows = await db.query.contacts.findMany({
-    where: and(
-      eq(contacts.userId, userId),
-      sql`${contacts.linkedinUrl} is not null and btrim(${contacts.linkedinUrl}) <> ''`
-    ),
-    columns: {
-      id: true,
-      fullName: true,
-      email: true,
-      linkedinUrl: true,
-    },
-  });
+  const rows = await db
+    .select({
+      id: contacts.id,
+      fullName: contacts.fullName,
+      email: contacts.email,
+      linkedinUrl: contacts.linkedinUrl,
+    })
+    .from(contacts)
+    .where(contactRefreshCandidatePredicate(userId));
 
   const targets = rows.map((r) => ({
     id: r.id,
     fullName: r.fullName,
     email: r.email,
-    linkedinUrl: r.linkedinUrl!.trim(),
+    linkedinUrl: r.linkedinUrl ? r.linkedinUrl.trim() : null,
   }));
 
   return { targets, hasApollo: Boolean(apiKey) };
@@ -1116,6 +1129,12 @@ export type AvatarBackfillResult = {
   rateLimitedUntil: number | null;
   /** Set when the photo store itself is broken — the whole run should stop. */
   storageError: string | null;
+  /**
+   * Contacts whose small stored photo was swapped for a bigger one by the idle-tick upgrade
+   * pass (`avatar-upgrade.ts`). Not counted in `saved`: nothing new was fetched, so the
+   * "Fetching LinkedIn photos" card must not appear for it.
+   */
+  upgradedIds?: string[];
 };
 
 export type AvatarBackfillOptions = {
@@ -1148,6 +1167,18 @@ export async function backfillContactAvatars(
   ]);
 
   if (candidates.length === 0) {
+    // First-time photos come first; only a tick with none left to fetch is spent on swapping a
+    // few small stored photos for bigger ones. Total on purpose: it is a nicety, and a fault
+    // in it must not turn the backfill's "nothing to do" into a 500.
+    const upgrade = await runAvatarUpgradePass(db, userId).catch((err) => {
+      reportError(err, { where: "avatar.upgrade", userId, level: "warning" });
+      return null;
+    });
+    if (upgrade && upgrade.upgraded > 0) {
+      revalidatePath("/contacts");
+      revalidatePath("/");
+      revalidatePath("/graph");
+    }
     return {
       saved: 0,
       savedIds: [],
@@ -1156,6 +1187,7 @@ export async function backfillContactAvatars(
       failed: 0,
       rateLimitedUntil: null,
       storageError: null,
+      upgradedIds: upgrade?.upgradedIds ?? [],
     };
   }
 
@@ -1242,7 +1274,7 @@ export async function backfillContactAvatars(
         persistRemote: downloadAndPersistAvatar,
         resolveConnectedAccount,
         resolveLinkedIn: (contactId, url) => resolveLinkedInPhotoCached(contactId, url, userId),
-        resolveGravatar: fetchGravatarPhotoUrl,
+        resolveGravatar: resolveGravatarCached,
         resolveApollo,
         sourcesUnavailable,
         save: async (contactId, photoUrl, source) => {
@@ -1285,20 +1317,6 @@ export async function backfillContactAvatars(
     ...result,
     pending: Math.max(0, backlog - result.saved - result.failedIds.length),
   };
-}
-
-function isLinkedInProfileUrl(raw: string) {
-  const trimmed = raw.trim();
-  if (!trimmed) return false;
-  try {
-    const url = new URL(
-      trimmed.startsWith("http") ? trimmed : `https://${trimmed}`
-    );
-    const host = url.hostname.replace(/^www\./i, "").toLowerCase();
-    return host === "linkedin.com" && /\/in\//i.test(url.pathname);
-  } catch {
-    return /linkedin\.com\/in\//i.test(trimmed);
-  }
 }
 
 /**
@@ -1365,10 +1383,10 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
   const byId = new Map(rows.map((r) => [r.id, r]));
   const ordered = contactIds
     .map((id) => byId.get(id))
-    .filter((r): r is NonNullable<typeof r> => Boolean(r?.linkedinUrl?.trim()));
+    .filter((r): r is NonNullable<typeof r> => Boolean(r));
 
   if (ordered.length === 0) {
-    return { refreshed: 0, unmatched: 0, failed: 0, avatarOnly: false, rateLimited: false };
+    return { refreshed: 0, unmatched: 0, failed: 0, avatarOnly: false, rateLimited: false, namesFixed: 0, avatarsUpdated: 0 };
   }
 
   let refreshed = 0;
@@ -1376,10 +1394,22 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
   let failed = 0;
   let rateLimited = false;
   let anyDetailsUpdated = false;
+  let namesFixed = 0;
+  let avatarsUpdated = 0;
 
   const apiKey = await getApolloApiKey(userId);
 
-  // 1. Direct LinkedIn profile fetch (free, no API quota)
+  // Pre-flight lookups for address books and connected account photos
+  const needsProviderNames = ordered.some((r) => r.email && isUsernameOrGenericName(r.fullName, r.email, r.linkedinUrl));
+  const needsAvatarResolution = ordered.some((r) => r.email && isUnusableAvatarUrl(r.profileImageUrl));
+
+  const [providerNameIndex, googlePhotoIndex, outlookContactIndex] = await Promise.all([
+    needsProviderNames ? buildProviderNameIndex(userId).catch(() => new Map<string, { first: string; last: string; full: string }>()) : Promise.resolve(new Map<string, { first: string; last: string; full: string }>()),
+    needsAvatarResolution ? buildGooglePhotoIndex(userId).catch(() => new Map<string, string>()) : Promise.resolve(new Map<string, string>()),
+    needsAvatarResolution ? buildOutlookContactIndex(userId).catch(() => new Map<string, string>()) : Promise.resolve(new Map<string, string>()),
+  ]);
+
+  // 1. Direct LinkedIn profile fetch (free, no API quota) for contacts with LinkedIn URLs
   const fullProfiles = await Promise.all(
     ordered.map(async (c) => {
       const slug = sharedPhotoSlug(c.linkedinUrl);
@@ -1399,7 +1429,8 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
   let apolloProfiles: (LinkedInProfileEnrichment | null)[] = ordered.map(() => null);
   const needsApolloFallback =
     Boolean(apiKey) &&
-    ordered.some((_, i) => {
+    ordered.some((c, i) => {
+      if (!c.linkedinUrl) return false;
       const p = fullProfiles[i];
       return !p || !p.title || !p.company;
     });
@@ -1408,11 +1439,13 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
     try {
       apolloProfiles = await enrichPeopleFromLinkedIn(
         userId,
-        ordered.map((r) => ({
-          linkedinUrl: r.linkedinUrl!,
-          fullName: r.fullName,
-          email: r.email,
-        }))
+        ordered
+          .filter((r) => Boolean(r.linkedinUrl?.trim()))
+          .map((r) => ({
+            linkedinUrl: r.linkedinUrl!,
+            fullName: r.fullName,
+            email: r.email,
+          }))
       );
     } catch {
       // Apollo plan limits or issues do not block direct refresh
@@ -1425,6 +1458,9 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
     const apollo = apolloProfiles[i];
     const slug = sharedPhotoSlug(contact.linkedinUrl);
 
+    let contactNameFixed = false;
+    let contactAvatarAdded = false;
+
     try {
       // Check cached shared work history if headline or company wasn't found directly
       let cachedHistory: Awaited<ReturnType<typeof readPublicWorkHistory>> = null;
@@ -1432,7 +1468,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         cachedHistory = await readPublicWorkHistory(slug, PUBLIC_WORK_HISTORY_DAYS);
       }
 
-      // 1. Resolve text fields
+      // 1. Resolve text fields (for contacts with LinkedIn URL)
       let resolvedTitle = fullProfile?.title ?? apollo?.title ?? null;
       let resolvedCompany = fullProfile?.company ?? apollo?.company ?? null;
 
@@ -1452,68 +1488,141 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
       const resolvedSchool = fullProfile?.school ?? apollo?.school ?? null;
       const resolvedEmail = apollo?.email ?? null;
 
-      // Name resolution
+      // Name resolution: check if current name is username, handle, email prefix, slug, or generic
       let resolvedFullName: string | null = null;
       let resolvedFirstName: string | null = null;
       let resolvedLastName: string | null = null;
 
-      if (fullProfile?.fullName && isLikelyPersonName(fullProfile.fullName)) {
-        resolvedFullName = fullProfile.fullName;
+      const currentNameWeak = isUsernameOrGenericName(contact.fullName, contact.email, contact.linkedinUrl);
+
+      if (currentNameWeak) {
+        if (fullProfile?.fullName && isLikelyPersonName(fullProfile.fullName) && !isUsernameOrGenericName(fullProfile.fullName)) {
+          resolvedFullName = fullProfile.fullName;
+          resolvedFirstName = fullProfile.firstName;
+          resolvedLastName = fullProfile.lastName;
+        } else if (contact.email && providerNameIndex.has(contact.email.toLowerCase())) {
+          const p = providerNameIndex.get(contact.email.toLowerCase())!;
+          if (p.full && isLikelyPersonName(p.full) && !isUsernameOrGenericName(p.full)) {
+            resolvedFullName = p.full;
+            resolvedFirstName = p.first;
+            resolvedLastName = p.last;
+          }
+        } else if (contact.email) {
+          const g = guessName({
+            fullName: contact.fullName,
+            email: contact.email,
+            linkedinUrl: contact.linkedinUrl,
+          });
+          if (g?.full && isLikelyPersonName(g.full) && !isUsernameOrGenericName(g.full)) {
+            resolvedFullName = g.full;
+            resolvedFirstName = g.first;
+            resolvedLastName = g.last;
+          }
+        } else if (apollo?.firstName || apollo?.lastName) {
+          resolvedFirstName = apollo.firstName ?? null;
+          resolvedLastName = apollo.lastName ?? null;
+          resolvedFullName = [apollo.firstName, apollo.lastName].filter(Boolean).join(" ") || null;
+        }
+      } else if (fullProfile?.fullName && isLikelyPersonName(fullProfile.fullName)) {
         resolvedFirstName = fullProfile.firstName;
         resolvedLastName = fullProfile.lastName;
-      } else if (apollo?.firstName || apollo?.lastName) {
-        resolvedFirstName = apollo.firstName ?? null;
-        resolvedLastName = apollo.lastName ?? null;
-        resolvedFullName = [apollo.firstName, apollo.lastName].filter(Boolean).join(" ") || null;
       }
 
       // 2. Resolve avatar
       let profileImageUrl: string | null = null;
       let profileImageSource: ProfileImageSource = "public";
       let sharedPhoto = false;
+      const needsAvatar = isUnusableAvatarUrl(contact.profileImageUrl);
 
-      // Prefer Apollo photo if returned from paid Apollo call; otherwise direct LinkedIn photo
-      if (apollo?.profileImageUrl) {
-        profileImageUrl = await downloadAndPersistAvatar(contact.id, apollo.profileImageUrl);
-        if (profileImageUrl) profileImageSource = "apollo";
-      }
-
-      if (!profileImageUrl && slug && fullProfile?.imageUrl && isLinkedInProfilePhoto(fullProfile.imageUrl)) {
-        try {
-          const adopted = await adoptPhotoIntoSharedPool(slug, fullProfile.imageUrl, "linkedin_direct");
-          if (adopted?.sharedUrl) {
-            sharedPhoto = true;
-          }
-          // If no blob store, persist locally as data URL
-          const persisted = await downloadAndPersistAvatar(contact.id, fullProfile.imageUrl);
-          if (persisted) {
-            profileImageUrl = persisted;
-            profileImageSource = "public";
-          }
-        } catch {
-          // Fall through to resolveLinkedInPhotoCached
+      if (needsAvatar) {
+        // Prefer Apollo photo if returned from paid Apollo call; otherwise direct LinkedIn photo
+        if (apollo?.profileImageUrl) {
+          profileImageUrl = await downloadAndPersistAvatar(contact.id, apollo.profileImageUrl);
+          if (profileImageUrl) profileImageSource = "apollo";
         }
-      }
 
-      if (!profileImageUrl && !sharedPhoto && contact.linkedinUrl) {
-        try {
-          const linkedIn = await resolveLinkedInPhotoCached(
-            contact.id,
-            contact.linkedinUrl,
-            userId
-          );
-          if (typeof linkedIn === "string") {
-            profileImageUrl = linkedIn;
-            profileImageSource = "public";
-          } else {
-            sharedPhoto = linkedIn !== null;
+        if (!profileImageUrl && slug && fullProfile?.imageUrl && isLinkedInProfilePhoto(fullProfile.imageUrl)) {
+          try {
+            const adopted = await adoptPhotoIntoSharedPool(slug, fullProfile.imageUrl, "linkedin_direct");
+            if (adopted?.sharedUrl) {
+              sharedPhoto = true;
+            }
+            // If no blob store, persist locally as data URL
+            const persisted = await downloadAndPersistAvatar(contact.id, fullProfile.imageUrl);
+            if (persisted) {
+              profileImageUrl = persisted;
+              profileImageSource = "public";
+            }
+          } catch {
+            // Fall through to resolveLinkedInPhotoCached
           }
-        } catch (err) {
-          if (err instanceof AvatarSourceRateLimitError || err instanceof LinkedInDirectRateLimitError) {
-            rateLimited = true;
-          } else {
-            throw err;
+        }
+
+        if (!profileImageUrl && !sharedPhoto && contact.linkedinUrl) {
+          try {
+            const linkedIn = await resolveLinkedInPhotoCached(
+              contact.id,
+              contact.linkedinUrl,
+              userId
+            );
+            if (typeof linkedIn === "string") {
+              profileImageUrl = linkedIn;
+              profileImageSource = "public";
+            } else {
+              sharedPhoto = linkedIn !== null;
+            }
+          } catch (err) {
+            if (err instanceof AvatarSourceRateLimitError || err instanceof LinkedInDirectRateLimitError) {
+              rateLimited = true;
+            } else {
+              throw err;
+            }
           }
+        }
+
+        // Check Google & Outlook connected account contacts
+        if (!profileImageUrl && !sharedPhoto && contact.email) {
+          const emailKey = contact.email.toLowerCase();
+          const googlePhoto = googlePhotoIndex.get(emailKey);
+          if (googlePhoto) {
+            const persisted = await downloadAndPersistAvatar(contact.id, googlePhoto);
+            if (persisted) {
+              profileImageUrl = persisted;
+              profileImageSource = "google";
+            }
+          }
+          if (!profileImageUrl) {
+            const outlookContactId = outlookContactIndex.get(emailKey);
+            if (outlookContactId) {
+              const photoDataUrl = await fetchOutlookContactPhoto(userId, outlookContactId);
+              if (photoDataUrl) {
+                const persisted = await downloadAndPersistAvatar(contact.id, photoDataUrl);
+                if (persisted) {
+                  profileImageUrl = persisted;
+                  profileImageSource = "outlook";
+                }
+              }
+            }
+          }
+        }
+
+        // Gravatar fallback by email
+        if (!profileImageUrl && !sharedPhoto && contact.email) {
+          try {
+            const gravatar = await resolveGravatarCached(contact.id, contact.email);
+            if (typeof gravatar === "string") {
+              profileImageUrl = gravatar;
+              profileImageSource = "gravatar";
+            } else if (gravatar) {
+              sharedPhoto = true;
+            }
+          } catch {
+            // Gravatar miss is normal
+          }
+        }
+
+        if (profileImageUrl || sharedPhoto) {
+          contactAvatarAdded = true;
         }
       }
 
@@ -1546,17 +1655,12 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
         contactDetailsChanged = true;
       }
 
-      const currentNameWeak =
-        !contact.fullName?.trim() ||
-        isHandle(contact.fullName, contact.email) ||
-        (slug ? contact.fullName.trim().toLowerCase() === slug.toLowerCase() : false) ||
-        /^(linkedin member|member|unknown)$/i.test(contact.fullName.trim());
-
-      if (resolvedFullName && (currentNameWeak || contact.fullName !== resolvedFullName)) {
+      if (resolvedFullName && resolvedFullName !== contact.fullName) {
         patch.fullName = resolvedFullName;
         if (resolvedFirstName) patch.firstName = resolvedFirstName;
         if (resolvedLastName) patch.lastName = resolvedLastName;
         contactDetailsChanged = true;
+        contactNameFixed = true;
       } else {
         if (resolvedFirstName && !contact.firstName?.trim()) {
           patch.firstName = resolvedFirstName;
@@ -1574,7 +1678,8 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
       }
 
       if (Object.keys(patch).length > 0) {
-        await updateContactForUser(userId, contact.id, patch, { skipRevalidate: true });
+        // The person's own profile, read now: replaces guesses, offers to replace what was typed.
+        await updateContactForUser(userId, contact.id, patch, { skipRevalidate: true, by: "linkedin_refresh" });
         if (profileImageUrl) {
           await deleteReplacedAvatar(contact.profileImageUrl, profileImageUrl);
         }
@@ -1584,6 +1689,9 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
           .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
 
         refreshed += 1;
+        if (contactNameFixed) namesFixed += 1;
+        if (contactAvatarAdded) avatarsUpdated += 1;
+
         if (contactDetailsChanged) {
           anyDetailsUpdated = true;
           const cid = contact.id;
@@ -1599,6 +1707,7 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
           .set({ profileImageCheckedAt: new Date() })
           .where(and(eq(contacts.id, contact.id), eq(contacts.userId, userId)));
         refreshed += 1;
+        if (contactAvatarAdded) avatarsUpdated += 1;
       } else {
         unmatched += 1;
       }
@@ -1610,17 +1719,17 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
   // Work history comes from a web search on the person's own AI key, not from Apollo, and
   // in its own function: a few searches outlast this request. The route skips anyone with a
   // recent history, so a repeated refresh does not search again.
-  await kickWorkHistoryResearch(
-    userId,
-    ordered.map((c) => c.id)
-  );
+  const linkedInContactIds = ordered.filter((c) => Boolean(c.linkedinUrl?.trim())).map((c) => c.id);
+  if (linkedInContactIds.length > 0) {
+    await kickWorkHistoryResearch(userId, linkedInContactIds);
+  }
 
   revalidatePathIfRequestScoped("/contacts");
   revalidatePathIfRequestScoped("/");
   revalidatePathIfRequestScoped("/graph");
 
   const avatarOnly = refreshed > 0 && !anyDetailsUpdated;
-  return { refreshed, unmatched, failed, avatarOnly, rateLimited };
+  return { refreshed, unmatched, failed, avatarOnly, rateLimited, namesFixed, avatarsUpdated };
 }
 
 /** Draft a warm follow-up message from the contact profile. */
@@ -1638,6 +1747,8 @@ export async function draftContactFollowUp(
   const userId = await requirePageUser("page.contacts");
   const goals = await listActiveGoalTexts();
   const writingInstructions = await loadWritingInstructions(userId);
+  // Learn how they write from their sent mail, once, after the draft is on its way.
+  deferStyleProfileBuild(userId);
   return draftFollowUpResult(userId, contactId, goals, { ...options, writingInstructions });
 }
 
@@ -1732,7 +1843,7 @@ export async function sendContactFollowUpEmail(
   });
   if (!queued.ok) return queued;
   scheduleDispatch(queued.id, queued.sendAt);
-  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0]! };
+  return { ok: true, sendId: queued.id, sendAt: queued.sendAt.toISOString(), to: queued.to[0] };
 }
 
 // The related-contacts SQL lives in two IMMUTABLE functions defined with the schema

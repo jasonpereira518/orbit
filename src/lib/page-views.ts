@@ -28,6 +28,8 @@ export type PageViewInput = {
   isBot: boolean;
   /** Orbit's own traffic. See `src/lib/analytics-internal.ts`. Defaults to false. */
   isInternal?: boolean;
+  /** When the view happened, if that is earlier than now (the batched beacon arrives on leaving). */
+  createdAt?: Date;
 };
 
 export async function recordPageView(input: PageViewInput): Promise<void> {

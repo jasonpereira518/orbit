@@ -1,7 +1,7 @@
 "use server";
 
 import { requirePageUser } from "@/lib/plan-guards";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { cache } from "react";
 import { after } from "next/server";
 import { revalidatePath } from "next/cache";
@@ -15,6 +15,7 @@ import {
 import { listActiveGoalTexts } from "@/actions/goals";
 import { requireAuthenticatedUser, requireUserId, getDisplayProfile } from "@/lib/auth";
 import { asActionResult, UserFacingError } from "@/lib/errors";
+import { reportError } from "@/lib/report-error";
 import { generateFollowUpDraft } from "@/lib/follow-up-drafts";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import {
@@ -22,7 +23,7 @@ import {
   isReminderActionKind,
 } from "@/lib/reminder-action-kind";
 import { normalizeCadence } from "@/lib/keep-in-touch";
-import { loadNotificationPanel } from "@/lib/notification-panel";
+import { desktopNotificationItems, loadNotificationPanel } from "@/lib/notification-panel";
 import { traced } from "@/lib/perf-trace";
 import {
   revalidatePathIfRequestScoped,
@@ -61,9 +62,11 @@ import {
   type RemindersPageFilters,
 } from "@/lib/reminders-page";
 import {
+  overdueFromNotesWhere,
   queryReminderRailCounts,
   queryRemindersPage,
 } from "@/lib/reminders-page-query";
+import { ymdInZone } from "@/lib/reminder-due-bucket";
 import {
   completeReminder,
   ensureOutreachSuggestions,
@@ -1100,6 +1103,93 @@ export async function undoBulkReminderAction(snapshot: BulkReminderSnapshot) {
   return { restored: restored > 0 };
 }
 
+/** Most rows one `snoozeOverdueFromNotes` call moves; the banner says how many are left. */
+const BACKLOG_MAX_ROWS = 1000;
+
+/**
+ * Snooze overdue reminders that came from notes (not critical or high) to one day, oldest
+ * first, up to BACKLOG_MAX_ROWS, in BULK_LIMIT batches through the same per-row helper
+ * `bulkReminderAction` uses. The undo token is the batches' own `BulkReminderSnapshot`s,
+ * replayed by `undoSnoozeOverdueFromNotes` through `undoBulkReminderAction`; there is no
+ * second undo mechanism. A failing row stops the run after its batch, and what landed still
+ * gets a token (`partial`).
+ */
+export async function snoozeOverdueFromNotes(toYmd: string) {
+  return asActionResult(async () => {
+    const userId = await requireUserId();
+    const tz = await viewerTimeZone(userId);
+    const due = dayToDue(toYmd);
+    const today = ymdInZone(new Date(), tz);
+    if (toYmd <= today) throw new UserFacingError("Pick a day after today");
+    const db = await getDb();
+    const where = overdueFromNotesWhere(userId, tz, today);
+    const [rows, totals] = await Promise.all([
+      db
+        .select({ id: reminders.id })
+        .from(reminders)
+        .where(where)
+        .orderBy(reminders.dueDate, reminders.id)
+        .limit(BACKLOG_MAX_ROWS),
+      db.select({ n: sql<number>`count(*)::int` }).from(reminders).where(where),
+    ]);
+
+    const batches: BulkReminderSnapshot[] = [];
+    let count = 0;
+    let partial = false;
+    for (let i = 0; i < rows.length && !partial; i += BULK_LIMIT) {
+      const ids = rows.slice(i, i + BULK_LIMIT).map((r) => r.id);
+      const results = await mapPooled(ids, async (id) => {
+        try {
+          return await snoozeReminderTo(userId, id, due);
+        } catch (err) {
+          partial = true;
+          reportError(err, { where: "action.snooze-overdue-from-notes", userId, level: "warning", extra: { reminderId: id } });
+          return null;
+        }
+      });
+      const items = results.filter((x): x is SnoozeSnapshot => Boolean(x));
+      count += items.length;
+      if (items.length) batches.push({ op: "snooze", items });
+    }
+
+    revalidateReminderPaths();
+    revalidatePathIfRequestScoped("/contacts");
+    revalidatePathIfRequestScoped("/graph");
+    return {
+      count,
+      undoToken: JSON.stringify(batches),
+      partial,
+      left: Math.max(0, Number(totals[0]?.n ?? 0) - count),
+    };
+  });
+}
+
+/** Undo for `snoozeOverdueFromNotes`: each batch goes back through `undoBulkReminderAction`. */
+export async function undoSnoozeOverdueFromNotes(undoToken: string) {
+  await requireUserId();
+  let batches: unknown;
+  try {
+    batches = JSON.parse(undoToken);
+  } catch {
+    throw new UserFacingError("That undo isn’t valid any more");
+  }
+  const maxBatches = Math.ceil(BACKLOG_MAX_ROWS / BULK_LIMIT);
+  if (
+    !Array.isArray(batches) ||
+    batches.length > maxBatches ||
+    !batches.every(
+      (b) => b && typeof b === "object" && b.op === "snooze" && Array.isArray(b.items)
+    )
+  ) {
+    throw new UserFacingError("That undo isn’t valid any more");
+  }
+  let any = false;
+  for (const batch of batches as BulkReminderSnapshot[]) {
+    if ((await undoBulkReminderAction(batch)).restored) any = true;
+  }
+  return { restored: any };
+}
+
 /** Full inbox for the in-app notifications panel. */
 export async function listNotificationPanel() {
   // The gate's row is handed on: in a Server Action `cache()` is a pass-through, so the
@@ -1136,23 +1226,16 @@ export async function listNotificationPanel() {
 export async function listDueNotificationItems() {
   const { getDesktopNotifiedIds } = await import("@/actions/notifications");
   const { userId, settings } = await requireAuthenticatedUser();
+  const now = new Date();
   const [notifiedIds, panel] = await Promise.all([
     getDesktopNotifiedIds(),
-    loadNotificationPanel(userId, new Date(), { withAlerts: false, settings }),
+    loadNotificationPanel(userId, now, { withAlerts: false, settings, dueCounts: false }),
   ]);
   const notified = new Set(notifiedIds);
 
   // `panel.items` only — account alerts live beside it and must never fire an OS
   // notification, for the same reason `suggested_reminder` is pinned to "info" above.
-  return panel.items
-    .filter((i) => i.urgency === "due" && !notified.has(i.id))
-    .slice(0, 12)
-    .map((i) => ({
-      id: i.id,
-      title: i.title,
-      body: i.body || undefined,
-      url: i.url,
-    }));
+  return desktopNotificationItems(panel.items, now, notified, 12);
 }
 
 /** Mark a suggestion dismissed. Returns whether it moved (false: already dismissed or not this user's). */

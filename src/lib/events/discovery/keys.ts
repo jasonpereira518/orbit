@@ -36,7 +36,7 @@ export function canonicalEventKey(raw: string | null | undefined): string | null
   if (outcome.kind !== "ok") return null;
   let url: URL;
   try {
-    url = new URL(outcome.candidates[0]!);
+    url = new URL(outcome.candidates[0]);
   } catch {
     return null;
   }

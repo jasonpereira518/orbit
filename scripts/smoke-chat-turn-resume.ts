@@ -30,6 +30,8 @@ const answered = [
 
 check("answered thread is not pending", !pendingTurn("a", answered, now));
 check("empty thread is not pending", !pendingTurn("a", [], now));
+check("a voice utterance without a reply never resumes as a text request",
+  !pendingTurn("a", [{role: "user", createdAt: at(1000), clientTurnId: "voice:session"}], now));
 check(
   "recent unanswered streamed question is pending",
   !!pendingTurn("a", [...answered, { role: "user", createdAt: at(5_000), clientTurnId: "t2" }], now)

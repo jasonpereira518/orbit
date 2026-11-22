@@ -1,0 +1,7 @@
+Notes:
+"When exporting your connection data, you may notice that some of the email addresses are missing. You will only see email addresses for connections who have chosen to allow their contacts to download or export their email addresses."
+
+First Name,Last Name,URL,Email Address,Company,Position,Connected On
+Grace,Hopper,https://www.linkedin.com/in/grace-hopper-e2e,,Navy Labs,Rear Admiral,15 Jan 2024
+Alan,Turing,https://www.linkedin.com/in/alan-turing-e2e,,Bletchley Park,Cryptanalyst,02 Mar 2023
+Katherine,Johnson,https://www.linkedin.com/in/katherine-johnson-e2e,,NASA,Mathematician,10 Jun 2022

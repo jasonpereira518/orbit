@@ -6,6 +6,18 @@
  * Painted in fixed colours, not theme tokens, on purpose: it is a window onto the same night
  * sky in light and dark mode, and the text laid over it is chosen to match.
  */
+const WHITE = "232,243,241";
+
+/**
+ * One star: a firm core that fades out at the edge. The old stars were a bare
+ * `color, transparent` gradient, which at 1px leaves only the centre pixel at full strength
+ * and read as a faint speck; holding the colour to the middle of the radius gives a dot
+ * that is still soft at its rim but visible at a glance.
+ */
+function star(radius: number, x: number, y: number, rgb: string, alpha: number) {
+  return `radial-gradient(${radius}px ${radius}px at ${x}% ${y}%, rgba(${rgb},${alpha}) 0 55%, transparent 100%)`;
+}
+
 export function DeepSpace({ accent = "242,193,78" }: { accent?: string }) {
   return (
     <>
@@ -19,20 +31,20 @@ export function DeepSpace({ accent = "242,193,78" }: { accent?: string }) {
       />
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 opacity-70"
+        className="pointer-events-none absolute inset-0 opacity-95"
         style={{
           backgroundImage: [
-            "radial-gradient(1.4px 1.4px at 12% 24%, rgba(232,243,241,0.9), transparent)",
-            "radial-gradient(1px 1px at 27% 68%, rgba(232,243,241,0.55), transparent)",
-            `radial-gradient(1.6px 1.6px at 44% 18%, rgba(${accent},0.85), transparent)`,
-            "radial-gradient(1px 1px at 61% 52%, rgba(232,243,241,0.5), transparent)",
-            "radial-gradient(1.2px 1.2px at 74% 28%, rgba(232,243,241,0.75), transparent)",
-            "radial-gradient(1px 1px at 88% 62%, rgba(232,243,241,0.45), transparent)",
-            "radial-gradient(1.3px 1.3px at 36% 84%, rgba(232,243,241,0.6), transparent)",
-            `radial-gradient(1px 1px at 92% 16%, rgba(${accent},0.6), transparent)`,
-            "radial-gradient(1px 1px at 5% 78%, rgba(232,243,241,0.5), transparent)",
-            "radial-gradient(1.2px 1.2px at 52% 90%, rgba(232,243,241,0.6), transparent)",
-            "radial-gradient(1px 1px at 82% 88%, rgba(232,243,241,0.4), transparent)",
+            star(1.9, 12, 24, WHITE, 1),
+            star(1.5, 27, 68, WHITE, 0.75),
+            star(2.1, 44, 18, accent, 1),
+            star(1.5, 61, 52, WHITE, 0.7),
+            star(1.7, 74, 28, WHITE, 0.95),
+            star(1.5, 88, 62, WHITE, 0.65),
+            star(1.8, 36, 84, WHITE, 0.8),
+            star(1.6, 92, 16, accent, 0.85),
+            star(1.5, 5, 78, WHITE, 0.7),
+            star(1.7, 52, 90, WHITE, 0.8),
+            star(1.5, 82, 88, WHITE, 0.6),
           ].join(","),
         }}
       />

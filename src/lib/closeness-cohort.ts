@@ -5,6 +5,8 @@ import { and, eq, sql, type SQL } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts, interactions, userGoals, userSettings } from "@/db/schema";
 import { countsAsTouch } from "@/lib/interaction-provenance";
+import { deepClosenessInputs, depthAggregates, depthSignalsOf, type DepthAggregateRow } from "@/lib/closeness-deep-inputs";
+import { deepReadOn } from "@/lib/deep-read";
 import {
   ABSOLUTE_TIER_CUTOFFS,
   applyClosenessCohort,
@@ -70,6 +72,8 @@ export type ClosenessCohortInputs = {
    * `?? false` until those rows are recalibrated.
    */
   calendarConnected?: boolean;
+  /** LinkedIn deep read was on for this distribution (`ClosenessCohortSnapshot.deepRead`). */
+  deepRead?: boolean;
 };
 
 /** The touch kinds as SQL lists (`src/lib/touch-kinds.ts`). */
@@ -558,18 +562,23 @@ async function persistCohortResult(
  * import, or from the cron that drains cohorts left dirty by ordinary edits.
  */
 export async function recalibrateCloseness(
-  userId: string
+  userId: string,
+  opts: { deepRead?: boolean } = {}
 ): Promise<ClosenessCohortResult> {
-  const result = await buildCohortResult(userId);
+  const result = await buildCohortResult(userId, undefined, opts);
   await persistCohortResult(userId, result);
   return result;
 }
 
 async function buildCohortResult(
   userId: string,
-  preloadedRows?: ClosenessCohortRow[] | Promise<ClosenessCohortRow[]>
+  preloadedRows?: ClosenessCohortRow[] | Promise<ClosenessCohortRow[]>,
+  opts: { deepRead?: boolean } = {}
 ): Promise<ClosenessCohortResult> {
   const db = await getDb();
+  // LinkedIn deep read: depth and real overlap join the formula (closeness-deep-inputs.ts).
+  // A failed gate read means today's formula, never a failed recalibration for everyone.
+  const deepRead = opts.deepRead ?? (await deepReadOn(userId).catch(() => false));
   const since = new Date(
     Date.now() - CADENCE_WINDOW_DAYS * 24 * 60 * 60 * 1000
   );
@@ -619,6 +628,7 @@ async function buildCohortResult(
         recent: sql<number>`count(*) filter (where ${interactions.interactionDate} >= ${since})::int`,
         total: sql<number>`count(*)::int`,
         ...constellationSignalAggregates,
+        ...(deepRead ? depthAggregates : {}),
       })
       .from(interactions)
       .where(and(eq(interactions.userId, userId), countsAsTouch()))
@@ -669,6 +679,13 @@ async function buildCohortResult(
   })();
 
   const { mailConnected, calendarConnected } = coverageSources;
+  const deepFields = deepRead
+    ? await deepClosenessInputs(
+        userId,
+        rows,
+        new Map(touchRows.map((r) => [r.contactId, depthSignalsOf(r as DepthAggregateRow)]))
+      )
+    : null;
 
   // The goal haystack intentionally omits `notes`: keeping it would mean
   // pulling every note body on every request, and the list payload already
@@ -694,6 +711,7 @@ async function buildCohortResult(
           { mailConnected, calendarConnected },
           c
         ),
+        ...(deepFields?.get(c.id) ?? {}),
       },
       goals,
       touchCounts.get(c.id) ?? 0
@@ -719,6 +737,6 @@ async function buildCohortResult(
     touchCounts,
     interactedIds: everInteracted,
     constellationSignals: signalsFromRows(touchRows),
-    inputs: { maxCompany, maxSchool, userDomain, mailConnected, calendarConnected },
+    inputs: { maxCompany, maxSchool, userDomain, mailConnected, calendarConnected, deepRead },
   };
 }

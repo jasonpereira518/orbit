@@ -9,6 +9,7 @@ import {
   startBackgroundJob,
   updateBackgroundJob,
 } from "@/lib/background-jobs";
+import { sleep } from "@/lib/async";
 
 const BATCH_PAUSE_MS = 750;
 const MAX_WAIT_MS = 15 * 60_000;
@@ -16,32 +17,14 @@ const MAX_WAIT_MS = 15 * 60_000;
 const MAX_IDLE_PASSES = 3;
 const JOB_ID = "avatar-backfill";
 const LABEL = "Fetching LinkedIn photos";
+/** One probe per tab session — every AppShell mount used to POST the scan (SRV-16). */
+const SESSION_KEY = "orbit:avatar-backfill-ran";
 
 export const AVATARS_UPDATED_EVENT = "orbit:avatars-updated";
 
 export type AvatarsUpdatedDetail = {
   contactIds: string[];
 };
-
-function sleep(ms: number, signal: AbortSignal) {
-  return new Promise<void>((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const onAbort = () => {
-      window.clearTimeout(timer);
-      resolve();
-    };
-    // A normal wake-up removes the listener too: `once` only fires on abort, so every batch
-    // used to leave one closure on the signal for as long as the component was mounted.
-    const timer = window.setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
 
 /**
  * One batch, through a route handler rather than the Server Action: actions run one at a time
@@ -87,11 +70,24 @@ export function AvatarBackfill() {
 
   useEffect(() => {
     if (running.current) return;
+    // Once per tab session: remounts on soft-nav used to re-POST the whole-network probe.
+    try {
+      if (sessionStorage.getItem(SESSION_KEY)) return;
+    } catch {
+      // private mode / blocked storage — still run once this mount
+    }
     running.current = true;
 
     const controller = new AbortController();
+    let idleId: number | undefined;
+    let timeoutId: number | undefined;
 
     async function run() {
+      try {
+        sessionStorage.setItem(SESSION_KEY, "1");
+      } catch {
+        /* ignore */
+      }
       let idlePasses = 0;
       let totalSaved = 0;
       let jobStarted = false;
@@ -115,6 +111,10 @@ export function AvatarBackfill() {
         try {
           const result = await requestBackfillBatch(Array.from(unresolved), controller.signal);
           if (controller.signal.aborted) return;
+
+          // Small photos swapped for bigger ones on an otherwise idle tick: refresh them in
+          // place, but they are not "fetched photos", so no job card and no counters.
+          notifyAvatarsUpdated(result.upgradedIds ?? []);
 
           if (!jobStarted) {
             // saved + failedIds + pending is exactly this pass's backlog, and
@@ -221,11 +221,24 @@ export function AvatarBackfill() {
       }
     }
 
-    void run();
+    const start = () => {
+      if (typeof window.requestIdleCallback === "function") {
+        idleId = window.requestIdleCallback(() => void run(), { timeout: 5_000 });
+      } else {
+        timeoutId = window.setTimeout(() => void run(), 2_000);
+      }
+    };
+    if (document.readyState === "complete") start();
+    else window.addEventListener("load", start, { once: true });
 
     return () => {
       controller.abort();
       running.current = false;
+      if (idleId != null && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+      window.removeEventListener("load", start);
       // Real work stops here — don't leave a "running" card behind.
       if (getBackgroundJob(JOB_ID)?.status === "running") {
         dismissBackgroundJob(JOB_ID);

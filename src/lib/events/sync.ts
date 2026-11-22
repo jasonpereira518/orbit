@@ -2,7 +2,7 @@
  * The Luma / Eventbrite sync pass.
  *
  * Rides inside `runSyncPass` in `src/lib/sync-scheduler.ts`, so it inherits the existing
- * every-15-minutes GitHub Actions schedule (`.github/workflows/ops.yml` -> `POST
+ * every-15-minutes QStash schedule (`scripts/qstash-schedules.ts` -> `POST
  * /api/sync/run`, Bearer `$CRON_SECRET`) and the single `sync.run` ledger row. No new cron,
  * no new route, no new secret.
  *
@@ -206,7 +206,7 @@ export async function runEventSyncPass(
         error instanceof EventbriteAuthError ||
         error instanceof IcsFeedGoneError
       ) {
-        await markNeedsReauth(conn.id, (error as Error).message).catch(
+        await markNeedsReauth(conn.id, (error).message).catch(
           reportAndContinue({ where: "job.event-sync.mark-reauth", userId: conn.userId }, undefined)
         );
         continue;

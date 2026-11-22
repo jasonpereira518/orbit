@@ -2,7 +2,7 @@ import { rateLimitGuard } from "@/lib/api/route-error";
 import { sameOriginGuard } from "@/lib/api/same-origin";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { NextResponse } from "next/server";
-import { hasBlobStorage } from "@/lib/contact-avatar";
+import { hasBlobTokenInEnv } from "@/lib/contact-avatar";
 import { attachmentPrefixFor, isBlockedFilename } from "@/lib/email/attachment-paths";
 import { MAX_ATTACHMENT_BYTES_GMAIL } from "@/lib/email/config";
 import { requireUserForSurface } from "@/lib/plan-guards";
@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
  * records an attachment — and Blob's callback would arrive without a session.
  */
 export async function POST(request: Request) {
-  if (!hasBlobStorage()) {
+  if (!hasBlobTokenInEnv()) {
     return NextResponse.json({ error: "Attachments aren’t available" }, { status: 503 });
   }
   let userId: string;

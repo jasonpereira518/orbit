@@ -40,6 +40,8 @@ import type {
   CaptureJobSource,
 } from "@/lib/capture/types";
 import { actionFailure } from "@/lib/action-failure";
+import { parseInput } from "@/lib/action";
+import { discardCaptureJobSchema, queueCaptureJobSchema, recordCaptureChoicesSchema } from "@/lib/capture/job-input";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import { assertEventOwnedBy } from "@/lib/events/store";
 
@@ -227,6 +229,9 @@ export async function queueCaptureJob(input: {
 }): Promise<Ok | Fail | QueueDuplicate> {
   try {
     const userId = await requireUserId();
+    const parsed = parseInput(queueCaptureJobSchema, input, "capture-jobs.queue-capture-job");
+    if (!parsed.ok) return parsed;
+    input = parsed.value;
     const text = input.text.trim();
     if (!text && !input.jobId) return { ok: false, error: "Notes are required" };
 
@@ -349,6 +354,9 @@ export async function recordCaptureChoices(
 ): Promise<Ok | Fail> {
   try {
     const userId = await requireUserId();
+    const parsed = parseInput(recordCaptureChoicesSchema, { jobId, choices }, "capture-jobs.record-capture-choices");
+    if (!parsed.ok) return parsed;
+    ({ jobId, choices } = parsed.value);
     const row = await recordCaptureChoicesRow(userId, jobId, choices);
     if (!row) return { ok: false, error: "That capture is no longer open for review" };
     return { ok: true, job: toCaptureJobView(row) };
@@ -403,6 +411,9 @@ export async function saveCaptureJob(jobId: string): Promise<Ok | Fail> {
 export async function discardCaptureJob(jobId: string, opts?: { stopping?: boolean }): Promise<{ ok: true } | Fail> {
   try {
     const userId = await requireUserId();
+    const parsed = parseInput(discardCaptureJobSchema, { jobId, opts }, "capture-jobs.discard-capture-job");
+    if (!parsed.ok) return parsed;
+    ({ jobId, opts } = parsed.value);
     const tombstone =
       opts?.stopping === true && typeof jobId === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(jobId);
     await discardCaptureJobRow(userId, jobId, { tombstone });
@@ -410,5 +421,22 @@ export async function discardCaptureJob(jobId: string, opts?: { stopping?: boole
     return { ok: true };
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t clear that capture — try again?", "capture-jobs.discard-capture-job") };
+  }
+}
+
+/**
+ * Discard from the stale-draft notice. Only a draft nobody is working on (`ready` or
+ * `reviewing`): a save running in another tab (`saving`) must not be killed from here.
+ * `discarded: false` means it had already moved on.
+ */
+export async function discardStaleDraft(jobId: string): Promise<{ ok: true; discarded: boolean } | Fail> {
+  try {
+    const userId = await requireUserId();
+    if (!JOB_ID.test(jobId)) return { ok: false, error: "That draft is no longer here" };
+    const discarded = await discardCaptureJobRow(userId, jobId, { onlyStatuses: ["ready", "reviewing"] });
+    revalidatePath("/capture");
+    return { ok: true, discarded };
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t discard that draft — try again?", "capture-jobs.discard-stale-draft") };
   }
 }

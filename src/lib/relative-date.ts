@@ -9,6 +9,7 @@
  * Deliberately NOT `parseInteractionDateFromNotes`: that walks yearless dates backwards to
  * date a past interaction. This always looks forward.
  */
+import { addLocalDaysAtNoon } from "@/lib/dates";
 import { WEEKDAYS, atLocalNoon } from "@/lib/interaction-date";
 import { formatDistance } from "date-fns";
 
@@ -43,12 +44,6 @@ function norm(phrase: string) {
   return phrase.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function addDays(d: Date, n: number) {
-  const out = new Date(d);
-  out.setDate(out.getDate() + n);
-  return atLocalNoon(out);
-}
-
 /** Month arithmetic that clamps to the last day of the target month instead of overflowing. */
 function addMonths(d: Date, n: number) {
   const target = new Date(d.getFullYear(), d.getMonth() + n, 1, 12);
@@ -64,14 +59,14 @@ function endOfMonth(d: Date) {
 /** First strictly-after occurrence of a weekday. "Friday" on a Friday means next week. */
 function nextWeekday(from: Date, weekday: number) {
   const delta = (weekday - from.getDay() + 7) % 7 || 7;
-  return addDays(from, delta);
+  return addLocalDaysAtNoon(from, delta);
 }
 
 /** Monday of the week after the anchor's week (weeks start Monday). */
 function nextWeekMonday(from: Date) {
   const dow = from.getDay(); // 0 = Sunday
   const daysUntilNextMonday = dow === 0 ? 1 : 8 - dow;
-  return addDays(from, daysUntilNextMonday);
+  return addLocalDaysAtNoon(from, daysUntilNextMonday);
 }
 
 function parseCount(raw: string): number | null {
@@ -90,7 +85,7 @@ export function resolveRelativeDate(
   const base = atLocalNoon(anchor);
   const relative = (date: Date, rule: string): ResolvedRelativeDate => ({ date, basis: "relative", rule });
 
-  if (p === "tomorrow") return relative(addDays(base, 1), "tomorrow");
+  if (p === "tomorrow") return relative(addLocalDaysAtNoon(base, 1), "tomorrow");
 
   // "in N days|weeks|months", N numeric or a small number word.
   const inN = p.match(/^in ([a-z]+(?: [a-z]+){0,2}|\d+) (day|week|month)s?$/);
@@ -98,8 +93,8 @@ export function resolveRelativeDate(
     const n = parseCount(inN[1]);
     if (n == null || n <= 0) return null;
     const unit = inN[2];
-    if (unit === "day") return relative(addDays(base, n), "in-n-units");
-    if (unit === "week") return relative(addDays(base, n * 7), "in-n-units");
+    if (unit === "day") return relative(addLocalDaysAtNoon(base, n), "in-n-units");
+    if (unit === "week") return relative(addLocalDaysAtNoon(base, n * 7), "in-n-units");
     return relative(addMonths(base, n), "in-n-units");
   }
 
@@ -120,7 +115,7 @@ export function resolveRelativeDate(
     // Friday of the anchor's week; if the anchor is already Friday or later, next Friday.
     const friday = 5;
     const delta = (friday - base.getDay() + 7) % 7;
-    return relative(addDays(base, delta === 0 ? 0 : delta), "end-of-week");
+    return relative(addLocalDaysAtNoon(base, delta === 0 ? 0 : delta), "end-of-week");
   }
   if (/^(end of (the )?month|eom)$/.test(p)) return relative(endOfMonth(base), "end-of-month");
   if (/^(end of (the )?quarter|eoq)$/.test(p)) {
@@ -147,7 +142,7 @@ export function resolveRelativeDate(
 
   if (VAGUE_RE.test(p)) {
     const days = opts?.defaultWindowDays ?? DEFAULT_VAGUE_WINDOW_DAYS;
-    return { date: addDays(base, days), basis: "vague", rule: "vague" };
+    return { date: addLocalDaysAtNoon(base, days), basis: "vague", rule: "vague" };
   }
 
   return null;
@@ -163,4 +158,65 @@ export function formatLastTouch(at: Date, now: Date = new Date()): string {
     at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
   if (sameDay && at.getTime() > now.getTime()) return "today";
   return formatDistance(at, now, { addSuffix: true });
+}
+
+// ---------------------------------------------------------------------------------------
+// Relative LABELS ("3d", "11 minutes ago"): the one place the wording is decided.
+//
+// Pure functions of (then, now) so they are testable at a fixed instant. `<RelativeTime>`
+// and the admin tables call these; nothing should hand-build a "Nd ago" string. The rules
+// below reproduce, byte for byte, the copies they replaced (pinned in
+// `relative-label.test.ts`), including the quirks: a future date reads "-5m" in the short
+// format, and an invalid date reads "NaNy".
+// ---------------------------------------------------------------------------------------
+
+export type RelativeFormat = "short" | "long";
+
+/**
+ * Compact admin wording: "just now", "5m", "3h", "12d", "2y". Rounds each unit independently
+ * and switches unit at the rounded value (59.5 minutes is "1h"), so a label never reads "60m".
+ * `ago: true` appends " ago" to everything except "just now".
+ */
+export function shortRelativeLabel(then: Date, now: Date = new Date(), opts: { ago?: boolean } = {}): string {
+  const suffix = opts.ago ? " ago" : "";
+  const diff = now.getTime() - then.getTime();
+  const mins = Math.round(diff / 60_000);
+  if (Math.abs(mins) < 1) return "just now";
+  if (Math.abs(mins) < 60) return `${mins}m${suffix}`;
+
+  const hours = Math.round(diff / 3_600_000);
+  if (Math.abs(hours) < 24) return `${hours}h${suffix}`;
+
+  const days = Math.round(diff / 86_400_000);
+  if (Math.abs(days) < 365) return `${days}d${suffix}`;
+
+  return `${Math.round(days / 365)}y${suffix}`;
+}
+
+/**
+ * Sentence wording: "11 minutes ago", "in about 2 hours" (date-fns). Throws a RangeError for
+ * an invalid date, as date-fns does; callers that take untrusted strings catch it.
+ */
+export function longRelativeLabel(then: Date, now: Date = new Date()): string {
+  return formatDistance(then, now, { addSuffix: true });
+}
+
+/** The label for a `format`, as `<RelativeTime format>` renders it. */
+export function relativeLabel(then: Date, now: Date = new Date(), format: RelativeFormat = "short"): string {
+  return format === "long" ? longRelativeLabel(then, now) : shortRelativeLabel(then, now);
+}
+
+/**
+ * The status-strip wording: "3 min ago", "5 h ago", "4 d ago". A THIRD style, not a variant of
+ * `shortRelativeLabel`, because it disagrees on every boundary: it clamps the future to "just
+ * now" (short gives "-5m"), keeps hours up to 47 (short switches to days at 24), and spaces
+ * its units. Kept as its own named formatter so the health strip reads exactly as before.
+ */
+export function minutesAgoLabel(then: Date, now: Date = new Date()): string {
+  const mins = Math.max(0, Math.round((now.getTime() - then.getTime()) / 60_000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} d ago`;
 }

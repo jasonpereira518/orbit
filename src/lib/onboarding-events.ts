@@ -55,8 +55,8 @@ export function trackOnboardingStepAdvance(
 /** The in-app tour: a null previous stop means the first stop. */
 export function trackTourStopAdvance(userId: string, previous: string | null | undefined, next: string): void {
   const stops: readonly string[] = TOUR_STOP_IDS_LIST;
-  const from = stops.indexOf(previous ?? stops[0]!);
+  const from = stops.indexOf(previous ?? stops[0]);
   const to = stops.indexOf(next);
   if (from < 0 || to < 0 || to <= from) return;
-  trackStepCompleted(userId, "tour", stops[from]!);
+  trackStepCompleted(userId, "tour", stops[from]);
 }

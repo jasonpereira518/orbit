@@ -95,6 +95,7 @@ export function SettingsRow({
   title,
   description,
   labelFor,
+  action,
   children,
 }: {
   id?: string;
@@ -102,14 +103,21 @@ export function SettingsRow({
   description?: React.ReactNode;
   /** The id of the single control this row's title labels. */
   labelFor?: string;
+  /** Controls set to the right of the title and description (they wrap under on a phone). */
+  action?: React.ReactNode;
   children?: React.ReactNode;
 }) {
   return (
     <div
       id={id}
-      className={cn("space-y-3 border-t border-border/60 pt-4", id && "scroll-mt-8")}
+      className={cn(
+        "border-t border-border/60",
+        action ? "space-y-2 pt-3" : "space-y-3 pt-4",
+        id && "scroll-mt-8"
+      )}
     >
-      <div>
+      <div className={action ? "flex flex-wrap items-center justify-between gap-x-4 gap-y-2" : undefined}>
+        <div className={action ? "min-w-0 flex-1 basis-56" : undefined}>
         {labelFor ? (
           <label htmlFor={labelFor} className="block text-sm font-medium text-ink">
             {title}
@@ -120,11 +128,13 @@ export function SettingsRow({
         {description ? (
           <p
             id={labelFor ? `${labelFor}-description` : undefined}
-            className="mt-1 text-sm text-muted-foreground"
+            className={cn("text-sm text-muted-foreground", action ? "mt-0.5" : "mt-1")}
           >
             {description}
           </p>
         ) : null}
+        </div>
+        {action ? <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div> : null}
       </div>
       {children}
     </div>

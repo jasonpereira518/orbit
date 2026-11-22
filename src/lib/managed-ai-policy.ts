@@ -56,6 +56,15 @@ export const MANAGED_AI_POOLS: Partial<Record<AiProvider, ManagedPool>> = {
 };
 
 /**
+ * Orbit-paid spend on providers that have no pool of their own, counted inside one that does.
+ * TypeSafe (Jev) is in the Anthropic pool: Jason, Oct 19 2026 — the $190 covers everything
+ * Orbit pays for AI.
+ */
+export const POOL_ALSO_COUNTS: Partial<Record<AiProvider, readonly string[]>> = {
+  anthropic: ["typesafe"],
+};
+
+/**
  * Where a pool's current window starts: the latest `monthlyResetDay` at 00:00 UTC on or
  * before `now`, never earlier than `since`; just `since` for a pool that never resets.
  */
@@ -164,7 +173,7 @@ export function managedModel(provider: AiProvider, requested: string | null | un
   // The allowlist protects Orbit's money. With managed AI off the only key behind this path
   // is the developer's own, so `next dev` keeps running whatever model Settings asks for.
   if (!MANAGED_AI_ENABLED) return requested || MANAGED_DEFAULT_MODELS[provider];
-  if (tier === "fast" && MANAGED_FAST_MODELS[provider]) return MANAGED_FAST_MODELS[provider]!;
+  if (tier === "fast" && MANAGED_FAST_MODELS[provider]) return MANAGED_FAST_MODELS[provider];
   if (requested && MANAGED_MODELS[provider].includes(requested)) return requested;
   return MANAGED_DEFAULT_MODELS[provider];
 }

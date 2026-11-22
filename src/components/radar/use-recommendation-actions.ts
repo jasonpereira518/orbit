@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import type { RadarDismissReason } from "@/lib/radar/types";
 import {
+  confirmCalendarInvite,
   dismissRecommendation,
   neverForContact,
   restoreRecommendation,
@@ -11,6 +13,7 @@ import {
 } from "@/actions/radar";
 import { friendlyError } from "@/lib/errors";
 import { runToastAction, toast } from "@/lib/toast";
+import { sleep } from "@/lib/async";
 import { prefersReducedMotion } from "@/lib/motion-preference";
 
 /**
@@ -22,7 +25,7 @@ const restored = new Set<string>();
 /** How long a resolved card takes to fold away before the list is refreshed around it. */
 const COLLAPSE_MS = 260;
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, prefersReducedMotion() ? 0 : COLLAPSE_MS));
+const settle = () => sleep(prefersReducedMotion() ? 0 : COLLAPSE_MS);
 
 /**
  * One card's actions, shared by the full card, the dashboard's compact row and focus mode's
@@ -96,13 +99,23 @@ export function useRecommendationActions(rec: { id: string; contactName: string 
     draftOpen,
     setDraftOpen,
     schedule,
+    confirmInvite: (overrides?: { startTime?: string; title?: string; agenda?: string }) =>
+      resolve(
+        async () => {
+          const res = await confirmCalendarInvite(rec.id, overrides);
+          return res;
+        },
+        "Calendar invite confirmed and added"
+      ),
     /** Fold the card away for an email sent from its sheet; the send resolves it server-side. */
     hide: () => setExiting(true),
     /** Undo took the email back: the card is still live. */
     unhide: () => setExiting(false),
     snooze: (length: "1w" | "1m") =>
       resolve(() => snoozeRecommendation(rec.id, length), length === "1w" ? "Snoozed for a week" : "Snoozed for a month"),
-    dismiss: () => resolve(() => dismissRecommendation(rec.id), "Dismissed"),
+    /** With the reason the menu asked for; "Not now" is a week's snooze. The `x` key sends none. */
+    dismiss: (reason?: RadarDismissReason) =>
+      resolve(() => dismissRecommendation(rec.id, reason ?? null), reason === "not_now" ? "Snoozed for a week" : "Dismissed"),
     never: () => resolve(() => neverForContact(rec.id), `No more suggestions about ${rec.contactName}`),
   };
 }

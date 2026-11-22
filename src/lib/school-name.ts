@@ -37,7 +37,7 @@ export function schoolAcronym(name: string | null | undefined): string | null {
   if (!name) return null;
   const significant = words(name).filter((w) => !SKIP_WORDS.has(w));
   if (significant.length < 2) return null;
-  const acronym = significant.map((w) => w[0]!).join("");
+  const acronym = significant.map((w) => w[0]).join("");
   return ACRONYM_RE.test(acronym) ? acronym : null;
 }
 
@@ -118,14 +118,14 @@ export function sameSchool(a: string | null | undefined, b: string | null | unde
   let i = 0;
   let j = 0;
   while (i < x.length && j < y.length) {
-    if (x[i]!.w === y[j]!.w) {
+    if (x[i].w === y[j].w) {
       i++;
       j++;
-    } else if (spelledBy(x[i]!, x.length > 1, y, j)) {
-      j += x[i]!.w.length;
+    } else if (spelledBy(x[i], x.length > 1, y, j)) {
+      j += x[i].w.length;
       i++;
-    } else if (spelledBy(y[j]!, y.length > 1, x, i)) {
-      i += y[j]!.w.length;
+    } else if (spelledBy(y[j], y.length > 1, x, i)) {
+      i += y[j].w.length;
       j++;
     } else {
       return false;

@@ -260,7 +260,7 @@ export function DemoWindow() {
                   exit={reduced ? undefined : { opacity: 0, y: -4 }}
                   transition={{ duration: 0.2 }}
                 >
-                  {TOUR[beat]!.caption}
+                  {TOUR[beat].caption}
                 </motion.span>
               </AnimatePresence>
             </span>

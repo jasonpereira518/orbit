@@ -11,6 +11,7 @@ import { TargetCompaniesSettings } from "@/components/settings/target-companies-
 import { getSchools, getTargetCompanies } from "@/actions/target-companies";
 import { CreditsSettings } from "@/components/settings/credits-settings";
 import { HelpSettings } from "@/components/settings/help-settings";
+import { YourFeedback } from "@/components/settings/your-feedback";
 import { IntegrationsSettings } from "@/components/settings/integrations-settings";
 import { NotificationSettings } from "@/components/settings/notification-settings";
 import { RadarDigestSetting } from "@/components/settings/radar-digest-setting";
@@ -38,6 +39,8 @@ import { ensureUserSettings } from "@/lib/user-settings";
 import { resolveSurfaceVisibility } from "@/lib/surface-visibility";
 import { surfaceKeyForSettingsId, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { speechAllowance } from "@/lib/speech-quota";
+import { quotaState } from "@/lib/speech-limits";
+import { COSMO_SURFACE_KEY } from "@/lib/surfaces";
 import type { SpeechAllowances } from "@/components/settings/speech-usage-card";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { cookies } from "next/headers";
@@ -149,6 +152,18 @@ export default async function SettingsPage({
     meeting: { ...meetingAllowance, resetsAt: meetingAllowance.resetsAt.toISOString() },
     shortform: { ...shortformAllowance, resetsAt: shortformAllowance.resetsAt.toISOString() },
   };
+  if (!visibility.hidden.has(COSMO_SURFACE_KEY)) {
+    // Lazy, like everywhere voice/minutes is used: it stays out of other pages' graphs.
+    const { voiceMinutes } = await import("@/lib/voice/minutes");
+    const cosmo = await voiceMinutes(userId).catch(() => null);
+    if (cosmo)
+      speechAllowances.assistant = {
+        limit: cosmo.limit,
+        used: cosmo.used,
+        resetsAt: cosmo.resetsAt.toISOString(),
+        ...quotaState(cosmo.used, cosmo.limit),
+      };
+  }
 
   const { hidden } = visibility;
   const shows = (id: SettingsSectionId) => !hidden.has(surfaceKeyForSettingsId(id));
@@ -291,6 +306,9 @@ export default async function SettingsPage({
               feedbackEnabled={!hidden.has(FEEDBACK_SURFACE_KEY)}
               tourResumable={tourResumable(settingsRow)}
             />
+          ) : null}
+          {shows("settings-help") && !hidden.has(FEEDBACK_SURFACE_KEY) ? (
+            <YourFeedback userId={userId} />
           ) : null}
           <CreditsSettings />
         </SettingsSection>

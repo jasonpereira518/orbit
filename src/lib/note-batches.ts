@@ -24,7 +24,7 @@ export function captureSourceKinds(labels: readonly unknown[] | null | undefined
   const kinds = new Set<CaptureSourceKind>();
   for (const label of labels ?? []) {
     if (typeof label !== "string") continue;
-    const prefix = label.split(":")[0]!.trim().toLowerCase();
+    const prefix = label.split(":")[0].trim().toLowerCase();
     if (prefix === "voice") kinds.add("voice");
     else if (prefix === "photos" || prefix === "photo") kinds.add("photo");
     else if (prefix === "calendar") kinds.add("calendar");
@@ -302,6 +302,22 @@ export function titlesNearDuplicate(a: string, b: string): boolean {
   return shared / small.size >= 0.8;
 }
 
+const CHECK_IN_PREFIX = /^check in with [^:]+:\s*/i;
+
+function reminderTitleKey(title: string): string {
+  return title.replace(CHECK_IN_PREFIX, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/**
+ * The same reminder worded twice across notes: equal once case, punctuation and a leading
+ * "Check in with <name>:" are dropped. Exact on purpose: callers have already matched the
+ * person, and a fuzzier rule would swallow a genuinely different task.
+ */
+export function isNearDuplicateReminder(existingTitle: string, newTitle: string): boolean {
+  const key = reminderTitleKey(newTitle);
+  return key !== "" && key === reminderTitleKey(existingTitle);
+}
+
 /** How far after a window reminder's default date a dated commitment may land and still replace it. */
 export const SUPERSEDE_AFTER_DAYS = 7;
 
@@ -436,7 +452,7 @@ export function pickLockedParticipant(
   const byName = items.find((item) => (item.name || "").trim().toLowerCase() === lockedName);
   if (byName) return byName.key;
 
-  if (items.length === 1) return items[0]!.key;
+  if (items.length === 1) return items[0].key;
 
   return null;
 }

@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { RAIL_CLOSED_WIDTH, RAIL_OPEN_WIDTH } from "@/components/chat/chat-history-rail";
+import { RAIL_CLOSED_WIDTH, RAIL_OPEN_WIDTH } from "@/lib/chat-rail-pref";
 import { readRailOpen } from "@/lib/chat-rail-pref";
 
 /** The history rail's place while the chat panel loads, at the width the person left it. */

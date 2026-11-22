@@ -45,6 +45,8 @@ export function radarWhyInputs(rec: {
   kind: RecommendationKind;
   reasons: readonly RadarReason[];
   evidence: readonly RadarEvidence[];
+  /** LinkedIn deep read: how you met and where you overlapped (`relationshipFactLines`). */
+  relationship?: readonly string[];
 }): RadarWhyInputs {
   const facts = [
     ...rec.reasons
@@ -52,6 +54,7 @@ export function radarWhyInputs(rec: {
       .filter((r) => !PENALTY_CODES.has(r.code))
       .map((r) => r.label),
     ...rec.evidence.map((e) => e.label),
+    ...(rec.relationship ?? []),
   ]
     .map((line) => cleanSingleLine(line, 200))
     .filter((line): line is string => Boolean(line));
@@ -89,6 +92,8 @@ export function radarNoteKey(rec: {
   kind: RecommendationKind;
   reasons: readonly RadarReason[];
   evidence: readonly RadarEvidence[];
+  /** LinkedIn deep read (`relationshipFactLines`). Hashed only when there is one, so keys made without it stand. */
+  relationship?: readonly string[];
 }): string {
   const key = {
     name: cleanSingleLine(rec.contactName, 80),
@@ -100,6 +105,7 @@ export function radarNoteKey(rec: {
       .map((r) => r.code)
       .sort(),
     evidence: rec.evidence.map((e) => e.at),
+    ...(rec.relationship?.length ? { relationship: [...rec.relationship] } : {}),
   };
   return createHash("sha256").update(JSON.stringify(key)).digest("hex").slice(0, 16);
 }

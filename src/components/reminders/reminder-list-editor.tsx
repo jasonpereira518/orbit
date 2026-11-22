@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useState } from "react";
+import { useGuardedTransition } from "@/lib/single-flight";
 import { Ban, Trash2 } from "lucide-react";
 import { updateReminderList } from "@/actions/reminders";
 import { Button } from "@/components/ui/button";
@@ -33,7 +34,7 @@ export function ReminderListEditor({
   onRequestDelete: (list: ReminderListSummary) => void;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
+  const [pending, start] = useGuardedTransition();
   const [name, setName] = useState(list.name);
   const [icon, setIcon] = useState<string | null>(list.icon);
   const [color, setColor] = useState<string | null>(list.color);

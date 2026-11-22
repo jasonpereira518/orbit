@@ -33,7 +33,7 @@ function event(id: string, title: string, startMin: number, endMin: number, extr
 
 // ── A normal meeting: title, and everyone but me ──────────────────────────────────────
 {
-  const [c] = meetingCandidatesFrom([event("a", "Pilot sync", 0, 30)], NOW);
+  const [c] = meetingCandidatesFrom([event("a", "Pilot sync", 0, 30, { description: "Discuss Q3 goals and roadmap", location: "Room 4B" })], NOW);
   check("title carried over", c.title === "Pilot sync");
   check("owner is left out, guests kept with names and emails",
     c.attendees.length === 2 &&
@@ -41,6 +41,7 @@ function event(id: string, title: string, startMin: number, endMin: number, extr
       c.attendees[1].name === "Marcus Lee",
     JSON.stringify(c.attendees));
   check("times are ISO strings", c.startIso === at(0) && c.endIso === at(30));
+  check("agenda and location carried over", c.agenda === "Discuss Q3 goals and roadmap" && c.location === "Room 4B");
 }
 
 // ── What is never offered ─────────────────────────────────────────────────────────────

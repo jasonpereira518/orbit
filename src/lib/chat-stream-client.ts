@@ -1,3 +1,4 @@
+import type { ChatAttachment } from "@/lib/chat-attachments";
 import type { ChatBlocks } from "@/lib/chat-directives";
 import type { ChatRecommendation } from "@/db/schema";
 import type { EvidenceSource } from "@/lib/chat-evidence";
@@ -89,6 +90,12 @@ export async function streamChat(
      * connection, which keeps the question on the server.
      */
     turnId?: string;
+    /** Files attached to the question: names and the text read from them. */
+    attachments?: ChatAttachment[];
+    /** "deep" asks for a thorough answer that may take minutes. Absent is a quick one. */
+    mode?: "quick" | "deep";
+    /** The chat's web choice: "on" / "off", or absent for auto (the question decides, server-side). */
+    web?: "on" | "off";
   },
   handlers: ChatStreamHandlers,
   signal?: AbortSignal

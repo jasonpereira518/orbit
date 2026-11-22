@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { createExternalStore } from "@/lib/create-external-store";
 import { isNetworkError } from "@/lib/errors";
 import {
   enqueueOfflineAction,
@@ -34,7 +35,6 @@ let userKey: string | null = null;
 let runners: OfflineRunners | null = null;
 let queue: readonly QueuedAction[] = EMPTY;
 let flushing: Promise<FlushResult> | null = null;
-const listeners = new Set<() => void>();
 
 function storage(): Storage | null {
   try {
@@ -45,7 +45,7 @@ function storage(): Storage | null {
 }
 
 function emit() {
-  for (const l of listeners) l();
+  store.emit();
 }
 
 function setQueue(next: readonly QueuedAction[]) {
@@ -161,19 +161,14 @@ export function flushOfflineQueue(): Promise<FlushResult> {
   return flushing;
 }
 
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-const getSnapshot = () => queue;
-const getServerSnapshot = () => EMPTY;
+const store = createExternalStore<readonly QueuedAction[]>({
+  getSnapshot: () => queue,
+  getServerSnapshot: () => EMPTY,
+});
 
 /** Everything waiting to be sent, oldest first. Empty on the server and before mount. */
 export function useOfflineQueue(): readonly QueuedAction[] {
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot);
 }
 
 /** Outside React: whether a change to `subject` is waiting — for a caller deciding whether
@@ -185,7 +180,7 @@ export function isQueuedOffline(subject: string): boolean {
 /** Whether a change to `subject` (a reminder id) is waiting to be sent. */
 export function useIsQueuedOffline(subject: string): boolean {
   return useSyncExternalStore(
-    subscribe,
+    store.subscribe,
     () => queue.some((a) => a.subject === subject),
     () => false
   );

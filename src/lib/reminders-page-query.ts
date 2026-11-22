@@ -15,14 +15,12 @@
  * microseconds, and a millisecond-truncated cursor skips rows created in the same
  * millisecond as a page's last row.
  */
-import { and, eq, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { getDb } from "@/db";
 import {
   contacts,
   reminders,
   suggestedReminders,
-  type ReminderActionKind,
-  type ReminderOrigin,
 } from "@/db/schema";
 import { dueDayOf, isDateOnlyDue, ymdInZone } from "@/lib/reminder-due-bucket";
 import {
@@ -92,7 +90,7 @@ function escapeLike(q: string) {
   return q.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
-function sourceCondition(source: ReminderSource): SQL | undefined {
+export function sourceCondition(source: ReminderSource): SQL | undefined {
   switch (source) {
     case "manual":
       return and(eq(reminders.reminderType, "manual"), isNull(reminders.noteBatchId));
@@ -163,6 +161,7 @@ function filterConditions(
     )`);
   }
   if (filters.kinds?.length) conds.push(inArray(reminders.actionKind, filters.kinds));
+  if (filters.priority) conds.push(eq(reminders.priority, filters.priority));
   if (filters.sources?.length) {
     const parts = filters.sources.map(sourceCondition).filter((c): c is SQL => Boolean(c));
     if (parts.length) conds.push(or(...parts) as SQL);
@@ -219,6 +218,10 @@ export async function queryRemindersPage(
       actionKind: reminders.actionKind,
       origin: reminders.origin,
       confidenceScore: reminders.confidenceScore,
+      priority: reminders.priority,
+      category: reminders.category,
+      timingRationale: reminders.timingRationale,
+      importanceReason: reminders.importanceReason,
       listId: reminders.listId,
       contactId: reminders.contactId,
       contactFullName: contacts.fullName,
@@ -270,9 +273,13 @@ export async function queryRemindersPage(
         : null,
     status: r.status,
     reminderType: r.reminderType,
-    actionKind: (r.actionKind || "task") as ReminderActionKind,
-    origin: (r.origin || "explicit") as ReminderOrigin,
+    actionKind: (r.actionKind || "task"),
+    origin: (r.origin || "explicit"),
     confidenceScore: r.confidenceScore,
+    priority: (r.priority || "normal"),
+    category: (r.category || "action_item"),
+    timingRationale: r.timingRationale,
+    importanceReason: r.importanceReason,
     listId: r.listId ?? opts.inboxId,
     contactId: r.contactId,
     contactName: r.contactId
@@ -324,6 +331,7 @@ export async function queryReminderRailCounts(
         upcoming: sql<number>`count(*) filter (where ${pending} and ${dueDay} > ${today}::date)::int`,
         anytime: sql<number>`count(*) filter (where ${pending} and ${reminders.dueDate} is null)::int`,
         done: sql<number>`count(*) filter (where ${inArray(reminders.status, DONE_STATUSES)})::int`,
+        overdueFromNotes: sql<number>`count(*) filter (where ${overdueFromNotesWhere(userId, opts.tz, today)})::int`,
       })
       .from(reminders)
       .where(eq(reminders.userId, userId)),
@@ -357,7 +365,29 @@ export async function queryReminderRailCounts(
       anytime: Number(v?.anytime ?? 0),
       done: Number(v?.done ?? 0),
       suggested: Number(suggestedRows[0]?.n ?? 0),
+      overdueFromNotes: Number(v?.overdueFromNotes ?? 0),
     },
     pendingByList,
   };
+}
+
+/**
+ * The backlog the "snooze them all" cleanup acts on: pending, overdue by the bucket rule
+ * (`dueDaySql`), from notes (the same predicate as the "From notes" filter), and not
+ * critical or high. One WHERE shared by the page's banner count and the action, so the
+ * number the banner promises is the number the button moves.
+ */
+export function overdueFromNotesWhere(userId: string, tz: string, today: string): SQL {
+  return and(
+    eq(reminders.userId, userId),
+    eq(reminders.status, "pending"),
+    sql`${dueDaySql(tz)} < ${today}::date`,
+    sourceCondition("notes"),
+    // "From your notes" has to be honest: calendar-made and meeting reminders are not notes,
+    // and anything the person typed themselves is never swept.
+    notInArray(reminders.reminderType, ["pre_meeting", "post_meeting"]),
+    ne(reminders.createdBy, "calendar_sync"),
+    ne(reminders.createdBy, "user"),
+    inArray(reminders.priority, ["normal", "low"])
+  ) as SQL;
 }

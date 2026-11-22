@@ -59,6 +59,7 @@ async function main() {
 
   const pulse = await loadAppPulse(USER, now);
   check("carries the panel", pulse.panel.items.length >= 2 && typeof pulse.panel.dueCount === "number");
+  check("an account that never turned Radar on has no new-suggestions pulse", pulse.radarNew === 0, String(pulse.radarNew));
   check("carries the plan", pulse.plan === "free" || pulse.plan === "orbit" || pulse.plan === "lifetime", String(pulse.plan));
   const dueItem = pulse.panel.items.find((i) => i.kind === "follow_up" && i.contactId === due.id);
   check("the due follow-up is a due item", Boolean(dueItem) && pulse.dueItems.some((i) => i.id === dueItem!.id));

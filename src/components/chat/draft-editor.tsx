@@ -22,9 +22,9 @@ const CHIPS: ReadonlyArray<{ kind: RefineKind; label: string; done: string }> = 
  * The draft on a recommendation card, as something you can work on rather than just read:
  * click it (or the pencil) to edit, one-tap rewrites to nudge it, Undo to step back, Copy.
  *
- * What is edited here is CLIENT STATE and is lost on reload, on purpose: the stored message is
- * the model's original, and the moment a draft becomes a record is when it is sent, not while
- * it is being polished. `actions` is where that step plugs in, handed the text as it stands.
+ * The text is client state while it is being worked on; `onSave` is told each time it settles
+ * (an edit finished, a rewrite landed, an undo), which is how the card keeps it across a
+ * reload. `actions` is where sending plugs in, handed the text as it stands.
  *
  * The rewrite chips send the draft and nothing else — see `chat-refine.ts` for what the server
  * does with it and why the instruction is a fixed enum rather than something typed.
@@ -33,7 +33,10 @@ export function DraftEditor({
   initial,
   name,
   actions,
+  onSave,
 }: {
+  /** Told the draft each time it settles, never per keystroke. */
+  onSave?: (text: string) => void;
   initial: string;
   /** Who the message is for, for the field's accessible name. */
   name: string;
@@ -68,8 +71,11 @@ export function DraftEditor({
     setEditing(false);
     // One undo step per editing session, not per keystroke.
     const before = editStartRef.current;
-    if (text !== before) setStack((s) => [...s, before]);
-  }, [text]);
+    if (text !== before) {
+      setStack((s) => [...s, before]);
+      onSave?.(text);
+    }
+  }, [text, onSave]);
 
   async function refine(kind: RefineKind, done: string) {
     if (busy || !text.trim()) return;
@@ -80,6 +86,7 @@ export function DraftEditor({
       if (res.ok) {
         setStack((s) => [...s, text]);
         setText(res.draft);
+        onSave?.(res.draft);
         setStatus(done);
       } else {
         toast.error(res.error);
@@ -96,6 +103,7 @@ export function DraftEditor({
     if (previous === undefined) return;
     setStack(stack.slice(0, -1));
     setText(previous);
+    onSave?.(previous);
     setStatus("Undid the last change");
   }
 

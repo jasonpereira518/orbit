@@ -69,7 +69,7 @@ export async function persistEventCover(
   }
   if (!res) return null;
 
-  const contentType = (res.headers.get("content-type") || "").split(";")[0]!.trim();
+  const contentType = (res.headers.get("content-type") || "").split(";")[0].trim();
   if (!contentType.startsWith("image/")) {
     await res.body?.cancel().catch(() => {});
     return null;

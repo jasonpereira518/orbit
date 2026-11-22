@@ -29,6 +29,9 @@ function publicAssetExtensions(dir = PUBLIC_DIR): Map<string, string> {
   const found = new Map<string, string>();
   const walk = (current: string, prefix: string) => {
     for (const entry of readdirSync(current)) {
+      // Dotfiles are OS/editor junk (.DS_Store, .gitkeep), never assets we ship — and they
+      // are gitignored, so CI never sees them. Treating them as shipped made a local run fail.
+      if (entry.startsWith(".")) continue;
       const full = join(current, entry);
       if (statSync(full).isDirectory()) {
         walk(full, `${prefix}/${entry}`);
@@ -110,11 +113,12 @@ function main() {
     "/api/work-history/sweep",
     "/api/contacts/name-sweep",
     "/api/linkedin/timeline-events/backfill",
+    "/api/cron/tick",
     "/api/ops/sweep",
     "/api/ops/rollup",
     "/api/sync/run",
     "/api/radar/run",
-    "/api/radar/feeds/sweep",
+    "/api/radar/web",
     "/api/radar/digest",
     // Radar's Monday email's off switch: a mail client (or Gmail's own unsubscribe button)
     // has no session. The signed token in the query is the credential.
@@ -133,7 +137,8 @@ function main() {
     "/api/health",
     // Browsers report CSP violations without one.
     "/api/csp-report",
-    // Crawlers have no session either, and the matcher sends .txt and .xml through Clerk.
+    // Crawlers have no session either. The matcher skips these two now; this list is the net
+    // if that ever regresses (a crawler would otherwise be redirected to sign-in).
     "/robots.txt",
     "/sitemap.xml",
     // The phone half of note scanning, authenticated by the opaque token in the path. If
@@ -204,6 +209,24 @@ function main() {
     console.log(`  ${ok ? "ok  " : "FAIL"} .${ext} bypasses middleware (${example})`);
     if (!ok) gated.push(`.${ext} (e.g. ${example})`);
   }
+
+  // Bots and crawlers: `.txt`, `.xml` and `.json` paths outside /api skip Clerk middleware
+  // entirely. Anything an app route could serve (pages, API routes of any extension, Clerk's
+  // own proxy) must still run it.
+  const proxyEntries = proxyConfig.matcher.map((m) => new RegExp(`^${m}$`));
+  const runsProxy = (path: string) => proxyEntries.some((re) => re.test(path));
+  const skipped = ["/robots.txt", "/sitemap.xml", "/ads.txt", "/package.json", "/wp-sitemap.xml", "/.env.json"];
+  const guarded = [
+    "/", "/pricing", "/dashboard", "/contacts/abc", "/sign-in", "/interest/some.name",
+    "/api/v1/openapi.json", "/api/x.txt", "/__clerk/v1/client", "/.well-known/oauth-protected-resource",
+    "/contacts/john.xmlson", "/robots.txt.bak",
+  ];
+  const matcherProblems = [
+    ...skipped.filter(runsProxy).map((p) => `${p} still runs the proxy`),
+    ...guarded.filter((p) => !runsProxy(p)).map((p) => `${p} skips the proxy`),
+  ];
+  console.log(`\n  ${matcherProblems.length === 0 ? "ok  " : "FAIL"} bot paths skip the proxy; app, API and Clerk paths still run it`);
+  crawlerProblems.push(...matcherProblems);
 
   const guardedOk = leaked.length === 0;
 

@@ -75,7 +75,7 @@ const range = (runs, pick) => {
  * A `--suite frame` run: gestures scored against the 120Hz frame budget. Read from the file,
  * not the gestures: since method /2 every gesture records frame costs, open-suite ones too.
  */
-const isFrameSuite = suite === "frame";
+const isFrameSuite = suite === "frame" || suite === "pan";
 
 if (isFrameSuite) {
   const FRAME_GESTURES = [
@@ -86,6 +86,10 @@ if (isFrameSuite) {
     ["hover-drift", "Pointer drifting over the sky"],
     ["search-type", "Typing a search + camera flight"],
     ["cluster-click", "Clicking a cluster (flight in)"],
+    ["pan-home", "Drag-pan at home (240px circle)"],
+    ["pan-names", "Drag-pan @0.3, names showing (1,200px)"],
+    ["pan-closeup", "Drag-pan @0.5, close-up (1,800px)"],
+    ["pan-closeup-back", "Drag-pan @0.5, back over drawn sky"],
   ];
   const pct = (g) => (g && g.frames ? `${fmt((100 * g.over8) / g.frames, 1)}%` : "—");
   const rows = [];

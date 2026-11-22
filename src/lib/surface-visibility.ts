@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { eq, inArray, like } from "drizzle-orm";
 import { getDb } from "@/db";
 import { appSurfaceFlags } from "@/db/schema";
-import { isAdminUser } from "@/lib/admin";
+import { isAdminUser } from "@/lib/admin-ids";
 import { recordAdminAction } from "@/lib/admin-audit";
 import { isDemoAccount, isLocalhost } from "@/lib/demo-account";
 import { isDemoWorkspace } from "@/lib/demo-workspace";

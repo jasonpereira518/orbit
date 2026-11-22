@@ -22,6 +22,9 @@ console.log("\nLoudnessTimeline");
   for (let ms = 2_000; ms < 4_000; ms += 32) t.push({ atMs: ms, mic: 0.03, call: 0.7 });
   check("mic-dominant stretch reads as 1", t.micDominantShare(0, 1_900) === 1);
   check("call-dominant stretch reads as 0", t.micDominantShare(2_100, 3_900) === 0);
+  check("call-dominant stretch has callDominantShare 1", t.callDominantShare(2_100, 3_900) === 1);
+  check("audioSource identifies microphone stretch", t.audioSource(0, 1_900) === "microphone");
+  check("audioSource identifies call stretch", t.audioSource(2_100, 3_900) === "call");
   check("a half-and-half span is in between", Math.abs((t.micDominantShare(0, 4_000) ?? 0) - 0.5) < 0.1);
   check("a span with no samples is unknown", t.micDominantShare(60_000, 61_000) === null);
   check("silence on both sides is not mic-dominant", (() => {

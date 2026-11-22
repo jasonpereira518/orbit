@@ -8,6 +8,7 @@
  */
 import {
   emailVerbTerm,
+  isComingSoonEntry,
   looksLikeNote,
   looksLikeQuestion,
   rankEntries,
@@ -62,6 +63,32 @@ check("hiding Contacts takes a nested route with it", !visibleEntries(ENTRIES, n
 check("hiding Contacts leaves Recruiters, which has its own switch", visibleEntries(ENTRIES, new Set(["page.contacts"])).some((e) => e.id === "recruiters"));
 check("a hidden settings section drops its anchor", !visibleEntries(ENTRIES, new Set(["settings.ai"])).some((e) => e.id === "settings-ai"));
 check("an entry that goes nowhere is never hidden", visibleEntries(ENTRIES, new Set(["page.capture", "page.chat"])).some((e) => e.id === "theme"));
+
+console.log("\nExplicit surface gating");
+// An Integrations page is `/settings`, which says nothing about which account it is; a verb has
+// no href at all. Both name the surface that hides them.
+const GATED: PaletteEntry[] = [
+  { id: "int-notion", label: "Integrations › Notion", href: "/settings?integration=notion", surface: "feature.notion" },
+  { id: "int-google", label: "Integrations › Google", href: "/settings?integration=google", surface: "page.imports" },
+  { id: "compose", label: "Write an email", surface: "feature.compose" },
+  { id: "settings", label: "Settings", href: "/settings" },
+];
+const gated = (hidden: string[]) => ids(visibleEntries(GATED, new Set(hidden)));
+check("a closed feature removes only the page that names it", gated(["feature.notion"]) === "int-google,compose,settings", gated(["feature.notion"]));
+check("a hidden page takes the account pages that embed it", gated(["page.imports"]) === "int-notion,compose,settings", gated(["page.imports"]));
+check("a verb with no href goes with its feature", gated(["feature.compose"]) === "int-notion,int-google,settings", gated(["feature.compose"]));
+// Both checks apply: the named surface AND the page the entry lands on. The account pages live
+// inside Settings, so hiding Settings takes them with it, and a verb has no page to lose.
+check("hiding Settings takes the account pages that live inside it", gated(["page.settings"]) === "compose", gated(["page.settings"]));
+
+console.log("\nComing soon");
+const SOON = new Set(["page.radar", "page.outreach"]);
+check("a page marked coming soon is flagged", isComingSoonEntry({ href: "/radar" }, SOON));
+check("  and so is anything nested under it", isComingSoonEntry({ href: "/outreach/new" }, SOON));
+check("  query string and hash do not hide it from the check", isComingSoonEntry({ href: "/radar?focus=x" }, SOON));
+check("a live page is not", !isComingSoonEntry({ href: "/contacts" }, SOON));
+check("a verb with no href is not", !isComingSoonEntry({}, SOON));
+check("an empty set flags nothing", !isComingSoonEntry({ href: "/radar" }, new Set()));
 
 console.log("\nQuestions");
 for (const q of ["who do I know at Stripe", "Who works in AI?", "which recruiters have I talked to", "anyone at openai?"]) {
