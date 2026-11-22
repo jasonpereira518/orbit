@@ -11,6 +11,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const HEADERS = { "Cache-Control": "no-store", "X-Robots-Tag": "noindex" };
+// The tally is the same for everyone, so the CDN answers most polls without invoking the function.
+const OK_HEADERS = { ...HEADERS, "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60" };
 
 export async function GET(request: NextRequest) {
   try {
@@ -23,7 +25,7 @@ export async function GET(request: NextRequest) {
   }
   try {
     const { counts, voters } = await readPollResults();
-    return NextResponse.json({ ok: true, counts, voters }, { headers: HEADERS });
+    return NextResponse.json({ ok: true, counts, voters }, { headers: OK_HEADERS });
   } catch (err) {
     reportError(err, { where: "waitlist.poll.results", level: "warning" });
     return NextResponse.json({ ok: false }, { status: 503, headers: HEADERS });

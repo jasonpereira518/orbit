@@ -16,7 +16,15 @@ import "./smoke/_env";
 import { sql } from "drizzle-orm";
 import { checkMigrationTarget, databaseHost, validateEnv } from "../src/lib/env";
 import { readFileSync } from "node:fs";
-import { BUILD_MIGRATION_LOCK_WAIT_MS, RUNTIME_MIGRATION_LOCK_WAIT_MS, getDb, reconcileSchema } from "../src/db";
+import {
+  BUILD_MIGRATION_LOCK_WAIT_MS,
+  RUNTIME_MIGRATION_LOCK_WAIT_MS,
+  applyScaleSchema,
+  getDb,
+  isSqlError,
+  reconcileSchema,
+  type SchemaFailure,
+} from "../src/db";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -149,8 +157,39 @@ async function leaseChecks() {
   check("after the holder is gone the next reconcile sweeps", restored.applied === true && restored.failed.length === 0);
 }
 
+// A refusing database (Neon 402 quota) must stop the sweep at the first statement, not run
+// hundreds of them per cold start. A real SQL error (with a SQLSTATE) still only records and continues.
+async function failFastChecks() {
+  console.log("sweep fails fast on an unreachable database...");
+  const quota = Object.assign(new Error("Server error (HTTP status 402): exceeded the quota"), { code: "" });
+  let calls = 0;
+  let threw = false;
+  try {
+    await applyScaleSchema(async () => {
+      calls++;
+      throw quota;
+    });
+  } catch (err) {
+    threw = err === quota;
+  }
+  // Two expression reads swallow their own errors; the third call is the first DDL statement.
+  check("a 402 aborts the sweep", threw, `threw=${threw}`);
+  check("a 402 stops after the first DDL statement", calls <= 3, `calls=${calls}`);
+
+  const sqlErr = Object.assign(new Error("column does not exist"), { code: "42703" });
+  const failed: SchemaFailure[] = [];
+  let sqlCalls = 0;
+  await applyScaleSchema(async () => {
+    sqlCalls++;
+    throw sqlErr;
+  }, failed).catch(() => undefined);
+  check("a SQL error keeps sweeping and records failures", sqlCalls > 3 && failed.length > 1, `calls=${sqlCalls} failed=${failed.length}`);
+  check("isSqlError tells them apart", isSqlError(sqlErr) && !isSqlError(quota) && !isSqlError(new TypeError("fetch failed")));
+}
+
 async function main() {
   targetChecks();
+  await failFastChecks();
   await leaseChecks();
 
   if (failures > 0) {

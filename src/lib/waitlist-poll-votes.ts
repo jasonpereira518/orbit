@@ -43,7 +43,7 @@ import {
   type StarAllocation,
 } from "@/lib/waitlist-poll";
 
-const RESULTS_TTL_MS = 30_000;
+const RESULTS_TTL_MS = 60_000;
 
 let resultsMemo: { at: number; value: PollResults } | null = null;
 
