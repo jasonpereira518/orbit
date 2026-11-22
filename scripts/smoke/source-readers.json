@@ -438,7 +438,12 @@
   "smoke-schedules.ts": [
     "docs/RUNBOOK.md",
     "scripts/qstash-schedules.ts",
+    "src/app/api/cloud-notes/run/route.ts",
+    "src/app/api/connectors/outbox/drain/route.ts",
+    "src/app/api/credits/notices/route.ts",
+    "src/app/api/email/drain/route.ts",
     "src/app/api/imports/process-stalled/route.ts",
+    "src/app/api/webhooks/outbound/drain/route.ts",
     "src/lib/public-routes.ts",
     "src/lib/schedules.ts"
   ],
