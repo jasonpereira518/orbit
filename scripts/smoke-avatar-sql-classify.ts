@@ -64,7 +64,8 @@ run(async () => {
 
   console.log("clientAvatarUrlSql gives the previous expression's answer for every stored value...");
   {
-    // The expression before this change, verbatim apart from the shared-photo coalesce
+    // The expression before this change, verbatim apart from the shared-photo coalesce and the
+    // `?v=0` the inline branch now appends
     // (unchanged and out of scope here: none of these contacts has a shared photo).
     const rows = rowsOf<{ id: string; now: string | null; before: string | null }>(
       await db.execute(sql`
@@ -73,7 +74,7 @@ run(async () => {
                coalesce(NULL, CASE
                  WHEN ${contacts.profileImageUrl} IS NULL OR btrim(${contacts.profileImageUrl}) = '' THEN NULL
                  WHEN ${contacts.profileImageUrl} LIKE ${NO_PHOTO_PREFIX + "%"} THEN NULL
-                 WHEN ${contacts.profileImageUrl} LIKE 'data:image/%' THEN '/api/avatars/' || ${contacts.id}
+                 WHEN ${contacts.profileImageUrl} LIKE 'data:image/%' THEN '/api/avatars/' || ${contacts.id} || '?v=0'
                  WHEN ${contacts.profileImageUrl} LIKE '%unavatar.io%'
                    OR ${contacts.profileImageUrl} LIKE '%static.licdn.com/aero%' THEN NULL
                  ELSE btrim(${contacts.profileImageUrl})
