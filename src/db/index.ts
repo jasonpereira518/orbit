@@ -4024,6 +4024,12 @@ export type SchemaFailure = { statement: string; message: string };
  * is recorded for the caller to act on (the build-time migration refuses to deploy on any);
  * without one it is logged, which is all a runtime cold start can do.
  */
+/** A Postgres error carries a five-character SQLSTATE; transport and quota failures do not. */
+export function isSqlError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === "string" && /^[0-9A-Z]{5}$/.test(code);
+}
+
 async function runStatements(
   run: StatementRunner,
   statements: string[],
@@ -4036,6 +4042,10 @@ async function runStatements(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (BENIGN_DDL_FAILURE.test(message)) continue;
+      // No SQLSTATE means the database itself is unreachable (a Neon 402 quota, a fetch
+      // failure), so no later statement can succeed either. Stop instead of pushing hundreds of
+      // statements at a refusing DB on every cold start; the caller retries the whole pass.
+      if (!isSqlError(err)) throw err;
       const head = statement.trim().split("\n")[0].slice(0, 140);
       if (failed) failed.push({ statement: head, message });
       else console.error(`[db] ${label} failed: ${head}\n`, message);

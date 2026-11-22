@@ -23,7 +23,7 @@ import type { WelcomePlanet } from "@/lib/welcome-planets";
 import { prefersReducedMotion } from "@/lib/motion-preference";
 
 /** How often an open pass asks whether a friend has joined. */
-const POLL_MS = 20_000;
+const POLL_MS = 60_000;
 /** While the tab is hidden: slow enough to cost nothing, quick enough for the title badge. */
 const HIDDEN_POLL_MS = 60_000;
 /** Ticks closer together than this are one tick: a tab coming forward fires several events. */
