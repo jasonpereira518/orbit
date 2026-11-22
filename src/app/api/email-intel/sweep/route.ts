@@ -1,7 +1,8 @@
 /**
  * The email-insights sweep's entry point: reads new career-relevant Gmail threads for each
  * opted-in account, then extracts events from the hiring ones with the account's own AI key.
- * Every fifteen minutes from `.github/workflows/ops.yml` at :05/:20/:35/:50.
+ * Hourly at :30 from the tick (src/lib/schedules.ts). No idle early-return here: the ledger row
+ * it writes each run is what the "sweep has stopped running" alert reads.
  *
  * Its own route, schedule and `cron_runs` job name, like the work-history sweep: it makes
  * network and model calls per account, and the ten-minute ops sweep is the alerting path and

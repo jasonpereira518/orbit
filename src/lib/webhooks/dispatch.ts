@@ -591,6 +591,30 @@ export async function drainDueDeliveries(
   return stats;
 }
 
+/**
+ * Whether a drain run has anything to do: a delivery due, a follow-up subscriber to emit for,
+ * or an idempotency record past `purgeBefore`. The route stands down without a ledger row
+ * when all three are no. Same due predicate as `claimDueDeliveries`.
+ */
+export async function hasWebhookWork(now: Date, purgeBefore: Date): Promise<boolean> {
+  const db = await getDb();
+  const [row] = rowsOf<{ work: boolean }>(
+    await db.execute(sql`
+      SELECT (
+        EXISTS (
+          SELECT 1 FROM outbound_webhook_deliveries d
+            JOIN webhook_endpoints e ON e.id = d.endpoint_id
+           WHERE d.status = 'pending' AND d.next_attempt_at IS NOT NULL AND d.next_attempt_at <= ${now}
+             AND e.status = 'active' AND (d.claimed_until IS NULL OR d.claimed_until < ${now})
+        )
+        OR EXISTS (SELECT 1 FROM webhook_endpoints WHERE status = 'active' AND event_types ? 'followup.due')
+        OR EXISTS (SELECT 1 FROM api_idempotency_keys WHERE created_at < ${purgeBefore})
+      ) AS work
+    `)
+  );
+  return row?.work === true;
+}
+
 /** Purge idempotency records past their useful life. Called from the same sweep. */
 export async function purgeExpiredIdempotencyKeys(olderThan: Date): Promise<void> {
   const db = await getDb();
