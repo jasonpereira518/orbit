@@ -281,7 +281,8 @@ export async function GET(request: Request) {
       // Email attachments: kept a week after the send settles (for a retry), and uploads the
       // composer never sent.
       if (hasBlobStorage()) {
-        const swept = await sweepEmailAttachments();
+        // The Blob listing for never-sent uploads is daily (the 03:30 UTC run); the DB half is hourly.
+        const swept = await sweepEmailAttachments(new Date(), 200, { listOrphans: new Date().getUTCHours() === 3 });
         stats.emailAttachmentsSwept = swept.settled + swept.orphans;
       }
       // Abandoned meeting transcripts. The per-user sweep only runs when that user records

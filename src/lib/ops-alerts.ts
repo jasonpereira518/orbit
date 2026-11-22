@@ -57,7 +57,7 @@ export type OpsSnapshot = {
     /** Radar's Monday email (`/api/radar/digest`), hourly at :13 through Sunday and Monday UTC. */
     radarDigest: { lastStartedAt: Date | null; lastState: CronRunState | null };
     workHistory: { lastStartedAt: Date | null; lastState: CronRunState | null };
-    /** The email-insights sweep (`/api/email-intel/sweep`), every fifteen minutes. */
+    /** The email-insights sweep (`/api/email-intel/sweep`), hourly at :30 (the tick). */
     emailIntel: { lastStartedAt: Date | null; lastState: CronRunState | null };
   };
   /** The last PARTIAL_STREAK process-stalled states, newest first. */
@@ -230,11 +230,11 @@ const RADAR_DIGEST_SILENT_MS = 6 * 24 * 60 * 60 * 1000;
 const WORK_HISTORY_SILENT_MS = 6 * 60 * 60 * 1000;
 
 /**
- * The email-insights sweep runs every fifteen minutes; two hours of silence is eight missed
- * runs, not GitHub's ordinary lag. `warning`: a stage change noticed late costs nothing.
+ * The email-insights sweep runs hourly (the :30 tick); three hours of silence is three missed
+ * runs, not a late tick. `warning`: a stage change noticed late costs nothing.
  * Never having run is NOT an alert — the feature is opt-in and may not be enabled anywhere.
  */
-const EMAIL_INTEL_SILENT_MS = 2 * 60 * 60 * 1000;
+const EMAIL_INTEL_SILENT_MS = 3 * 60 * 60 * 1000;
 
 export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[] {
   const out: OpsCondition[] = [];
