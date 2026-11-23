@@ -47,7 +47,15 @@ async function main() {
   check("GET /api/health is 200", health?.status === 200, `HTTP ${health?.status}`);
   const body = health ? await health.json().catch(() => null) : null;
   check("and answers JSON", body !== null && typeof body === "object");
-  check("and is not cached", (health?.headers.get("cache-control") ?? "").includes("no-store"));
+  // A healthy shallow answer is cached on the CDN between scheduler ticks (`healthCacheControl`),
+  // so a monitor polling it cannot keep the database awake. Vercel strips `s-maxage` from what a
+  // client sees; on Vercel, the proof is that a repeat is a cache HIT.
+  const healthCache = health?.headers.get("cache-control") ?? "";
+  check("and a healthy answer is cacheable by the CDN", body?.status !== "ok" || !healthCache.includes("no-store"), healthCache);
+  if (body?.status === "ok" && health?.headers.has("x-vercel-cache")) {
+    const again = await get("/api/health");
+    check("and a repeat is answered by the CDN", again?.headers.get("x-vercel-cache") === "HIT", `x-vercel-cache: ${again?.headers.get("x-vercel-cache")}`);
+  }
   const badToken = await get("/api/health?token=not-a-real-token");
   check("a wrong health token is refused", badToken?.status === 401, `HTTP ${badToken?.status}`);
 

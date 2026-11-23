@@ -21,10 +21,11 @@ import { EASE_HOUSE } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import type { WelcomePlanet } from "@/lib/welcome-planets";
 import { prefersReducedMotion } from "@/lib/motion-preference";
+import { isIdle, onResume, touch } from "@/lib/idle-gate";
 
 /** How often an open pass asks whether a friend has joined. */
 const POLL_MS = 60_000;
-/** While the tab is hidden: slow enough to cost nothing, quick enough for the title badge. */
+/** While the tab is hidden: quick enough for the title badge. An idle tab stops (`idle-gate`). */
 const HIDDEN_POLL_MS = 60_000;
 /** Ticks closer together than this are one tick: a tab coming forward fires several events. */
 const MIN_GAP_MS = 3_000;
@@ -235,8 +236,9 @@ export function ReferralTracker({
     return () => window.clearTimeout(clear);
   }, [referrals]);
 
-  // The poll. While the tab is hidden it slows to one read a minute (enough for the pass's
-  // tab-title badge); coming back fetches at once.
+  // The poll. While the tab is hidden it keeps to one read a minute (enough for the pass's
+  // tab-title badge). After five minutes without input it stops: a pass left open overnight
+  // used to wake a function and the database every minute. Input, or coming back, fetches at once.
   useEffect(() => {
     if (!activeToken) return;
     let stopped = false;
@@ -244,7 +246,7 @@ export function ReferralTracker({
     let lastAt = 0;
 
     const tick = async () => {
-      if (stopped) return;
+      if (stopped || isIdle()) return;
       const gap = document.visibilityState === "visible" ? MIN_GAP_MS : HIDDEN_POLL_MS;
       if (Date.now() - lastAt < gap) return;
       lastAt = Date.now();
@@ -280,13 +282,18 @@ export function ReferralTracker({
     };
 
     const interval = window.setInterval(() => void tick(), POLL_MS);
-    const onVisible = () => void tick();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") touch(); // Showing the tab counts as being there.
+      void tick();
+    };
     document.addEventListener("visibilitychange", onVisible);
+    const offResume = onResume(() => void tick());
     return () => {
       stopped = true;
       controller?.abort();
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
+      offResume();
     };
   }, [activeToken]);
 
