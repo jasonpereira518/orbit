@@ -16,6 +16,7 @@ import crypto from "node:crypto";
 import { decrypt } from "@/lib/crypto";
 import { isLikelyPersonName } from "@/lib/linkedin-scraper";
 import { discoverPeople } from "@/lib/web-research";
+import { discoverPeopleAdvanced, type RawCandidate } from "@/lib/discovery";
 
 export type PeopleSearchCriteria = {
   titles?: string[];
@@ -44,6 +45,29 @@ export type BrightDataCandidate = {
   almaMater?: string;
   confidence: "high" | "medium";
   source: "brightdata" | "web_research" | "preview_simulation";
+  introPath?: {
+    introducerContactId: string;
+    introducerName: string;
+    introducerTier: "inner" | "mid" | "outer";
+    relationshipScore: number;
+    relationshipContext: string;
+    introFeasibility: "high" | "medium";
+    email?: string | null;
+    linkedinUrl?: string | null;
+  } | null;
+  eventOverlap?: {
+    coAttendedCount: number;
+    sharedEventNames: string[];
+    upcomingSharedEvent?: string | null;
+  } | null;
+  matchedProjects?: Array<{
+    projectId: string;
+    projectTitle: string;
+    sharedTopics: string[];
+  }>;
+  score?: number;
+  tier?: "must_meet" | "strong_fit" | "worth_exploring";
+  suggestedOpener?: string;
 };
 
 export type BrightDataConfig = {
@@ -371,6 +395,52 @@ function parseDuckDuckGoCandidates(
  * Searches people using BrightData Web Unlocker, with automatic fallback to
  * Orbit AI Web Research and clean dynamic preview simulation.
  */
+async function enrichCandidatesWithDiscovery(
+  userId: string,
+  candidates: BrightDataCandidate[]
+): Promise<BrightDataCandidate[]> {
+  if (!candidates.length || !userId) return candidates;
+  try {
+    const rawCandidates: RawCandidate[] = candidates.map((c) => ({
+      id: c.id,
+      fullName: c.fullName,
+      headline: [c.title, c.company].filter(Boolean).join(" at ") || null,
+      company: c.company,
+      title: c.title,
+      linkedinUrl: c.linkedinUrl,
+      source: c.source === "brightdata" ? "target_company" : "web_research",
+      bio: c.summary,
+      newsContext: c.recentNews,
+      signals: c.signals,
+    }));
+
+    const surfaced = await discoverPeopleAdvanced(
+      userId,
+      { limit: candidates.length },
+      new Date(),
+      rawCandidates
+    );
+    const surfacedById = new Map(surfaced.map((s) => [s.id, s]));
+
+    return candidates.map((c) => {
+      const match = surfacedById.get(c.id);
+      if (!match) return c;
+      return {
+        ...c,
+        score: match.score,
+        tier: match.tier,
+        introPath: match.introPath,
+        eventOverlap: match.eventOverlap,
+        matchedProjects: match.matchedProjects,
+        suggestedOpener: match.suggestedOpener,
+        matchReason: match.primaryWhy || c.matchReason,
+      };
+    });
+  } catch {
+    return candidates;
+  }
+}
+
 export async function searchPeopleWithBrightData(
   userId: string,
   criteria: PeopleSearchCriteria
@@ -382,7 +452,8 @@ export async function searchPeopleWithBrightData(
   // 1. Efficient Cache Check
   const cached = await getCachedCandidates(inputHash);
   if (cached && cached.length > 0) {
-    return { candidates: cached, isLive: config.isConfigured };
+    const enriched = await enrichCandidatesWithDiscovery(userId, cached);
+    return { candidates: enriched, isLive: config.isConfigured };
   }
 
   // 2. Live BrightData Web Unlocker Scraping
@@ -415,7 +486,8 @@ export async function searchPeopleWithBrightData(
 
           if (candidates.length > 0) {
             await setCachedCandidates(userId, inputHash, candidates);
-            return { candidates, isLive: true };
+            const enriched = await enrichCandidatesWithDiscovery(userId, candidates);
+            return { candidates: enriched, isLive: true };
           }
         }
       }
@@ -462,8 +534,9 @@ export async function searchPeopleWithBrightData(
       }));
 
       await setCachedCandidates(userId, inputHash, candidates);
+      const enriched = await enrichCandidatesWithDiscovery(userId, candidates);
       return {
-        candidates,
+        candidates: enriched,
         isLive: true,
         message: "Found matching candidates via live web search & discovery.",
       };
@@ -494,8 +567,10 @@ export async function searchPeopleWithBrightData(
     },
   ];
 
+  const enrichedPreview = await enrichCandidatesWithDiscovery(userId, previewCandidates);
+
   return {
-    candidates: previewCandidates,
+    candidates: enrichedPreview,
     isLive: false,
     message: "BrightData or web research keys not detected. Configure your BrightData key in Settings for live scraping.",
   };
