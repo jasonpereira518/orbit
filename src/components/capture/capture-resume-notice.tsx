@@ -82,7 +82,7 @@ export function StaleDraftNotice({
   kind: "meeting" | "notes";
   /** ISO time the draft was last touched. */
   updatedAt: string;
-  /** People already pulled out of it; more than 0 makes Discard ask first. */
+  /** People already pulled out of the draft. */
   itemCount: number;
   path: "/capture" | "/meetings";
 }) {
@@ -94,7 +94,7 @@ export function StaleDraftNotice({
   // the old review back over the input form.
   const { job: stored } = useCaptureJob();
   useEffect(() => {
-    if (stored?.id === jobId) clearCaptureJob();
+    if (stored?.id === jobId) clearCaptureJob(jobId);
   }, [stored?.id, jobId]);
   async function discard() {
     setBusy(true);
@@ -102,14 +102,14 @@ export function StaleDraftNotice({
       const res = await discardStaleDraft(jobId);
       if (!res.ok) {
         toast.error(res.error);
-        setBusy(false);
         return;
       }
-      if (!res.discarded) toast.info("That draft has already moved on");
-      clearCaptureJob();
+      if (!res.discarded) toast.info("That draft has already changed");
+      clearCaptureJob(jobId);
       router.refresh();
     } catch (err) {
       toast.error(friendlyError(err, "Couldn’t discard that draft — try again?"));
+    } finally {
       setBusy(false);
     }
   }

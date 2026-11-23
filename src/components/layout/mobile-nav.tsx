@@ -134,6 +134,11 @@ export function MobileNav({
       const ordered = orderNavItems(MOBILE_MORE_NAV, navOrder).filter(
         (item) => !isHrefHidden(item.href, hidden)
       );
+      const remindersIndex = ordered.findIndex((item) => item.href === "/reminders");
+      if (remindersIndex > 0 && !isHrefComingSoon("/reminders", comingSoon)) {
+        const [reminders] = ordered.splice(remindersIndex, 1);
+        ordered.unshift(reminders);
+      }
       // Coming-soon pages sink to the bottom, matching the desktop sidebar.
       return [
         ...ordered.filter((item) => !isHrefComingSoon(item.href, comingSoon)),

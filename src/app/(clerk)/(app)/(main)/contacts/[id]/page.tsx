@@ -399,6 +399,16 @@ export default async function ContactDetailPage({
         />
       </div>
 
+      <Suspense fallback={<Skeleton className="h-40 w-full rounded-2xl" />}>
+        <StreamedFollowUp
+          sendOptions={sendOptionsPromise}
+          contactId={contact.id}
+          contactName={displayName}
+          nextFollowUpAt={contact.nextFollowUpAt}
+          phone={contact.phone}
+        />
+      </Suspense>
+
       <div
         className="reveal-mount"
         style={{ "--reveal-delay": "90ms" } as React.CSSProperties}
@@ -453,16 +463,6 @@ export default async function ContactDetailPage({
           settings={settingsPromise}
           contactId={contact.id}
           linkedinUrl={contact.linkedinUrl}
-        />
-      </Suspense>
-
-      <Suspense fallback={<Skeleton className="h-40 w-full rounded-2xl" />}>
-        <StreamedFollowUp
-          sendOptions={sendOptionsPromise}
-          contactId={contact.id}
-          contactName={displayName}
-          nextFollowUpAt={contact.nextFollowUpAt}
-          phone={contact.phone}
         />
       </Suspense>
 

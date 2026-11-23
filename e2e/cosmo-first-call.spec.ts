@@ -1,8 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
-import { ensureOnboarded } from "./helpers";
+import { ensureOnboarded, untilHydrated } from "./helpers";
 
-// First Cosmo call per browser asks first; the orb and the "N things due" chip share the gate.
-const KEY = "orbit:cosmo-first-call";
 
 async function setup(page: Page) {
   const starts: unknown[] = [];
@@ -27,40 +25,39 @@ async function setup(page: Page) {
     await ensureOnboarded(page);
     await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
   }
-  await page.evaluate((k) => localStorage.removeItem(k), KEY);
-  await page.reload({ waitUntil: "domcontentloaded" });
   return starts;
 }
 
-test("the first call asks before any voice request, then never again", async ({ page }) => {
+test("each call asks before any voice request", async ({ page }) => {
   const starts = await setup(page);
-  const orb = page.getByRole("button", { name: "Talk to Cosmo" });
+  const orb = page.getByRole("button", { name: "Cosmo voice", exact: true });
   await expect(orb).toBeVisible();
   await expect(async () => {
     await orb.click();
-    await expect(page.getByRole("dialog", { name: "Talk to Cosmo?" })).toBeVisible({ timeout: 2_000 });
+    await expect(page.getByRole("dialog", { name: "Cosmo voice" })).toBeVisible({ timeout: 2_000 });
   }).toPass({ timeout: 60_000 });
-  await expect(page.getByText("Cosmo listens through your microphone. Calls use your voice minutes.")).toBeVisible();
+  await expect(page.getByText("Orbit uses your microphone and voice minutes during the call.")).toBeVisible();
   expect(starts).toHaveLength(0);
 
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await orb.click();
-  await page.getByRole("button", { name: "Not now" }).click();
+  await page.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(starts).toHaveLength(0);
-  expect(await page.evaluate((k) => localStorage.getItem(k), KEY)).toBeNull();
 
   await orb.click();
-  await page.getByRole("button", { name: "Start call" }).click();
+  await page.getByRole("button", { name: "Start voice call" }).click();
   await expect.poll(() => starts.length).toBe(1);
-  expect(await page.evaluate((k) => localStorage.getItem(k), KEY)).toBe("1");
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(orb).toBeVisible();
   await orb.click();
+  await expect(page.getByRole('dialog', { name: 'Cosmo voice' })).toBeVisible();
+  expect(starts).toHaveLength(1);
+  await page.getByRole('button', { name: 'Start voice call' }).click();
   await expect.poll(() => starts.length).toBe(2);
-  await expect(page.getByRole("dialog", { name: "Talk to Cosmo?" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Cosmo voice" })).toHaveCount(0);
 });
 
 test("the chip and the keyboard pass through the same gate", async ({ page }) => {
@@ -68,22 +65,25 @@ test("the chip and the keyboard pass through the same gate", async ({ page }) =>
   // A reminder due today makes the "N due" chip. Unique per run, and cleared at the end.
   const title = `First-call chip check ${Date.now()}`;
   await page.goto("/reminders", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "New reminder" }).first().click();
-  await page.getByPlaceholder("Call Alex about intro").fill(title);
+  const titleInput = page.getByPlaceholder("Call Alex about intro");
+  await untilHydrated(async () => {
+    if (!(await titleInput.isVisible())) await page.getByRole("button", { name: "New reminder" }).first().click();
+  }, () => expect(titleInput).toBeVisible({ timeout: 2_000 }));
+  await titleInput.fill(title);
   await page.getByRole("button", { name: "Add reminder" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
-  const chip = page.locator(".cosmo-chip").getByRole("button", { name: /ask Cosmo$/ });
+  const chip = page.locator(".cosmo-chip").getByRole("button", { name: /Cosmo voice$/ });
   await expect(chip).toBeVisible({ timeout: 30_000 });
   await chip.focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("dialog", { name: "Talk to Cosmo?" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Cosmo voice" })).toBeVisible();
   expect(starts).toHaveLength(0);
   await page.keyboard.press("Escape");
-  const orb = page.getByRole("button", { name: "Talk to Cosmo" });
+  const orb = page.getByRole("button", { name: "Cosmo voice", exact: true });
   await orb.focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("dialog", { name: "Talk to Cosmo?" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Cosmo voice" })).toBeVisible();
   expect(starts).toHaveLength(0);
 
   await page.keyboard.press("Escape");
@@ -99,8 +99,8 @@ test("denying the microphone after confirming still shows the error", async ({ p
       throw new DOMException("Denied", "NotAllowedError");
     };
   });
-  const orb = page.getByRole("button", { name: "Talk to Cosmo" });
+  const orb = page.getByRole("button", { name: "Cosmo voice", exact: true });
   await orb.click();
-  await page.getByRole("button", { name: "Start call" }).click();
+  await page.getByRole("button", { name: "Start voice call" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Microphone access was denied" })).toBeVisible();
 });

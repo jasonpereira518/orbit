@@ -40,7 +40,7 @@ BRIGHTDATA_CUSTOMER_ID=hl_your_customer_id # Optional for proxy-based routes`;
         className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-card px-2.5 py-1 text-xs text-muted-foreground transition hover:border-border hover:text-ink shadow-xs"
       >
         <Globe className="h-3.5 w-3.5 text-primary" />
-        <span>Scraper:</span>
+        <span>People search:</span>
         {isConfigured ? (
           <span className="inline-flex items-center gap-1 font-medium text-emerald-600 dark:text-emerald-400">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />

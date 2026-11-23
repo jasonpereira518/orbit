@@ -115,32 +115,30 @@ export function ContactProfileOverview({
         </CardContent>
       </Card>
 
-      {/* Rendered even when empty, unlike before. These are the fields the AI fills in, and
-          a card that only appears once something already exists gives the user no way to
-          add the first entry — or to discover that Orbit tracks this at all.
+      <details open={keyFacts.length + sharedInterests.length > 0 || undefined} className="lg:col-span-2">
+        <summary className="cursor-pointer rounded-lg px-3 py-2 text-sm font-medium text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+          Key facts and shared interests
+        </summary>
+        <div className="mt-3 grid gap-4 md:grid-cols-2">
+          <EditableFactList
+            contactId={contactId}
+            field="keyFacts"
+            title="Key facts"
+            addLabel="Add fact"
+            emptyHint="Nothing yet. Log an interaction and Orbit will pull these out — or add what matters yourself."
+            items={keyFacts}
+          />
 
-          Opportunities are NOT edited here. This branch added a third card for them, before
-          main's meeting-notes work made `contacts.opportunities` a derived mirror of the
-          `contact_opportunities` table — so an edit written straight to the column would be
-          silently overwritten the next time that mirror was rebuilt. They have their own
-          typed section on this page now (`contact-opportunities-section.tsx`). */}
-      <EditableFactList
-        contactId={contactId}
-        field="keyFacts"
-        title="Key facts"
-        addLabel="Add fact"
-        emptyHint="Nothing yet. Log an interaction and Orbit will pull these out — or add what matters yourself."
-        items={keyFacts}
-      />
-
-      <EditableFactList
-        contactId={contactId}
-        field="sharedInterests"
-        title="Shared interests"
-        addLabel="Add interest"
-        emptyHint="Nothing yet. These are what you have in common — useful openers when you next reach out."
-        items={sharedInterests}
-      />
+          <EditableFactList
+            contactId={contactId}
+            field="sharedInterests"
+            title="Shared interests"
+            addLabel="Add interest"
+            emptyHint="Nothing yet. These are what you have in common — useful openers when you next reach out."
+            items={sharedInterests}
+          />
+        </div>
+      </details>
 
 
       {industry?.trim() ? (
