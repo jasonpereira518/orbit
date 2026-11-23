@@ -12,6 +12,7 @@ import { getEntitlements } from "@/lib/entitlements";
 import { RecruitersLocked } from "@/components/locked-feature";
 import { getEffectivePlanConfig } from "@/lib/plans/plan-rules";
 import { RecruiterLinkEditor } from "@/components/recruiters/recruiter-link-editor";
+import { CompanyChip } from "@/components/recruiters/company-chip";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -73,7 +74,7 @@ export default async function RecruiterDetailPage({
             {recruiter.fullName}
           </h1>
           <p className="mt-1 text-muted-foreground">
-            {recruiter.firm || "Unknown firm"}
+            {recruiter.firm ? <CompanyChip name={recruiter.firm} className="font-medium" /> : "Unknown firm"}
           </p>
           {recruiter.role && (
             <p className="mt-1 text-sm font-medium text-foreground">
@@ -194,8 +195,8 @@ export default async function RecruiterDetailPage({
               </p>
               <div className="mt-1.5 flex flex-wrap gap-2">
                 {companies.map((c) => (
-                  <Badge key={c} variant="secondary">
-                    {c}
+                  <Badge key={c} variant="secondary" className="h-auto gap-1.5 py-1">
+                    <CompanyChip name={c} size="sm" />
                   </Badge>
                 ))}
               </div>

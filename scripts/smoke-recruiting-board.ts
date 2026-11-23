@@ -36,6 +36,7 @@ import {
   setCompanyHiddenForUser,
   setCompanyStageForUser,
 } from "../src/lib/recruiting-companies";
+import { companyMarkSpec } from "../src/lib/company-mark";
 import { ensureUserSettings } from "../src/lib/user-settings";
 
 let failures = 0;
@@ -171,6 +172,15 @@ async function main() {
   check("a card only ever moves right", rightOnly);
   check("closed is last", BOARD_COLUMNS[BOARD_COLUMNS.length - 1].id === "closed");
   check("every stage reads as words", order.every((s) => Boolean(STAGE_LABELS[s])));
+
+  console.log("\nthe company mark");
+  const stripe = companyMarkSpec("Stripe, Inc.");
+  check("a known brand gets its logo domain and color", stripe.domain === "stripe.com" && Boolean(stripe.color), JSON.stringify(stripe));
+  const unknown = companyMarkSpec("Zyxqwv Labs");
+  check("an unknown company gets no logo, a stable tint and its initial", unknown.domain === null && Boolean(unknown.color) && unknown.initial === "Z", JSON.stringify(unknown));
+  check("the tint is stable between calls", companyMarkSpec("Zyxqwv Labs").color === unknown.color);
+  check("a leading The does not become the initial", companyMarkSpec("The Zyxqwv Labs").initial === "Z");
+  check("an empty name still renders a tile", companyMarkSpec("").initial === "?");
 
   console.log("\nthe loader");
   const db = await getDb();

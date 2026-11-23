@@ -1,8 +1,11 @@
 import { ExternalLink } from "lucide-react";
 import { CompanyActions, PutBackButton } from "@/components/recruiters/company-actions";
+import { CompanyChip } from "@/components/recruiters/company-chip";
 import { Badge } from "@/components/ui/badge";
 import { RelativeTime } from "@/components/admin/relative-time";
+import { companyMarkSpec } from "@/lib/company-mark";
 import { STAGE_LABELS } from "@/lib/recruiter-stages";
+import { cn } from "@/lib/utils";
 import { BOARD_COLUMNS, columnFor, gmailThreadUrl, type BoardCompany } from "@/lib/recruiting-board";
 
 /**
@@ -15,10 +18,15 @@ function CompanyCard({ company }: { company: BoardCompany }) {
   const column = BOARD_COLUMNS.find((c) => c.id === columnFor(company.stage));
   // A column holding two stages says which one; a single-stage column already does.
   const showStage = (column?.stages.length ?? 1) > 1;
+  const brandColor = companyMarkSpec(company.name).color;
   return (
-    <li className="min-w-0 rounded-xl border border-border/70 bg-background px-4 py-3">
-      <div className="flex items-baseline justify-between gap-2">
-        <p className="truncate font-medium text-ink">{company.name}</p>
+    // The company's color runs down the left edge, so a column reads as a row of brands.
+    <li
+      className={cn("min-w-0 rounded-xl border border-border/70 bg-background px-4 py-3", brandColor && "border-l-[3px]")}
+      style={brandColor ? { borderLeftColor: brandColor } : undefined}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <CompanyChip name={company.name} className="font-medium text-ink" />
         <span className="shrink-0 text-xs text-muted-foreground">
           <RelativeTime date={company.lastActivityAt} />
         </span>
@@ -97,7 +105,7 @@ export function CompaniesBoard({ companies, hidden }: { companies: BoardCompany[
           <ul className="mt-3 space-y-1">
             {hidden.map((company) => (
               <li key={company.key} className="flex items-center justify-between gap-3 text-sm">
-                <span className="min-w-0 truncate text-muted-foreground">{company.name}</span>
+                <CompanyChip name={company.name} size="sm" className="text-muted-foreground" />
                 <PutBackButton companyKey={company.key} name={company.name} />
               </li>
             ))}
