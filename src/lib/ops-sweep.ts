@@ -1,6 +1,6 @@
 import { oldestDueAgeMs } from "@/lib/provider-connections";
 import { probeStatementTimeout } from "@/lib/health";
-import { and, desc, eq, gt, inArray, isNotNull, like, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, like, lt, or, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
 import { contacts, cronRuns, errorEvents, imports, opsAlertState, dataPurgeRuns, rateLimitBuckets } from "@/db/schema";
 import { RATE_LIMITS } from "@/lib/rate-limit";
@@ -189,7 +189,14 @@ export async function loadOpsSnapshot(now: Date, deploy: DeployFacts): Promise<O
       db
         .select({ n: sql<number>`count(*)::int` })
         .from(dataPurgeRuns)
-        .where(eq(dataPurgeRuns.status, "failed")),
+        // Also `running` with no attempt in two hours: the hourly resume (process-stalled)
+        // retries anything idle for ten minutes, so such a run was stranded and nobody is on it.
+        .where(
+          or(
+            eq(dataPurgeRuns.status, "failed"),
+            and(eq(dataPurgeRuns.status, "running"), lt(dataPurgeRuns.lastAttemptAt, new Date(now.getTime() - 2 * HOUR_MS)))
+          )
+        ),
       // Production only: PGlite and preview branches report Postgres's default of 0, which
       // would open this condition in every local sweep and smoke run.
       process.env.VERCEL_ENV === "production" ? probeStatementTimeout().catch(reportAndContinue({ where: "ops.sweep.statement-timeout-probe" }, null)) : null,

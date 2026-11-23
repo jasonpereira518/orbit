@@ -31,7 +31,7 @@ export async function reportRequestError(err: Args[0], request: Args[1], context
       scope.setTag("where", `${context.routeType}:${context.routePath}`);
       Sentry.captureRequestError(err, request, context);
     });
-    return;
+    // No return: Sentry was never wired to Slack, so returning here kept every 500 out of Slack.
   }
 
   const dmConfigured = Boolean(process.env.SLACK_BOT_TOKEN && process.env.SLACK_ALERT_USER_ID);
