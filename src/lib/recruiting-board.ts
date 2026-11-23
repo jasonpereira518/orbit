@@ -53,6 +53,23 @@ export function columnFor(stage: RecruiterStage): BoardColumnId {
   return column?.id ?? "reached_out";
 }
 
+/**
+ * The stage a card takes when dropped on a column. Two columns hold a pair of stages; the drop
+ * picks the one a person means by moving a card there, and the card's stage select refines it.
+ * Closed is not a drop target (rejected and withdrawn are different things to say by accident).
+ */
+const DROP_STAGE: Partial<Record<BoardColumnId, RecruiterStage>> = {
+  reached_out: "outreach_received",
+  applied: "applied",
+  screening: "screening",
+  interviewing: "interviewing",
+  offer: "offer",
+};
+
+export function dropStageFor(column: BoardColumnId): RecruiterStage | null {
+  return DROP_STAGE[column] ?? null;
+}
+
 /** The slice of an `email_events` row the board reads, joined to its thread's Gmail id. */
 export type BoardEvent = {
   company: string | null;

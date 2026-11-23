@@ -1,4 +1,5 @@
 import { ExternalLink } from "lucide-react";
+import { DraggableCard, DropColumn } from "@/components/recruiters/board-dnd";
 import { CompanyActions, PutBackButton } from "@/components/recruiters/company-actions";
 import { CompanyChip } from "@/components/recruiters/company-chip";
 import { Badge } from "@/components/ui/badge";
@@ -21,7 +22,10 @@ function CompanyCard({ company }: { company: BoardCompany }) {
   const brandColor = companyMarkSpec(company.name).color;
   return (
     // The company's color runs down the left edge, so a column reads as a row of brands.
-    <li
+    <DraggableCard
+      companyKey={company.key}
+      name={company.name}
+      stage={company.stage}
       className={cn("min-w-0 rounded-xl border border-border/70 bg-background px-4 py-3", brandColor && "border-l-[3px]")}
       style={brandColor ? { borderLeftColor: brandColor } : undefined}
     >
@@ -51,7 +55,7 @@ function CompanyCard({ company }: { company: BoardCompany }) {
         Open in Gmail <ExternalLink className="size-3" aria-hidden />
       </a>
       <CompanyActions companyKey={company.key} name={company.name} stage={company.stage} />
-    </li>
+    </DraggableCard>
   );
 }
 
@@ -67,7 +71,7 @@ export function CompaniesBoard({ companies, hidden }: { companies: BoardCompany[
           {BOARD_COLUMNS.filter((c) => c.id !== "closed").map((column) => {
             const items = byColumn.get(column.id) ?? [];
             return (
-              <div key={column.id} className="min-w-0 space-y-2">
+              <DropColumn key={column.id} column={column.id} className="min-w-0 space-y-2">
                 <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   {column.label} · {items.length}
                 </h3>
@@ -82,7 +86,7 @@ export function CompaniesBoard({ companies, hidden }: { companies: BoardCompany[
                     None yet
                   </p>
                 )}
-              </div>
+              </DropColumn>
             );
           })}
         </div>

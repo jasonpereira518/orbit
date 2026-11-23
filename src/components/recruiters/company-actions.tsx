@@ -11,6 +11,26 @@ import { runToastAction } from "@/lib/toast";
  * The two corrections a card offers: where it stands, and "Not a job". Both are reversible from
  * the toast — a mis-click on a stage select or a hide should cost a second, not a search.
  */
+/** Move a company to a stage, with a toast and Undo. Shared by the stage select and a card drop. */
+export function useMoveCompany() {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  function move(companyKey: string, name: string, from: RecruiterStage, to: RecruiterStage) {
+    if (to === from) return;
+    start(async () => {
+      await runToastAction({
+        run: () => setCompanyStage(companyKey, to),
+        success: `${name} moved to ${STAGE_LABELS[to]}`,
+        failure: "Couldn’t move that company",
+        refresh: () => router.refresh(),
+        undo: () => () => setCompanyStage(companyKey, from),
+        undone: `${name} is back in ${STAGE_LABELS[from]}`,
+      });
+    });
+  }
+  return { move, pending };
+}
+
 export function CompanyActions({
   companyKey,
   name,
@@ -21,24 +41,12 @@ export function CompanyActions({
   stage: RecruiterStage;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
-
-  function move(next: RecruiterStage) {
-    if (next === stage) return;
-    start(async () => {
-      await runToastAction({
-        run: () => setCompanyStage(companyKey, next),
-        success: `${name} moved to ${STAGE_LABELS[next]}`,
-        failure: "Couldn’t move that company",
-        refresh: () => router.refresh(),
-        undo: () => () => setCompanyStage(companyKey, stage),
-        undone: `${name} is back in ${STAGE_LABELS[stage]}`,
-      });
-    });
-  }
+  const [hiding, startHide] = useTransition();
+  const { move, pending: moving } = useMoveCompany();
+  const pending = hiding || moving;
 
   function hide() {
-    start(async () => {
+    startHide(async () => {
       await runToastAction({
         run: () => setCompanyHidden(companyKey, true),
         success: `Hidden — ${name} won’t come back`,
@@ -56,7 +64,7 @@ export function CompanyActions({
         aria-label={`Stage for ${name}`}
         value={stage}
         disabled={pending}
-        onChange={(e) => move(e.target.value as RecruiterStage)}
+        onChange={(e) => move(companyKey, name, stage, e.target.value as RecruiterStage)}
         className="h-8 min-w-0 flex-1 rounded-md border border-border/70 bg-background px-2 text-xs text-foreground"
       >
         {RECRUITER_STAGES.map((s) => (

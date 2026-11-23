@@ -25,6 +25,7 @@ import {
   BOARD_COLUMNS,
   columnFor,
   companyKey,
+  dropStageFor,
   foldCompanies,
   gmailThreadUrl,
   type BoardEvent,
@@ -172,6 +173,16 @@ async function main() {
   check("a card only ever moves right", rightOnly);
   check("closed is last", BOARD_COLUMNS[BOARD_COLUMNS.length - 1].id === "closed");
   check("every stage reads as words", order.every((s) => Boolean(STAGE_LABELS[s])));
+
+  console.log("\ndropping a card");
+  check(
+    "every column but Closed takes a drop, and lands in its own column",
+    BOARD_COLUMNS.filter((c) => c.id !== "closed").every((c) => {
+      const stage = dropStageFor(c.id);
+      return stage !== null && columnFor(stage) === c.id;
+    })
+  );
+  check("Closed takes no drop", dropStageFor("closed") === null);
 
   console.log("\nthe company mark");
   const stripe = companyMarkSpec("Stripe, Inc.");
