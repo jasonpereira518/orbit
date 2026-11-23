@@ -554,8 +554,8 @@ export async function enrichPeopleFromLinkedIn(
     if (!response.ok) {
       const text = await response.text();
       if (response.status === 403) {
-        throw new Error(
-          "Apollo people enrichment is not available on your current plan. Upgrade at apollo.io or use a paid API key."
+        throw new UserFacingError(
+          "Apollo people enrichment isn’t on your current plan — upgrade at apollo.io or use a paid API key"
         );
       }
       throw new Error(

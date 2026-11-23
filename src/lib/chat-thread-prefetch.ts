@@ -48,7 +48,7 @@ type Entry<T> = {
   previous?: { value: T; at: number };
 };
 
-export type ThreadPrefetcher<T extends ThreadPrefetchResult> = {
+export type ThreadPrefetcher<T extends ThreadPrefetchResult | null> = {
   /** The pointer came to rest on a row: prefetch after `delayMs` unless `leave` comes first. */
   hover: (id: string) => void;
   /** The pointer left before the delay ran out. */
@@ -75,7 +75,7 @@ export const THREAD_PREFETCH_DELAY_MS = 80;
  */
 export const THREAD_PREFETCH_MAX_HELD = 8;
 
-export function createThreadPrefetcher<T extends ThreadPrefetchResult>(
+export function createThreadPrefetcher<T extends ThreadPrefetchResult | null>(
   fetchThread: (id: string) => Promise<T>,
   {
     freshMs = THREAD_PREFETCH_FRESH_MS,
