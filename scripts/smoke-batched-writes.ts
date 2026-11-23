@@ -321,17 +321,11 @@ run(async () => {
     { threadId: theirs.id, userId: OTHER, role: "user", content: "secret" },
   ]);
   const own = await getChatThread(mine.id);
-  check("my own thread loads with its messages", own.thread.id === mine.id && own.messages.length === 1 && own.messages[0].content === "hello");
-  const foreign = await getChatThread(theirs.id).then(
-    () => "returned",
-    (err: unknown) => (err instanceof Error ? err.message : String(err))
-  );
-  check("someone else's thread throws exactly as before", foreign === "Chat not found", foreign);
-  const missing = await getChatThread("00000000-0000-4000-8000-00000000abcd").then(
-    () => "returned",
-    (err: unknown) => (err instanceof Error ? err.message : String(err))
-  );
-  check("a missing thread throws exactly as before", missing === "Chat not found", missing);
+  check("my own thread loads with its messages", own?.thread.id === mine.id && own.messages.length === 1 && own.messages[0].content === "hello");
+  const foreign = await getChatThread(theirs.id);
+  check("someone else's thread reads as missing (null)", foreign === null);
+  const missing = await getChatThread("00000000-0000-4000-8000-00000000abcd");
+  check("a missing thread reads as null", missing === null);
 
   // ------------------------------------------------------------------ dashboard follow-ups
   console.log("\nreminders.generateDueFollowUps: existing reminders retitled in one UPDATE");

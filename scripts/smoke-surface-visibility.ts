@@ -32,10 +32,12 @@ import {
   setSurfaceComingSoon,
   setSurfaceHidden,
   setSurfaceTiers,
+  invalidateHiddenSurfaceKeys,
 } from "../src/lib/surface-visibility";
 import {
   COMING_SOON_COMPANIONS,
   CHAT_IMPORTS_SURFACE_KEY,
+  LINKEDIN_DEEP_READ_SURFACE_KEY,
   COMPOSE_SURFACE_KEY,
   OUTLOOK_SEND_SURFACE_KEY,
   REPLY_INBOX_SURFACE_KEY,
@@ -55,6 +57,7 @@ import {
   SURFACE_FEATURE,
 } from "../src/lib/surfaces";
 import { SETTINGS_SECTIONS } from "../src/components/settings/sections";
+import { deepReadOn } from "../src/lib/deep-read";
 
 const ADMIN = "smoke-surface-admin";
 const USER = "smoke-surface-user";
@@ -179,6 +182,26 @@ async function tierChecks(db: Awaited<ReturnType<typeof getDb>>) {
   }
 }
 
+/** Deep read must answer with no request or cookie: the engine runs in background jobs. */
+async function deepReadChecks() {
+  const priorAdmins = process.env.ADMIN_USER_IDS;
+  const priorClerk = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  process.env.ADMIN_USER_IDS = ADMIN;
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke";
+  try {
+    check("deep read is on for an ordinary user now the surface is released", (await deepReadOn(USER)) === true);
+    check("deep read is on for an admin with no request or cookie", (await deepReadOn(ADMIN)) === true);
+  } finally {
+    const db = await getDb();
+    await db.delete(appSurfaceFlags).where(eq(appSurfaceFlags.surfaceKey, `live:${LINKEDIN_DEEP_READ_SURFACE_KEY}`));
+    invalidateHiddenSurfaceKeys();
+    if (priorAdmins === undefined) delete process.env.ADMIN_USER_IDS;
+    else process.env.ADMIN_USER_IDS = priorAdmins;
+    if (priorClerk === undefined) delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    else process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = priorClerk;
+  }
+}
+
 function check(label: string, condition: boolean, detail?: string) {
   if (!condition) throw new Error(`${label} failed${detail ? `: ${detail}` : ""}`);
   console.log(`  ok  ${label}`);
@@ -210,10 +233,10 @@ function registryChecks() {
     "outlook send ships coming-soon",
     DEFAULT_COMING_SOON_KEYS.has(OUTLOOK_SEND_SURFACE_KEY) && getSurface(OUTLOOK_SEND_SURFACE_KEY)?.kind === "feature"
   );
-  // Reply-to-inbox reads mail (gmail.readonly, restricted): it stays dark until CASA passes.
+  // Reply-to-inbox is released: /privacy discloses it and Google's reviewers have to be able to test it.
   check(
-    "reply-to-inbox ships coming-soon",
-    DEFAULT_COMING_SOON_KEYS.has(REPLY_INBOX_SURFACE_KEY) && getSurface(REPLY_INBOX_SURFACE_KEY)?.kind === "feature"
+    "reply-to-inbox is released (not coming-soon by default)",
+    !DEFAULT_COMING_SOON_KEYS.has(REPLY_INBOX_SURFACE_KEY) && getSurface(REPLY_INBOX_SURFACE_KEY)?.kind === "feature"
   );
 
   const widgets = surfacesOfKind("widget");
@@ -461,6 +484,12 @@ async function main() {
           DEFAULT_COMING_SOON_KEYS.has(CHAT_IMPORTS_SURFACE_KEY)
       );
       check(
+        "feature.linkedin-deep-read is a released feature-kind surface",
+        getSurface(LINKEDIN_DEEP_READ_SURFACE_KEY)?.kind === "feature" &&
+          getSurface(LINKEDIN_DEEP_READ_SURFACE_KEY)?.comingSoon !== true &&
+          !DEFAULT_COMING_SOON_KEYS.has(LINKEDIN_DEEP_READ_SURFACE_KEY)
+      );
+      check(
         "chat imports are closed for an ordinary user",
         !(await isSurfaceLive(USER, CHAT_IMPORTS_SURFACE_KEY))
       );
@@ -577,6 +606,7 @@ async function main() {
     check("an escape-hatch page cannot be marked coming soon", settingsRejected);
 
     await tierChecks(db);
+    await deepReadChecks();
 
     console.log("\nsidebar order");
     const navItems = [{ href: "/contacts" }, { href: "/capture" }, { href: "/chat" }, { href: "/x" }];

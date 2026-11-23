@@ -11,6 +11,8 @@ import {
   MAX_SCHOOLS,
   parseLinkedInAlertsCsv,
   parseLinkedInEducationCsv,
+  parseLinkedInEducationHistoryCsv,
+  parseLinkedInPositionHistoryCsv,
   parseLinkedInPositionsCsv,
   parseLinkedInProfileCsv,
   parseLinkedInSkillsCsv,
@@ -61,8 +63,22 @@ function roleLine(role: { title: string; company: string }): string {
   return `${role.title} at ${role.company}`;
 }
 
+const HISTORY_PREVIEW = 3;
+
+function rolesPhrase(n: number): string {
+  return `${n} ${n === 1 ? "role" : "roles"}`;
+}
+
+function listLine(items: string[]): string {
+  const shown = items.slice(0, HISTORY_PREVIEW).join(", ");
+  return items.length > HISTORY_PREVIEW ? `${shown} and ${items.length - HISTORY_PREVIEW} more` : shown;
+}
+
+/** `history`: also offer the full work and school history (the dark deep-read surface). */
+export type YouOptions = { history?: boolean };
+
 /** Everything the file offers, each with what it would replace. Throws `LinkedInExportError`. */
-export function previewYou(target: YouTarget, text: string, current: YouCurrent): YouField[] {
+export function previewYou(target: YouTarget, text: string, current: YouCurrent, opts: YouOptions = {}): YouField[] {
   const career = current.career ?? {};
 
   if (target === "linkedin_profile") {
@@ -90,16 +106,30 @@ export function previewYou(target: YouTarget, text: string, current: YouCurrent)
 
   if (target === "linkedin_positions") {
     const role = parseLinkedInPositionsCsv(text);
-    if (!role) throw new LinkedInExportError("Positions.csv has no current role — every role has an end date.");
-    return [
-      {
+    const history = opts.history ? parseLinkedInPositionHistoryCsv(text) : [];
+    if (!role && !history.length) {
+      throw new LinkedInExportError("Positions.csv has no current role — every role has an end date.");
+    }
+    const out: YouField[] = [];
+    if (role) {
+      out.push({
         key: "role",
         label: "Current role",
         before: career.role ? roleLine(career.role) : null,
         after: roleLine(role),
         defaultOn: true,
-      },
-    ];
+      });
+    }
+    if (history.length) {
+      out.push({
+        key: "positions",
+        label: `Work history (${rolesPhrase(history.length)})`,
+        before: career.positions?.length ? rolesPhrase(career.positions.length) : null,
+        after: listLine(history.map(roleLine)),
+        defaultOn: true,
+      });
+    }
+    return out;
   }
 
   if (target === "linkedin_skills") {
@@ -117,7 +147,7 @@ export function previewYou(target: YouTarget, text: string, current: YouCurrent)
 
   if (target === "linkedin_education") {
     const schools = mergedSchools(current.schools, parseLinkedInEducationCsv(text));
-    return [
+    const out: YouField[] = [
       {
         key: "schools",
         label: "Schools you went to",
@@ -126,6 +156,17 @@ export function previewYou(target: YouTarget, text: string, current: YouCurrent)
         defaultOn: true,
       },
     ];
+    const history = opts.history ? parseLinkedInEducationHistoryCsv(text) : [];
+    if (history.length) {
+      out.push({
+        key: "education",
+        label: `Degrees and dates (${history.length})`,
+        before: career.education?.length ? listLine(career.education.map((e) => e.school)) : null,
+        after: listLine(history.map((e) => e.school)),
+        defaultOn: true,
+      });
+    }
+    return out;
   }
 
   const keywords = parseLinkedInAlertsCsv(text);
@@ -166,8 +207,9 @@ export function patchYou(
   keys: readonly string[],
   current: YouCurrent,
   now: Date,
+  opts: YouOptions = {},
 ): YouPatch | null {
-  const offered = new Set(previewYou(target, text, current).map((f) => f.key));
+  const offered = new Set(previewYou(target, text, current, opts).map((f) => f.key));
   const chosen = new Set(keys.filter((k) => offered.has(k)));
   if (!chosen.size) return null;
 
@@ -185,11 +227,14 @@ export function patchYou(
     career.profile = profile;
     if (chosen.has("about") && parsed.headline) senderBio = normalizeSenderBio(parsed.headline);
   } else if (target === "linkedin_positions") {
-    career.role = parseLinkedInPositionsCsv(text) ?? undefined;
+    // Each key only when ticked: with the history on, a file offers two.
+    if (chosen.has("role")) career.role = parseLinkedInPositionsCsv(text) ?? undefined;
+    if (chosen.has("positions")) career.positions = parseLinkedInPositionHistoryCsv(text);
   } else if (target === "linkedin_skills") {
     career.skills = parseLinkedInSkillsCsv(text);
   } else if (target === "linkedin_education") {
-    schools = mergedSchools(current.schools, parseLinkedInEducationCsv(text));
+    if (chosen.has("schools")) schools = mergedSchools(current.schools, parseLinkedInEducationCsv(text));
+    if (chosen.has("education")) career.education = parseLinkedInEducationHistoryCsv(text);
   } else {
     career.roleKeywords = parseLinkedInAlertsCsv(text);
   }

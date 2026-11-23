@@ -142,7 +142,7 @@ export async function getChatThread(threadId: string) {
 
   // The thread and its messages together, ownership checked after. Safe because each read
   // carries its own `user_id = caller` predicate: for a thread that is missing or someone
-  // else's, the messages read finds nothing of theirs and the throw below is unchanged.
+  // else's, the messages read finds nothing of theirs and the null below is unchanged.
   const [thread, messages] = await Promise.all([
     db.query.chatThreads.findFirst({
       where: and(eq(chatThreads.id, threadId), eq(chatThreads.userId, userId)),
@@ -156,7 +156,9 @@ export async function getChatThread(threadId: string) {
       orderBy: [asc(chatMessages.createdAt)],
     }),
   ]);
-  if (!thread) throw new Error("Chat not found");
+  // Missing or someone else's: null, not a throw. A deleted thread opened from a stale tab
+  // or link is an ordinary state, not a server error (ORBIT-W).
+  if (!thread) return null;
 
   // Every version of the LAST turn, for the switcher — only the last turn ever has more than
   // one. `versions` is empty for a thread with no messages or whose last turn was never

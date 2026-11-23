@@ -1,46 +1,28 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { ComposerSendButton } from "./composer-send-button";
-import type { VoicePublicState } from "@/lib/voice/contracts";
-import { openVoice, updateVoiceState, useVoiceDock } from "@/lib/voice/dock-store";
-/** The composer's send/voice button. The call itself lives in `VoiceDock`, above the page. */
+import { openVoice, useVoiceDock } from "@/lib/voice/dock-store";
+/**
+ * The composer's send/voice button: with nothing typed, it wakes Cosmo in this thread (Chat's
+ * stage). The call lives in `VoiceDock`; whether voice is on comes from the one status read
+ * CosmoRoot makes per page, not a poll of its own.
+ */
 export function OrbitVoiceEntry({ hasText, busy, disabled, onSend, onStop, prepare }: {
   hasText: boolean; busy: boolean; disabled: boolean;
   onSend(): void; onStop(): void; prepare(): Promise<string>;
 }) {
-  const [state, setState] = useState<VoicePublicState | null>(null);
-  const live = Boolean(useVoiceDock().call);
+  const { call, state } = useVoiceDock();
+  const live = Boolean(call);
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState("");
   const guard = useRef(false);
-  useEffect(() => {
-    let alive = true;
-    async function check() {
-      try {
-        const response = await fetch("/api/voice", { cache: "no-store" });
-        const data = await response.json();
-        if (alive && response.ok) {
-          setState(data);
-          updateVoiceState(data);
-        }
-      } catch {
-        // An active session owns its cleanup; a failed status poll must not unmount it.
-      }
-    }
-    void check();
-    const timer = setInterval(() => void check(), 15000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, []);
   async function open() {
     if (guard.current || !state) return;
     guard.current = true;
     setOpening(true);
     setError("");
     try { openVoice(await prepare(), state); }
-    catch { setError("Couldn’t open Orbit Voice. Try again."); }
+    catch { setError("Couldn’t wake Cosmo. Try again."); }
     finally { guard.current = false; setOpening(false); }
   }
   return (

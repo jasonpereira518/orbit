@@ -16,7 +16,16 @@ import { normalizeSenderBio } from "@/lib/sender-profile";
 import { setCity } from "@/lib/career-profile-server";
 import { ensureUserSettings } from "@/lib/user-settings";
 import { encrypt } from "@/lib/crypto";
-import { loadWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
+import { loadOwnWritingInstructions, saveWritingInstructionsFor } from "@/lib/writing-instructions-store";
+import { STYLE_PROFILE_MAX, buildStyleProfile } from "@/lib/writing-style-profile";
+import { recordDraftEdit } from "@/lib/draft-edits";
+import { parseInput } from "@/lib/action";
+import { z } from "zod";
+import { deferEditLearning } from "@/lib/style-profile-defer";
+import { EDIT_LESSONS_MAX } from "@/lib/writing-instructions";
+import { draftEdits } from "@/db/schema";
+import { sanitizeWritingInstructions } from "@/lib/writing-instructions";
+import { RATE_LIMITS, consumeBucket } from "@/lib/rate-limit";
 import { saveChatAutoApplyFor } from "@/lib/chat-auto-apply";
 import { loadEmailSettings, saveDefaultSendProvider, saveEmailSignature } from "@/lib/email/settings";
 import { getSendCapability, type SendCapability } from "@/lib/email/sender";
@@ -345,7 +354,94 @@ export async function clearApiKey(provider?: AiProvider) {
  */
 export async function getWritingInstructions() {
   const userId = await requireUserId();
-  return { text: await loadWritingInstructions(userId) };
+  const db = await getDb();
+  const [text, row] = await Promise.all([
+    loadOwnWritingInstructions(userId),
+    db.query.userSettings.findFirst({
+      where: eq(userSettings.userId, userId),
+      columns: { writingStyleProfile: true, writingEditLessons: true },
+    }),
+  ]);
+  // null = not learned yet, "" = turned off, text = what drafts are told.
+  return { text, styleProfile: row?.writingStyleProfile ?? null, editLessons: row?.writingEditLessons ?? null };
+}
+
+const draftOutcomeInput = z.object({
+  surface: z.enum(["chat", "compose", "follow_up", "outreach"]),
+  kind: z.enum(["email", "linkedin", "other"]),
+  aiText: z.string().max(20_000),
+  finalText: z.string().max(20_000),
+});
+
+/**
+ * A drafted message was sent or copied: keep Orbit's draft next to what the user used, so the
+ * changes they keep making are learned (`@/lib/draft-edits`). Called from the client at the
+ * moment of use; both texts are the user's own data and capped server-side. Never throws: a
+ * failed record must not get in the way of the send it follows.
+ */
+export async function recordDraftOutcome(input: z.input<typeof draftOutcomeInput>) {
+  try {
+    const userId = await requireUserId();
+    const parsed = parseInput(draftOutcomeInput, input, "settings.recordDraftOutcome");
+    if (!parsed.ok) return parsed;
+    const due = await recordDraftEdit(userId, parsed.value);
+    if (due) deferEditLearning(userId);
+    return { ok: true as const };
+  } catch {
+    return { ok: false as const, error: "Not recorded" };
+  }
+}
+
+/**
+ * The person's edit of the rules learned from their edits. Empty turns learning off: the rules
+ * are cleared, the kept drafts are deleted, and nothing is recorded again until they turn it back
+ * on (`null`, "Turn on").
+ */
+export async function saveEditLessons(text: string | null) {
+  const userId = await requireUserId();
+  if (text !== null && typeof text !== "string") throw new Error("Invalid edit lessons");
+  const cleaned = text === null ? null : (sanitizeWritingInstructions(text) ?? "");
+  const stored = cleaned === null ? null : Array.from(cleaned).slice(0, EDIT_LESSONS_MAX).join("");
+  const db = await getDb();
+  await db
+    .insert(userSettings)
+    .values({ userId, writingEditLessons: stored, writingEditLessonsUpdatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { writingEditLessons: stored, writingEditLessonsUpdatedAt: new Date() },
+    });
+  if (stored === "") await db.delete(draftEdits).where(eq(draftEdits.userId, userId));
+  return { ok: true as const, editLessons: stored };
+}
+
+/**
+ * Re-read the user's sent mail and rewrite the learned style (`@/lib/writing-style-profile`).
+ * Also how a cleared profile is turned back on. One model call, so it spends a `draft` unit.
+ */
+export async function refreshStyleProfile() {
+  const userId = await requireUserId();
+  await consumeBucket("draft", userId, RATE_LIMITS.draft);
+  return buildStyleProfile(userId);
+}
+
+/**
+ * The person's edit of the learned style: from then on it is their text (a refresh replaces
+ * it). Empty clears it, and a cleared profile is never rebuilt on its own.
+ */
+export async function saveStyleProfile(text: string) {
+  const userId = await requireUserId();
+  if (typeof text !== "string") throw new Error("Invalid style profile");
+  const cleaned = sanitizeWritingInstructions(text);
+  const stored = cleaned ? Array.from(cleaned).slice(0, STYLE_PROFILE_MAX).join("") : "";
+  const db = await getDb();
+  await db
+    .insert(userSettings)
+    .values({ userId, writingStyleProfile: stored, writingStyleProfileUpdatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { writingStyleProfile: stored, writingStyleProfileUpdatedAt: new Date() },
+    });
+  return { ok: true as const, styleProfile: stored };
 }
 
 /** Saves the notes, or clears them for empty/whitespace-only text. Returns what was stored. */

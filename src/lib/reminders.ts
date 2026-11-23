@@ -22,6 +22,8 @@ import {
   getDashboardCounts,
   getGoalAlignedContactIds,
 } from "@/lib/dashboard-aggregates";
+import { getDueCounts } from "@/lib/due-counts";
+import { viewerTimeZone } from "@/lib/viewer-time-zone";
 import { ensureStoredScoresCurrent, type ClosenessScalars } from "@/lib/closeness-cohort";
 import {
   closenessScalarExtras,
@@ -910,14 +912,15 @@ export async function getDashboardData(
   userId: string,
   // userName may be a promise so the Clerk profile fetch can run concurrently
   // with the DB queries below (its only consumer is graphPreview.summary).
-  options?: { userName?: string | Promise<string | undefined> }
+  // `now` is for tests that pin the clock; the page never passes it.
+  options?: { userName?: string | Promise<string | undefined>; tz?: string; now?: Date }
 ) {
   const db = await getDb();
 
   // Taken BEFORE the reads, not after them: the reminder and suggestion filters run in SQL
   // and have to agree with the due follow-ups about which contacts are due, so all three
   // are judged against this one instant.
-  const now = new Date();
+  const now = options?.now ?? new Date();
   const constellationConfig = await getConstellationConfig();
   // The constellation preview mirrors /graph: engaged-only by default. It has no "show all"
   // of its own — the link into /graph is where that lives — so this is always the engaged scope.
@@ -941,6 +944,7 @@ export async function getDashboardData(
     suggestions,
     goals,
     counts,
+    due,
     goalAlignedIds,
     clusterTallies,
     chartGroups,
@@ -957,6 +961,7 @@ export async function getDashboardData(
     // Aggregates Postgres answers better than a pass over the network would. See
     // dashboard-aggregates.ts.
     getDashboardCounts(userId),
+    (options?.tz ? Promise.resolve(options.tz) : viewerTimeZone(userId)).then((tz) => getDueCounts(userId, tz, now)),
     getGoalAlignedContactIds(userId, GOAL_ALIGNED_CAP),
     loadClusterTallies(userId),
     // Who may be drawn, grouped by what their cluster depends on. Eligibility is decided in
@@ -1227,9 +1232,11 @@ export async function getDashboardData(
       totalContacts: counts.totalContacts,
       // The count of everyone due, not the length of the capped list below — the stat and
       // the card answer different questions and the card only ever showed twelve.
-      dueFollowUps: counts.dueFollowUpCount,
+      dueFollowUps: due.followUps,
       strongConnections: strongTies,
       pendingReminders: pendingReminders.total,
+      // Due, not all pending: the tile says "Due reminders" and agrees with the rail and the bell.
+      dueReminders: due.reminders,
       topCompany: null as { name: string; count: number } | null,
     },
     recentContacts,
@@ -1409,9 +1416,13 @@ export async function unsnoozeReminder(
 
   const reminder = await db.query.reminders.findFirst({
     where: and(eq(reminders.id, snap.reminderId), eq(reminders.userId, userId)),
-    columns: { dueDate: true },
+    columns: { dueDate: true, status: true },
   });
   if (!reminder || reminder.dueDate?.getTime() !== snoozedTo) {
+    return { restored: false };
+  }
+  // A reminder finished since the snooze must not come back to life.
+  if (snap.previousStatus === "pending" && reminder.status !== "pending") {
     return { restored: false };
   }
 

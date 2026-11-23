@@ -54,7 +54,9 @@ import { gateProbability, type GateName } from "../../src/lib/decisions/gates";
 import { looksLikeReferral } from "../../src/lib/opportunity-kinds";
 import type { BulkNotePersonPreview } from "../../src/lib/capture/types";
 import { DUPLICATE_TUNING } from "../../src/lib/decisions/catalog";
-import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE } from "../../src/lib/duplicates";
+import { buildDuplicateIndex, findDuplicateCandidatesIndexed, DUPLICATE_MERGE_CONFIDENCE, linkedinSlug } from "../../src/lib/duplicates";
+import { researchWithWebSearch } from "../../src/lib/work-history-research";
+import { corroborates } from "../../src/lib/profile-match";
 import { resolveMentions } from "../../src/lib/mention-resolution";
 import { parseProfileFields } from "../../src/lib/extension/parse-profile";
 import type { PageContext } from "../../src/lib/extension/contract";
@@ -153,7 +155,8 @@ export type TaskName =
   | "relationship"
   | "radar-editor"
   | "radar-connect"
-  | "web-search";
+  | "web-search"
+  | "profile-finder";
 
 export const TASK_NAMES: TaskName[] = [
   "capture",
@@ -176,6 +179,7 @@ export const TASK_NAMES: TaskName[] = [
   "radar-editor",
   "radar-connect",
   "web-search",
+  "profile-finder",
 ];
 
 /** Overridable so the harness itself can be exercised on throwaway fixtures. */
@@ -2125,6 +2129,9 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
   const dates = tally();
   const silent = tally();
   const planOk = tally();
+  const originOk = tally();
+  const kindOk = tally();
+  const eventsOk = tally();
   let invented = 0;
   const misses: string[] = [];
   const latenciesMs: number[] = [];
@@ -2132,6 +2139,7 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
   for (const c of cases) {
     try {
       const first = c.contactName.split(" ")[0];
+      const deepRead = c.deepRead === true;
       const window = buildWindow(
         c.id,
         c.messages.map((m, i) => ({
@@ -2151,7 +2159,7 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
         log(`  ${ok ? "ok  " : "MISS"} relationship/${c.id} (trivial)`);
         continue;
       }
-      const prompt = buildDigestPrompt({ contactName: c.contactName, window, previous: null });
+      const prompt = buildDigestPrompt({ contactName: c.contactName, window, previous: null, deepRead });
       const answer = await timed(latenciesMs, () => extractRelationshipDigest(userId, prompt));
       // An excerpt that is not verbatim in any message is an invented item.
       const excerpts = [
@@ -2160,9 +2168,12 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
         ...answer.implied.map((x) => x.excerpt),
         ...(answer.job_change ? [answer.job_change.excerpt] : []),
         ...answer.closed.map((x) => x.excerpt),
+        ...(deepRead && answer.origin ? [answer.origin.excerpt] : []),
+        ...(deepRead && answer.relationship ? [answer.relationship.excerpt] : []),
+        ...(deepRead ? (answer.events ?? []).map((x) => x.excerpt) : []),
       ];
       invented += excerpts.filter((e) => !locateExcerpt(window, e)).length;
-      const v = validateDigest(answer, window, new Set());
+      const v = validateDigest(answer, window, new Set(), { deepRead });
       const plan = planDigestWrites(v, {
         contactId: c.id,
         contactFirstName: first,
@@ -2199,9 +2210,31 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
         }
       }
       for (const f of found) count(commitPrecision, c.expect.commitments.some((e) => mentions(f.text, e.phrase)));
-      const planRight = plan.remindersPlanned === c.expect.reminders && plan.openThreads.length === c.expect.openThreads;
-      count(planOk, planRight);
-      if (!planRight) missed = true;
+      if (deepRead) {
+        // Deep read cases score what the deep read adds; the reminder plan is the other cases' job.
+        const o = c.expect.origin;
+        if (o !== undefined) {
+          const ok = o === null
+            ? !v.origin
+            : Boolean(v.origin && mentions(v.origin.text, o.phrase) && (o.precision === undefined || v.origin.precision === o.precision));
+          count(originOk, ok);
+          missed ||= !ok;
+        }
+        if (c.expect.kind !== undefined) {
+          const ok = (v.relationship?.kind ?? null) === c.expect.kind;
+          count(kindOk, ok);
+          missed ||= !ok;
+        }
+        if (c.expect.events !== undefined) {
+          const ok = (v.events ?? []).length === c.expect.events;
+          count(eventsOk, ok);
+          missed ||= !ok;
+        }
+      } else {
+        const planRight = plan.remindersPlanned === c.expect.reminders && plan.openThreads.length === c.expect.openThreads;
+        count(planOk, planRight);
+        if (!planRight) missed = true;
+      }
       if (missed) misses.push(c.id);
       log(`  ${missed ? "MISS" : "ok  "} relationship/${c.id} (reminders ${plan.remindersPlanned}/${c.expect.reminders}, threads ${plan.openThreads.length}/${c.expect.openThreads})`);
     } catch (err) {
@@ -2212,7 +2245,11 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
         count(commitRecall, false);
         if (e.dueIso) count(dates, false);
       }
-      count(planOk, false);
+      if (c.deepRead) {
+        if (c.expect.origin !== undefined) count(originOk, false);
+        if (c.expect.kind !== undefined) count(kindOk, false);
+        if (c.expect.events !== undefined) count(eventsOk, false);
+      } else count(planOk, false);
       log(`  FAIL relationship/${c.id} — ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -2229,6 +2266,9 @@ export async function runRelationshipTask({ userId, limit, log }: RunOpts): Prom
       inventedItems: invented,
       silentOnTrivial: rate(silent),
       planAccuracy: rate(planOk),
+      originAccuracy: rate(originOk),
+      kindAccuracy: rate(kindOk),
+      eventAccuracy: rate(eventsOk),
     },
   };
 }
@@ -2302,6 +2342,55 @@ async function runWebSearchTask({ userId, limit, log }: RunOpts): Promise<TaskRe
   };
 }
 
+type ProfileFinderFixture = {
+  cases: Array<{
+    id: string;
+    contact: { fullName: string; company: string | null; email: string | null; school: string | null };
+    /** A slug the written profile must have; null = any; "none" = nothing may be written. */
+    expectSlug: string | null;
+  }>;
+};
+
+/**
+ * The profile finder (`researchWithWebSearch` with no LinkedIn URL, then `corroborates`): what
+ * would be WRITTEN for a person found by name. `wrongWrites` must be 0 before the sweep runs it
+ * (ORBIT_FIND_PROFILES=on); `found` is the share of real people it filled. Real searches.
+ */
+async function runProfileFinderTask({ userId, limit, log }: RunOpts): Promise<TaskResult> {
+  const f = fixture<ProfileFinderFixture>("profile-finder-eval.json");
+  const db = await getDb();
+  const misses: string[] = [];
+  const latenciesMs: number[] = [];
+  let wrongWrites = 0;
+  let found = 0;
+  let positives = 0;
+  const cases = f.cases.slice(0, limit ?? f.cases.length);
+  for (const c of cases) {
+    await db.execute(sql`DELETE FROM rate_limit_buckets WHERE bucket LIKE ${`%${userId}%`} OR bucket LIKE 'web-search-all:%'`);
+    const t0 = Date.now();
+    const answer = await researchWithWebSearch(userId, { ...c.contact, title: null, location: null, linkedinUrl: null }).catch(
+      (err) => (log(`  ${c.id}: ${String(err)}`), null)
+    );
+    latenciesMs.push(Date.now() - t0);
+    const written = Boolean(
+      answer?.confident && answer.experiences.length && corroborates(c.contact, { name: answer.name ?? null, experiences: answer.experiences })
+    );
+    const slug = linkedinSlug(answer?.linkedinUrl);
+    const wrong = written && (c.expectSlug === "none" || (c.expectSlug !== null && slug !== "" && slug !== c.expectSlug));
+    if (c.expectSlug !== "none") positives++;
+    if (wrong) wrongWrites++;
+    if (written && !wrong && c.expectSlug !== "none") found++;
+    if (wrong || (c.expectSlug !== "none" && !written)) misses.push(c.id);
+    log(`  ${c.id}: ${written ? `wrote ${slug || "(no url)"}` : "nothing written"}${wrong ? "  ← WRONG PERSON" : ""}`);
+  }
+  return {
+    cases: cases.length,
+    misses,
+    latenciesMs,
+    metrics: { wrongWrites, found: positives ? found / positives : null },
+  };
+}
+
 export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   capture: runCaptureTask,
   recruiter: runRecruiterTask,
@@ -2323,4 +2412,5 @@ export const TASKS: Record<TaskName, (opts: RunOpts) => Promise<TaskResult>> = {
   "radar-editor": runRadarEditorTask,
   "radar-connect": runRadarConnectTask,
   "web-search": runWebSearchTask,
+  "profile-finder": runProfileFinderTask,
 };

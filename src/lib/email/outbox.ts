@@ -439,6 +439,21 @@ async function settleRetry(
   return settled.length ? "retry" : "not_claimable";
 }
 
+/** Whether `drainEmailSends` would find a row: the same predicate, one cheap read. */
+export async function hasDueEmailSends(): Promise<boolean> {
+  const db = await getDb();
+  return (
+    rowsOf(
+      await db.execute(sql`
+        SELECT 1 FROM email_sends
+         WHERE send_at <= now()
+           AND (status = 'queued' OR (status = 'sending' AND lease_until < now()))
+         LIMIT 1
+      `)
+    ).length > 0
+  );
+}
+
 /**
  * The backstop. `after()` dispatches interactive sends; this catches everything it didn't —
  * a recycled function, a retry, a lapsed lease, and (P4) scheduled sends. Runs from the

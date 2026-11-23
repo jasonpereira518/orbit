@@ -775,7 +775,7 @@ export async function recordCaptureChoicesRow(
 export async function discardCaptureJobRow(
   userId: string,
   id: string,
-  opts: { tombstone?: boolean } = {}
+  opts: { tombstone?: boolean; /** Only discard a row in one of these statuses (default: any active one or failed). */ onlyStatuses?: CaptureJobStatus[] } = {}
 ): Promise<boolean> {
   const db = await getDb();
   const rows = await db
@@ -785,7 +785,7 @@ export async function discardCaptureJobRow(
       and(
         eq(captureJobs.id, id),
         eq(captureJobs.userId, userId),
-        inArray(captureJobs.status, [...ACTIVE_CAPTURE_JOB_STATUSES, "failed"])
+        inArray(captureJobs.status, opts.onlyStatuses ?? [...ACTIVE_CAPTURE_JOB_STATUSES, "failed"])
       )
     )
     .returning();

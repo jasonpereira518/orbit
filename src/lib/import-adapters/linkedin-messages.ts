@@ -2,6 +2,7 @@ import type { LinkedInMessageThreadRowPayload } from "@/db/schema";
 import type { ImportAdapter, InteractionInsert } from "@/lib/import-engine";
 import { kickLinkedInTimelineBackfill } from "@/lib/linkedin-timeline-backfill";
 import { kickRelationshipRun } from "@/lib/relationship-engine/runner";
+import { HOW_MET_LABEL } from "@/lib/contact-fields";
 
 /**
  * Defined in a leaf module: importing it from here pulled this adapter's graph (timeline
@@ -81,7 +82,7 @@ export const linkedinMessagesAdapter: ImportAdapter<LinkedInMessageThreadRowPayl
       linkedinUrl: payload.linkedinUrl || undefined,
       source: "linkedin_messages",
       relationshipScore: 2,
-      howMet: "LinkedIn messages",
+      howMet: HOW_MET_LABEL.linkedinMessages,
       metContext: "online",
       tagNames: ["linkedin", "messages"],
       // Real conversation history, not import time: closeness scoring reads both
@@ -103,7 +104,7 @@ export const linkedinMessagesAdapter: ImportAdapter<LinkedInMessageThreadRowPayl
       firstName: payload.firstName || undefined,
       lastName: payload.lastName || undefined,
       source: "linkedin_messages",
-      howMet: "LinkedIn messages",
+      howMet: HOW_MET_LABEL.linkedinMessages,
       metContext: "online",
       // `date_met` still only fills in if unset (COALESCE) — harmless here since create
       // already populated it, kept for parity with the LinkedIn connections adapter.

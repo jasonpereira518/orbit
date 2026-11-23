@@ -14,6 +14,7 @@ import type { PgTable } from "drizzle-orm/pg-core";
 import { INBOX_IGNORED_CONTEXT } from "@/lib/email-intel/types";
 import { getDb, rowsOf } from "@/db";
 import {
+  draftEdits,
   actionItems,
   aiSuggestions,
   apiIdempotencyKeys,
@@ -49,6 +50,7 @@ import {
   memoryChunks,
   contactExperiences,
   contactCareerMoves,
+  contactChanges,
   contactIdentities,
   contactMerges,
   contactProfiles,
@@ -171,9 +173,7 @@ type Db = Awaited<ReturnType<typeof getDb>>;
  *   - `relationship_digests` -> cascades from `contacts`
  * `recommendations`, `recommendation_feedback` and `contact_signals` also cascade from
  * `contacts`, but are deleted explicitly by `insights`, which can run without deleting
- * contacts. `radar_runs` has no parent and is always deleted explicitly. Radar's news tables
- * (`external_sources`, `external_items`, `external_item_companies`) are global, like the
- * job feed's, carry no `user_id`, and are never deleted with an account.
+ * contacts. `radar_runs` has no parent and is always deleted explicitly.
  * Nothing else may be omitted. A `user_id` column is not on its own evidence of a cascade:
  * `note_batches` and `extension_usage` both have one and neither has a foreign key to
  * anything, so both are deleted explicitly. `suggested_reminders` looks like it would cascade
@@ -704,6 +704,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       own(contactMerges),
       own(contactIdentities),
       own(duplicateSuggestions),
+      own(contactChanges),
       own(targetCompanies),
       own(contactBriefs, "contact_id"),
       own(relationshipDigests, "contact_id"),
@@ -742,6 +743,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // field of a person the user knew, surviving the deletion of the contact it came from.
       await db.delete(contactIdentities).where(eq(contactIdentities.userId, userId));
       await db.delete(duplicateSuggestions).where(eq(duplicateSuggestions.userId, userId));
+      // Same reason: its own `user_id`, and old and new field values of people the user knew.
+      await db.delete(contactChanges).where(eq(contactChanges.userId, userId));
       forgetDuplicateCount(userId);
       await db.delete(contactMerges).where(eq(contactMerges.userId, userId));
       // `contact_tags` has no `user_id` of its own, so it is deleted through its contacts.
@@ -775,7 +778,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   preferences: {
-    exports: [own(userSettings)],
+    exports: [own(userSettings), own(draftEdits)],
     counts: [],
     run: async () => {
       // Handled by `purgeUserSettings` at the end of `purgeUserData`, not here: what survives
@@ -911,6 +914,9 @@ const PRESERVED_SETTINGS_COLUMNS = {
 } as const;
 
 async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) {
+  // Orbit's drafts next to what was sent (`@/lib/draft-edits`): learned writing preferences, and
+  // messages to other people, so they always go with the preferences, kept settings or not.
+  await db.delete(draftEdits).where(eq(draftEdits.userId, userId));
   const preserved = keepSettings
     ? await db.query.userSettings.findFirst({
         where: eq(userSettings.userId, userId),

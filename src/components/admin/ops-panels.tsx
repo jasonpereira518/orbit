@@ -62,7 +62,7 @@ export function AccountsPanels({ health, ops }: { health: AdminHealth; ops: OpsS
         <AdminPanel title="Open alerts" className="scroll-mt-24">
           <div id="open-alerts" />
           {!ops || ops.openAlerts.length === 0 ? (
-            <EmptyState>No known condition is open. The sweep says so every ten minutes.</EmptyState>
+            <EmptyState>No known condition is open. The sweep says so every thirty minutes.</EmptyState>
           ) : (
             <ul className="divide-y divide-border/50">
               {ops.openAlerts.map((a) => (
@@ -366,7 +366,7 @@ export function SystemsPanels({
               : !ops.lastSweep
                 ? "never run"
                 : ops.sweepQuiet
-                  ? "quiet for over 30 min"
+                  ? "quiet for over 75 min"
                   : `${ops.lastSweep.state} · ${relativeMinutes(ops.lastSweep.startedAt, now)}`,
             tone: !ops || !ops.lastSweep || ops.sweepQuiet ? "danger" : "ok",
           },

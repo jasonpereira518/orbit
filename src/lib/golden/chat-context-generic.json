@@ -142,7 +142,11 @@
       "wizardOfferedAt": null,
       "wizardStep": null,
       "workHistoryAutoEnabled": 1,
+      "writingEditLessons": null,
+      "writingEditLessonsUpdatedAt": null,
       "writingInstructions": null,
+      "writingStyleProfile": null,
+      "writingStyleProfileUpdatedAt": null,
       "ycModeEnabled": false
     },
     "userId": "golden-user"

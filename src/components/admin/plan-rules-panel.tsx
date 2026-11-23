@@ -52,6 +52,7 @@ const LIMIT_INFO: Record<LimitField, { label: string; unit: string }> = {
   monthlyCredits: { label: "AI credits / month", unit: "credits" },
   "speech.meetingSeconds": { label: "Meeting transcription / month", unit: "seconds" },
   "speech.shortformSeconds": { label: "Voice notes and chat mic / month", unit: "seconds" },
+  "speech.assistantSeconds": { label: "Talking with Cosmo / month", unit: "seconds" },
   googleMicrosoftConnections: { label: "Google + Microsoft accounts", unit: "accounts" },
 };
 

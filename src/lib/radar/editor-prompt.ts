@@ -33,6 +33,7 @@ import { z } from "zod";
 import { cleanSingleLine, fenceUntrusted, guardModelOutput } from "@/lib/ai-security";
 import { RADAR_BUCKETS, type RadarPick } from "@/lib/radar/score";
 import { KIND_LABELS, recommendationKey, type RadarAiNote, type RadarEvidence, type RadarReason } from "@/lib/radar/types";
+import { scrubPunctuation } from "@/lib/message-format";
 
 /** Cards the model sees: the top of the verified list after learning, before the plan's caps. */
 export const RADAR_EDITOR_SIZE = 20;
@@ -72,6 +73,8 @@ export type EditorCandidate = RadarPick & {
   tier: "inner" | "mid" | "outer" | null;
   /** The contact brief's one-line standing, if there is one. */
   standing: string | null;
+  /** LinkedIn deep read: how you met and where you overlapped (`relationshipFactLines`, joined). */
+  relationship?: string | null;
 };
 
 export type EditorPrompt = {
@@ -107,8 +110,10 @@ export function buildEditorPrompt(candidates: readonly EditorCandidate[], goals:
     idToKey.set(id, recommendationKey(c.contactId, c.kind));
     const facts = factsOf(c.reasons, c.evidence);
     const context = cleanSingleLine(c.standing, 200);
+    const howYouMet = cleanSingleLine(c.relationship, 300);
     allFacts.push(...facts);
     if (context) allFacts.push(context);
+    if (howYouMet) allFacts.push(howYouMet);
     return {
       id,
       recommendation: KIND_LABELS[c.kind],
@@ -117,6 +122,8 @@ export function buildEditorPrompt(candidates: readonly EditorCandidate[], goals:
       closeness: c.tier,
       reasons: facts,
       context,
+      // Absent, not null, when there is none: a prompt without the deep read is byte-for-byte today's.
+      ...(howYouMet ? { howYouMet } : {}),
     };
   });
   const goalLines = goals
@@ -145,7 +152,12 @@ export function editorCacheKey(candidates: readonly EditorCandidate[], goals: re
   const hash = (s: string | null) => (s ? createHash("sha256").update(s).digest("hex").slice(0, 16) : null);
   return {
     v: 2,
-    shortlist: ordered(candidates).map((c) => [recommendationKey(c.contactId, c.kind), c.inputsHash, hash(c.standing)]),
+    shortlist: ordered(candidates).map((c) => [
+      recommendationKey(c.contactId, c.kind),
+      c.inputsHash,
+      hash(c.standing),
+      ...(c.relationship ? [hash(c.relationship)] : []),
+    ]),
     goals: goals.slice(0, GOALS_MAX).map((g) => g.trim()),
   };
 }
@@ -185,10 +197,15 @@ export function parseEditorReply(raw: string, prompt: Pick<EditorPrompt, "idToKe
     out.set(key, {
       adjust,
       why: checkedLine(item.why ?? null, WHY_MAX, prompt),
-      opener: checkedLine(item.opener ?? null, OPENER_MAX, prompt),
+      // A line the user sends, so the house bans apply (`@/lib/message-format`).
+      opener: scrubLine(checkedLine(item.opener ?? null, OPENER_MAX, prompt)),
     });
   }
   return out;
+}
+
+function scrubLine(line: string | null): string | null {
+  return line ? scrubPunctuation(line) : null;
 }
 
 function checkedLine(text: string | null, max: number, prompt: Pick<EditorPrompt, "factText" | "system">): string | null {

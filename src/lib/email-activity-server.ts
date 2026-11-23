@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contactIdentities, gmailConnections } from "@/db/schema";
 import {
@@ -170,19 +170,36 @@ export async function syncEmailActivity(
   return { ...stats, nextPageToken: page.nextPageToken };
 }
 
-/** When this connection should resume from. */
+/**
+ * When this connection's mailbox pass should resume from.
+ *
+ * Its own cursor key, NOT `last_synced_at`: the calendar/contacts lane stamps that column
+ * before the mailbox pass runs, so reading it here gave "now" and the pass searched an empty
+ * window every time — Email activity was on and never logged a thing.
+ */
 export async function emailActivitySince(userId: string): Promise<Date> {
   const db = await getDb();
   const conn = await db.query.gmailConnections.findFirst({
     where: eq(gmailConnections.userId, userId),
-    columns: { lastSyncedAt: true },
+    columns: { syncCursor: true },
   });
   const firstWindow = new Date(
     Date.now() - EMAIL_ACTIVITY_FIRST_SYNC_DAYS * 24 * 60 * 60 * 1000
   );
-  if (!conn?.lastSyncedAt) return firstWindow;
+  const raw = conn?.syncCursor?.mailboxSyncedAt;
+  const at = raw ? new Date(raw) : null;
+  if (!at || Number.isNaN(at.getTime())) return firstWindow;
   // Never reach further back than the first-sync window, however long the connection has
   // been idle: a mailbox that has not synced since last year should not replay a year.
-  const last = new Date(conn.lastSyncedAt);
-  return last > firstWindow ? last : firstWindow;
+  return at > firstWindow ? at : firstWindow;
+}
+
+/** Record that a mailbox pass starting at `at` finished. Merges into the cursor; other keys stay. */
+export async function markEmailActivitySynced(userId: string, at: Date): Promise<void> {
+  const db = await getDb();
+  await db.execute(sql`
+    UPDATE gmail_connections
+       SET sync_cursor = COALESCE(sync_cursor, '{}'::jsonb) || jsonb_build_object('mailboxSyncedAt', ${at.toISOString()}::text)
+     WHERE user_id = ${userId}
+  `);
 }

@@ -151,6 +151,9 @@
   "smoke-draft-prompts.ts": [
     "scripts/fixtures/draft-prompt-goldens.json"
   ],
+  "smoke-draft-times-threads.ts": [
+    "src/lib/outreach-send.ts"
+  ],
   "smoke-drive-picker-token.ts": [
     "src/actions/drive.ts",
     "src/actions/imports.ts",
@@ -189,7 +192,6 @@
   "smoke-email-no-resend.ts": [
     "src/actions/outreach.ts",
     "src/lib/email/providers/gmail.ts",
-    "src/lib/outreach-readiness-server.ts",
     "src/lib/outreach-send.ts"
   ],
   "smoke-email-origins.ts": [
@@ -289,6 +291,7 @@
     "src/lib/outlook-scan-type.ts"
   ],
   "smoke-import-stall.ts": [
+    "src/actions/gmail.ts",
     "src/app/api/imports/process-stalled/route.ts",
     "src/lib/import-stall.ts"
   ],
@@ -320,7 +323,8 @@
     "src/app/(clerk)/(marketing)/pricing/page.tsx",
     "src/app/(site)/interest/page.tsx",
     "src/components/landing/landing-auth-controls.tsx",
-    "src/components/landing/landing-scenes.tsx"
+    "src/components/landing/landing-scenes.tsx",
+    "src/components/marketing/marketing-doc.tsx"
   ],
   "smoke-meeting-gate.ts": [
     "src/actions/meetings.ts"
@@ -362,6 +366,11 @@
   ],
   "smoke-origin-checks.ts": [
     "src/app/api"
+  ],
+  "smoke-page-shell.ts": [
+    "scripts/smoke-page-shell.baseline.json",
+    "src/app/(clerk)/(app)",
+    "src/components"
   ],
   "smoke-pcm-worklet.ts": [
     "public/orbit-pcm-worklet.js"
@@ -420,6 +429,9 @@
     "src/lib/recruiter-drafts.ts",
     "src/lib/reminder-writes.ts"
   ],
+  "smoke-relationship-apply.ts": [
+    "src/actions/contacts.ts"
+  ],
   "smoke-report-error.ts": [
     "src/app/global-error.tsx",
     "src/components/error-fallback.tsx",
@@ -430,7 +442,15 @@
   ],
   "smoke-schedules.ts": [
     "docs/RUNBOOK.md",
-    "src/app/api/imports/process-stalled/route.ts"
+    "scripts/qstash-schedules.ts",
+    "src/app/api/cloud-notes/run/route.ts",
+    "src/app/api/connectors/outbox/drain/route.ts",
+    "src/app/api/credits/notices/route.ts",
+    "src/app/api/email/drain/route.ts",
+    "src/app/api/imports/process-stalled/route.ts",
+    "src/app/api/webhooks/outbound/drain/route.ts",
+    "src/lib/public-routes.ts",
+    "src/lib/schedules.ts"
   ],
   "smoke-schema-ddl.ts": [
     "src/db/index.ts"
@@ -516,6 +536,12 @@
     "src/app/api/interest-list/unsubscribe/route.ts",
     "src/app/api/radar/digest/unsubscribe/route.ts",
     "src/lib/unsubscribe-guard.ts"
+  ],
+  "smoke-ux-copy.ts": [
+    "src/components/contacts/contact-form.tsx",
+    "src/components/contacts/contacts-list.tsx",
+    "src/components/recruiters/gmail-import-panel.tsx",
+    "src/components/recruiters/outlook-import-panel.tsx"
   ],
   "smoke-vercel-ignore-build.ts": [
     "docs/RUNBOOK.md",

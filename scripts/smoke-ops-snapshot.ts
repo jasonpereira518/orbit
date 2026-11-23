@@ -12,7 +12,7 @@ delete process.env.VERCEL_ENV;
 
 import { and, eq, gt, inArray, like, or, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { contacts, creditGrants, cronRuns, embeddingFailures, errorEvents, rateLimitBuckets, usageEvents } from "../src/db/schema";
+import { contacts, creditGrants, cronRuns, dataPurgeRuns, embeddingFailures, errorEvents, rateLimitBuckets, usageEvents } from "../src/db/schema";
 import { RATE_LIMITS } from "../src/lib/rate-limit";
 import { recordBackfillFailure } from "../src/lib/backfill-failures";
 import { ERROR_SOURCES } from "../src/lib/error-events";
@@ -82,6 +82,21 @@ run(async () => {
     bf.accounts === 2 && bf.kinds.includes("embeddings") && bf.kinds.includes("linkedin_timeline"), JSON.stringify(bf));
   check("two accounts open backfill.failed", (await idsNow()).includes("backfill.failed"));
   await db.delete(errorEvents).where(eq(errorEvents.source, ERROR_SOURCES.backfillFailed));
+
+  console.log("\nStranded deletions...");
+  const purgeIds = ["snap-purge-fresh", "snap-purge-stranded", "snap-purge-failed"];
+  await db.delete(dataPurgeRuns).where(inArray(dataPurgeRuns.targetUserId, purgeIds));
+  const purgeBase = (await loadOpsSnapshot(new Date(), null)).stuckPurges;
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000);
+  await db.insert(dataPurgeRuns).values([
+    { targetUserId: "snap-purge-fresh", status: "running", lastAttemptAt: hoursAgo(1) },
+    { targetUserId: "snap-purge-stranded", status: "running", lastAttemptAt: hoursAgo(3) },
+    { targetUserId: "snap-purge-failed", status: "failed", lastAttemptAt: hoursAgo(1) },
+  ]);
+  const stuck = (await loadOpsSnapshot(new Date(), null)).stuckPurges - purgeBase;
+  check("a run untouched for 2h counts as stuck, a 1h-old one does not", stuck === 2, String(stuck));
+  check("which opens purge.stuck", (await idsNow()).includes("purge.stuck"));
+  await db.delete(dataPurgeRuns).where(inArray(dataPurgeRuns.targetUserId, purgeIds));
 
   console.log("\nstatement_timeout...");
   check("not probed off production", (await loadOpsSnapshot(new Date(), null)).statementTimeout === null);

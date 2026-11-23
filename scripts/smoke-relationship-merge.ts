@@ -51,6 +51,25 @@ async function main() {
   check("winner watermark cleared", left.find((d) => d.contactId === b.id)?.watermarkAt == null);
   check("winner pending again", (await pendingRelationshipContactCount(USER)) === 1);
 
+  // A removed relationship kind ("Not right?") follows the merge: it is never set again.
+  const kindCase = async (winner: { kind: "friend"; removed?: true } | null, loser: { kind: "recruiter"; removed?: true } | null) => {
+    await reset();
+    const [l, w] = await db.insert(contacts).values([
+      { userId: USER, fullName: "Kai Loser", source: "linkedin_messages" },
+      { userId: USER, fullName: "Kai Winner", source: "manual" },
+    ]).returning();
+    if (loser) await db.insert(relationshipDigests).values({ contactId: l.id, userId: USER, relationship: { ...loser, excerpt: "x", interactionId: l.id } });
+    if (winner) await db.insert(relationshipDigests).values({ contactId: w.id, userId: USER, relationship: { ...winner, excerpt: "x", interactionId: w.id } });
+    await mergeContacts(USER, w.id, l.id);
+    return (await db.query.relationshipDigests.findFirst({ where: eq(relationshipDigests.contactId, w.id) }))?.relationship ?? null;
+  };
+  check("a loser's removed kind reaches a winner with no digest", (await kindCase(null, { kind: "recruiter", removed: true }))?.removed === true);
+  const over = await kindCase({ kind: "friend" }, { kind: "recruiter", removed: true });
+  check("a loser's removed kind replaces a winner's that is not removed", over?.removed === true && over?.kind === "recruiter");
+  check("neither removed: the winner keeps its kind", (await kindCase({ kind: "friend" }, { kind: "recruiter" }))?.kind === "friend");
+  const both = await kindCase({ kind: "friend", removed: true }, { kind: "recruiter", removed: true });
+  check("winner already removed: its own stands", both?.kind === "friend" && both?.removed === true);
+
   await reset();
   console.log("\nsmoke-relationship-merge: all checks passed");
   process.exit(0);

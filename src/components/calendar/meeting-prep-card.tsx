@@ -265,11 +265,6 @@ function GuestRow({ guest, eventId }: { guest: Guest; eventId: string }) {
       </div>
       {profile?.headline && <p className="text-muted-foreground">{profile.headline}</p>}
       {profile?.summary && <p className="text-muted-foreground">{profile.summary}</p>}
-      {profile && (
-        <Link href="/find" className="text-primary underline-offset-2 hover:underline">
-          Full brief in Find people
-        </Link>
-      )}
       {typeof state === "object" && <p className="text-muted-foreground">{state.message}</p>}
     </div>
   );

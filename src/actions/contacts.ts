@@ -3,6 +3,7 @@
 import { after } from "next/server";
 import { resolveOrCreateContact } from "@/lib/contact-resolve";
 import { requirePageUser } from "@/lib/plan-guards";
+import { asActionResult, type ActionResult } from "@/lib/errors";
 import { relatedSqlLower } from "@/lib/related-contacts-sql";
 import { and, asc, desc, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
 import { listSchools } from "@/lib/events/target-companies";
@@ -118,6 +119,9 @@ import { scheduleDispatch } from "@/lib/email/schedule";
 import { getSendCapability, type MailboxId, type SendBlockReason } from "@/lib/email/sender";
 import { trackSearchPerformed } from "@/lib/search-events";
 import { TEXT_LIMITS, cleanOptionalText, cleanTextList } from "@/lib/input/text";
+import { deferStyleProfileBuild } from "@/lib/style-profile-defer";
+import { removeRelationshipKind } from "@/lib/relationship-engine/apply";
+import { isUuid } from "@/lib/ids";
 
 export type { ContactInput } from "@/lib/contact-writes";
 
@@ -722,8 +726,9 @@ function clientContactInput<T extends Partial<ContactInput>>(input: T): T {
  * free plan's limit (audit H-01). Server callers that need options use the `*ForUser`
  * functions in `@/lib/contact-writes` directly.
  */
-export async function createContact(input: ContactInput) {
-  const { contact } = await createContactDetailed(input);
+/** `typedName`: the contact form, where the person typed the name; automation never renames it. */
+export async function createContact(input: ContactInput, opts?: { typedName?: boolean }) {
+  const { contact } = await createContactDetailed(input, opts);
   return contact;
 }
 
@@ -739,11 +744,12 @@ export async function createContact(input: ContactInput) {
  * Separate from `createContact` rather than a changed return type, so the outreach path
  * that only wants the row keeps working unchanged.
  */
-export async function createContactDetailed(input: ContactInput) {
+export async function createContactDetailed(input: ContactInput, opts?: { typedName?: boolean }) {
   const userId = await requirePageUser("page.contacts");
   const { contactId, outcome, reason } = await resolveOrCreateContact(
     userId,
-    clientContactInput(input)
+    clientContactInput(input),
+    opts?.typedName ? { nameBy: "user", by: "user" } : {}
   );
   const db = await getDb();
 
@@ -776,8 +782,9 @@ export async function createContactDetailed(input: ContactInput) {
 // same server-only `options` — so it was never callable from a browser on purpose, yet an
 // action id was still minted for it. Importers call `createContactsBulkForUser` directly.
 
+/** A name in the patch is one the person typed (only the contact form sends one): final. */
 export async function updateContact(id: string, input: Partial<ContactInput>) {
-  return updateContactForUser(await requirePageUser("page.contacts"), id, clientContactInput(input));
+  return updateContactForUser(await requirePageUser("page.contacts"), id, clientContactInput(input), { nameBy: "user", by: "user" });
 }
 
 /**
@@ -789,16 +796,18 @@ export async function reviewContactName(id: string, name?: { firstName: string; 
   if (name) {
     const firstName = name.firstName.trim();
     const lastName = name.lastName.trim();
-    await updateContactForUser(userId, id, {
-      fullName: [firstName, lastName].filter(Boolean).join(" "),
-      firstName,
-      lastName,
-    });
+    await updateContactForUser(
+      userId,
+      id,
+      { fullName: [firstName, lastName].filter(Boolean).join(" "), firstName, lastName },
+      { nameBy: "user" }
+    );
   }
+  // Confirmed or typed, the name is now the person's: final for every automated writer.
   const db = await getDb();
   await db
     .update(contacts)
-    .set({ nameGuess: sql`${contacts.nameGuess} || '{"weak": false}'::jsonb` })
+    .set({ nameGuess: sql`${contacts.nameGuess} || '{"weak": false, "source": "user"}'::jsonb` })
     .where(and(eq(contacts.id, id), eq(contacts.userId, userId), sql`${contacts.nameGuess} IS NOT NULL`));
   revalidatePath("/contacts");
   revalidatePath(`/contacts/${id}`);
@@ -1050,6 +1059,15 @@ export async function reorderSameDayInteractions(
 
   revalidatePath(`/contacts/${contactId}`);
   return { ok: true as const };
+}
+
+/** "Not right?" on a contact's relationship kind (LinkedIn deep read): hide it for good. */
+export async function removeContactRelationshipKind(contactId: string) {
+  const userId = await requirePageUser("page.contacts");
+  if (!isUuid(contactId)) return { ok: false as const };
+  const ok = await removeRelationshipKind(userId, contactId);
+  revalidatePath(`/contacts/${contactId}`);
+  return { ok };
 }
 
 export async function regenerateContactSummary(contactId: string) {
@@ -1310,22 +1328,26 @@ export async function lookupLinkedInProfile(input: {
   linkedinUrl: string;
   fullName?: string;
   email?: string;
-}): Promise<LinkedInProfileEnrichment | null> {
-  const userId = await requirePageUser("page.contacts");
-  const raw = input.linkedinUrl.trim();
-  if (!isLinkedInProfileUrl(raw)) {
-    throw new Error("Enter a LinkedIn profile URL (linkedin.com/in/…)");
-  }
+}): Promise<ActionResult<LinkedInProfileEnrichment | null>> {
+  // asActionResult: Apollo's plan refusal is a UserFacingError, and a thrown one would
+  // reach the form as a digest (and Sentry as a 500) instead of its own words.
+  return asActionResult(async () => {
+    const userId = await requirePageUser("page.contacts");
+    const raw = input.linkedinUrl.trim();
+    if (!isLinkedInProfileUrl(raw)) {
+      throw new Error("Enter a LinkedIn profile URL (linkedin.com/in/…)");
+    }
 
-  const linkedinUrl = buildLinkedInUrl(raw);
-  const [profile] = await enrichPeopleFromLinkedIn(userId, [
-    {
-      linkedinUrl,
-      fullName: input.fullName?.trim() || null,
-      email: input.email?.trim() || null,
-    },
-  ]);
-  return profile;
+    const linkedinUrl = buildLinkedInUrl(raw);
+    const [profile] = await enrichPeopleFromLinkedIn(userId, [
+      {
+        linkedinUrl,
+        fullName: input.fullName?.trim() || null,
+        email: input.email?.trim() || null,
+      },
+    ]);
+    return profile;
+  });
 }
 
 /**
@@ -1661,7 +1683,8 @@ export async function refreshContactsFromLinkedIn(contactIds: string[]) {
       }
 
       if (Object.keys(patch).length > 0) {
-        await updateContactForUser(userId, contact.id, patch, { skipRevalidate: true });
+        // The person's own profile, read now: replaces guesses, offers to replace what was typed.
+        await updateContactForUser(userId, contact.id, patch, { skipRevalidate: true, by: "linkedin_refresh" });
         if (profileImageUrl) {
           await deleteReplacedAvatar(contact.profileImageUrl, profileImageUrl);
         }
@@ -1729,6 +1752,8 @@ export async function draftContactFollowUp(
   const userId = await requirePageUser("page.contacts");
   const goals = await listActiveGoalTexts();
   const writingInstructions = await loadWritingInstructions(userId);
+  // Learn how they write from their sent mail, once, after the draft is on its way.
+  deferStyleProfileBuild(userId);
   return draftFollowUpResult(userId, contactId, goals, { ...options, writingInstructions });
 }
 

@@ -13,16 +13,19 @@ import { aiResultCache, imports, importJobRows, recruiterScanState, userRecruite
 import { encrypt } from "../src/lib/crypto";
 import type { GmailMessageContent } from "../src/lib/gmail";
 import {
+  BATCH_MIN_SENDERS,
   SCAN_ROW_QUEUED,
   runGmailRecruiterScanJob,
   type ScanDeps,
 } from "../src/lib/gmail-scan-processor";
 import { runAiBatchSweep } from "../src/lib/ai-batch-apply";
 import { submitAiBatch } from "../src/lib/ai-batch";
-import { classifyRecruiterSender } from "../src/lib/recruiter-scan";
+import { classifyRecruiterSender, recruiterResultFromContent } from "../src/lib/recruiter-scan";
 import { aiBatchJobs } from "../src/db/schema";
 
 const USER = "smoke-scan-batch-user";
+/** Smallest scan that goes to the Batch API; anything smaller is classified inline. */
+const N = BATCH_MIN_SENDERS;
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
   console.log(`  ${ok ? "ok  " : "FAIL"} ${label}${detail ? ` — ${detail}` : ""}`);
@@ -59,7 +62,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
           ? {
               output: {
                 inlinedResponses: {
-                  inlinedResponses: [0, 1, 2].map(() => ({
+                  inlinedResponses: Array.from({ length: N }, () => 0).map(() => ({
                     response: {
                       candidates: [{ content: { parts: [{ text: VERDICT }] } }],
                       usageMetadata: { promptTokenCount: 800, candidatesTokenCount: 50 },
@@ -137,10 +140,28 @@ async function main() {
   // remembered from the first would answer the rest. The cache has its own scenario at the end.
   process.env.ORBIT_AI_RESULT_CACHE = "off";
 
-  console.log("Senders go out as one batch, and the scan waits for them");
+  console.log("A small scan is classified inline: nobody waits on a batch");
+  {
+    let submitted = 0;
+    const smallId = await seedJob(BATCH_MIN_SENDERS - 1);
+    await runGmailRecruiterScanJob(smallId, {
+      ...deps,
+      classify: async () => recruiterResultFromContent(VERDICT),
+      submit: async (...args) => {
+        submitted++;
+        return submitAiBatch(...args);
+      },
+    });
+    const small = await state(smallId);
+    check("nothing is submitted to the Batch API", submitted === 0 && (await db.select().from(aiBatchJobs).where(eq(aiBatchJobs.userId, USER))).length === 0, String(submitted));
+    check("every sender is settled in the same run", small.rows.every((r) => r === "done" || r === "skipped"), small.rows.join(","));
+    check("and the scan completes without a sweep", small.status === "completed", String(small.status));
+  }
+
+  console.log("\nSenders go out as one batch, and the scan waits for them");
   batchDone = false;
   batchFails = false;
-  const importId = await seedJob(3);
+  const importId = await seedJob(N);
   await runGmailRecruiterScanJob(importId, deps);
   const queued = await state(importId);
   check("every sender is queued, none classified inline", queued.rows.every((s) => s === SCAN_ROW_QUEUED), queued.rows.join(","));
@@ -159,19 +180,19 @@ async function main() {
   check("the finished batch is applied", swept.applied === 1, JSON.stringify(swept));
   const done = await state(importId);
   check("every sender is settled", done.rows.every((s) => s === "done" || s === "skipped"), done.rows.join(","));
-  // All three senders are the same person in this fixture, so the canonical recruiter
+  // Every sender is the same person in this fixture, so the canonical recruiter
   // dedupes them into one link — the batched path writes exactly what the inline one does.
   const links = await db.query.userRecruiterLinks.findMany({ where: eq(userRecruiterLinks.userId, USER) });
   check("the recruiter is linked to the user", links.length === 1, String(links.length));
   check("  with the summary and roles from the batch", Boolean(links[0]?.aiSummary?.includes("Larkspur")) && (links[0]?.rolesDiscussed ?? []).length > 0);
   check("the scan completes", done.status === "completed", String(done.status));
-  check("  its counters match", done.stats?.recruitersFound === 3 && done.rows.length === 3, JSON.stringify(done.stats));
+  check("  its counters match", done.stats?.recruitersFound === N && done.rows.length === N, JSON.stringify(done.stats));
   check("  and only now does the watermark move", done.watermark !== null);
 
   console.log("\nA batch that will never answer hands the senders back");
   batchDone = false;
   batchFails = false;
-  const secondId = await seedJob(3);
+  const secondId = await seedJob(N);
   await runGmailRecruiterScanJob(secondId, deps);
   batchFails = true;
   batchDone = true;
@@ -187,7 +208,7 @@ async function main() {
   {
     batchDone = false;
     batchFails = false;
-    const thirdId = await seedJob(3);
+    const thirdId = await seedJob(N);
     await runGmailRecruiterScanJob(thirdId, deps);
     // The person cancels while the senders are still out.
     await db.update(imports).set({ status: "cancelled" }).where(eq(imports.id, thirdId));
@@ -206,18 +227,18 @@ async function main() {
     await db.delete(aiResultCache).where(eq(aiResultCache.userId, USER));
     batchDone = false;
     batchFails = false;
-    const firstId = await seedJob(2);
+    const firstId = await seedJob(N);
     await runGmailRecruiterScanJob(firstId, deps);
     batchDone = true;
     await runAiBatchSweep();
     const remembered = await db.select().from(aiResultCache).where(eq(aiResultCache.userId, USER));
-    check("a batched verdict is remembered when it lands", remembered.length === 2 && remembered.every((r) => r.operation === "recruiter.scan"), String(remembered.length));
+    check("a batched verdict is remembered when it lands", remembered.length === N && remembered.every((r) => r.operation === "recruiter.scan"), String(remembered.length));
 
     // The same senders, byte-identical mail, a scan later. Nothing may go out as a batch, and the
     // inline classifier (the real one, which reads the cache) answers them without a model call.
     batchDone = false;
     let submitted = 0;
-    const secondId = await seedJob(2);
+    const secondId = await seedJob(N);
     await runGmailRecruiterScanJob(secondId, {
       ...deps,
       classify: classifyRecruiterSender,

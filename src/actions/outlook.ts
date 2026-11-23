@@ -398,7 +398,7 @@ export async function startOutlookRecruiterScan(opts?: {
       })
       .returning();
 
-    after(() => startJobInOwnInvocation(row.id, runOutlookRecruiterScanJob).catch(() => {}));
+    after(() => startJobInOwnInvocation(row.id, runOutlookRecruiterScanJob));
     revalidatePath("/recruiters");
     return { importId: row.id };
   });

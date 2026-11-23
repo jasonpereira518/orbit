@@ -29,7 +29,7 @@ import { CommandPalette } from "@/components/layout/command-palette";
 import { ComposeHost } from "@/components/email/compose-host";
 import { HiddenSurfacesProvider } from "@/components/layout/hidden-surfaces";
 import { Button } from "@/components/ui/button";
-import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/ask-bar-events";
+import { OPEN_COMMAND_PALETTE_EVENT, showAskBarFor } from "@/lib/ask-bar-events";
 import { Search } from "lucide-react";
 import { NotificationsPanelButton } from "@/components/notifications/notifications-panel";
 import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
@@ -71,6 +71,7 @@ export function AppShell({
   linkedinReminder,
   creditsIntroDue,
   tour,
+  radarOn,
 }: {
   children: React.ReactNode;
   userId: string;
@@ -98,6 +99,8 @@ export function AppShell({
    * runtime owns the live stop and writes it back fire-and-forget.
    */
   tour: { active: boolean; stop: string | null; hasApiKey: boolean; linkedinRequested: boolean };
+  /** Radar is turned on (and not paused): until then /radar shows its Turn on screen without the Ask bar. */
+  radarOn: boolean;
 }) {
   const pathname = usePathname();
   // One nav tree per viewport after hydrate. Until the match is known, keep both (SSR +
@@ -133,19 +136,13 @@ export function AppShell({
   // The ask bar is not a link to /chat — it streams answers from `/api/chat` inline, so it IS chat.
   // Hiding the Chat page while leaving the bar up would leave the feature fully reachable
   // from every screen, which is the whole thing hiding is supposed to prevent.
-  const showAskBar =
-    !isOnboarding &&
-    !isChat &&
-    !isSettings &&
-    !isConstellation &&
-    // A floating bar over a viewport-locked queue would sit on its last rows and on the
-    // detail pane. ⌘K still asks from there (the palette falls back to /chat).
-    !isReminders &&
-    // The bar IS chat, and it owns bottom-centre: during the guided tour it would both
-    // satisfy the Chat stop from any page and sit where the coach rail needs the room.
-    !tour.active &&
-    !isKnowledge &&
-    !hiddenSet.has("page.chat");
+  // The route rules live in `showAskBarFor` (smoke-ask-bar-visibility): tour, reminders and
+  // knowledge keep their reasons there; /radar waits until Radar is on.
+  const showAskBar = showAskBarFor(pathname, {
+    tourActive: tour.active,
+    chatHidden: hiddenSet.has("page.chat"),
+    radarOn,
+  });
   // Where the palette sends a typed question: the ask bar when it is on screen, /chat when
   // the page has no bar, and nowhere on /chat itself (its composer is already right there)
   // or when chat is hidden outright.

@@ -25,6 +25,7 @@ import {
 } from "@/lib/radar/editor-prompt";
 import type { RadarPick } from "@/lib/radar/score";
 import { KIND_PRIORITY } from "@/lib/radar/types";
+import { loadRelationshipContexts, relationshipFactLines, type RelationshipContext } from "@/lib/relationship-context";
 
 /** How long one edit may take before the run gives up on it and keeps the rules' order. */
 export const RADAR_EDITOR_TIMEOUT_MS = 12_000;
@@ -88,10 +89,14 @@ export async function editPicks<T extends RadarPick & { inputsHash: string }>(
   const shortlist = editorShortlist(picks);
   if (shortlist.length === 0) return editorUnchanged(picks, "skipped");
 
-  const standings = await loadStandings(
-    userId,
-    shortlist.map((p) => p.contactId)
-  );
+  const [standings, deep] = await Promise.all([
+    loadStandings(
+      userId,
+      shortlist.map((p) => p.contactId)
+    ),
+    // LinkedIn deep read: how you met and where you overlapped. Empty when it is off.
+    loadRelationshipContexts(userId, shortlist.map((p) => p.contactId)).catch(() => new Map<string, RelationshipContext>()),
+  ]);
   const candidates: EditorCandidate[] = shortlist.map((p) => {
     const profile = context.profiles.get(p.contactId);
     return {
@@ -100,6 +105,7 @@ export async function editPicks<T extends RadarPick & { inputsHash: string }>(
       company: profile?.company ?? null,
       tier: profile?.tier ?? null,
       standing: standings.get(p.contactId) ?? null,
+      relationship: relationshipFactLines(deep.get(p.contactId)).join("; ") || null,
     };
   });
   const prompt = buildEditorPrompt(candidates, context.goals);

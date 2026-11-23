@@ -199,7 +199,7 @@ export async function checkHealth(options: {
   }));
   report.slowCallsLastHour = slow ?? 0;
 
-  // The nightly job's 25 h window cannot see a dead scheduler; the ten-minute sweep can.
+  // The nightly job's 25 h window cannot see a dead scheduler; the thirty-minute sweep can.
   // A sweep section that timed out (null) is unknown, not quiet.
   const degraded =
     report.cron.processStalled.missed ||

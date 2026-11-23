@@ -236,6 +236,12 @@ check(
 for (const file of ["src/components/analytics/pageview-beacon.tsx", "src/components/analytics/vercel-telemetry.tsx"]) {
   check(`${file} does not import the route list`, !readFileSync(file, "utf8").includes("analytics-routes"));
 }
+{
+  // One request per view: the beacon batches load, vitals and dwell into the view's own payload.
+  const src = readFileSync("src/components/analytics/pageview-beacon.tsx", "utf8");
+  check("the beacon no longer posts load, vitals or dwell as separate kinds", !/kind:\s*"(load|vitals|dwell)"/.test(src));
+  check("the beacon sends over sendBeacon, with the view's start time", src.includes("navigator.sendBeacon") && /\bat:\s*now\b/.test(src));
+}
 
 // --- 3. Visitor hashing --------------------------------------------------------------
 
@@ -1201,6 +1207,31 @@ async function main() {
 
   await beacon({ kind: "dwell", id: extRef, dwellMs: 12_000 });
   check("a dwell beacon through the route lands", (await viewOf(extRef))?.dwellMs === 12_000);
+
+  // The batched beacon: ONE request carries the view, its load, vitals and dwell, dated by `at`.
+  const batchId = randomUUID();
+  const began = Date.now() - 20 * 60_000;
+  const batchRes = await beacon({
+    kind: "view", id: batchId, sessionId: randomUUID(), path: "/pricing", url: "https://orbit.example/pricing", referrer: null,
+    at: began, loadMs: 840, navType: "hard", lcpMs: 1200, inpMs: 90, clsMilli: 30, dwellMs: 45_000,
+  });
+  const batchRow = await viewOf(batchId);
+  check("a batched view lands with its load, vitals and dwell from one request", batchRes.status === 204 && batchRow?.loadMs === 840 && batchRow?.navType === "hard" && batchRow?.lcpMs === 1200 && batchRow?.inpMs === 90 && batchRow?.clsMilli === 30 && batchRow?.dwellMs === 45_000, JSON.stringify(batchRow));
+  check("…dated by the view's own start, not the send", batchRow != null && Math.abs(batchRow.createdAt.getTime() - began) < 1000, `got ${batchRow?.createdAt?.toISOString()}`);
+  await beacon({ kind: "update", id: batchId, dwellMs: 60_000, inpMs: 70, clsMilli: 50 });
+  const patched = await viewOf(batchId);
+  check("a later `update` keeps the largest of each figure", patched?.dwellMs === 60_000 && patched?.inpMs === 90 && patched?.clsMilli === 50, JSON.stringify(patched));
+  await beacon({ kind: "view", id: batchId, sessionId: randomUUID(), path: "/pricing", url: "https://orbit.example/pricing", dwellMs: 1, loadMs: 1, navType: "soft" });
+  check("a retried view neither duplicates nor overwrites its load", (await viewOf(batchId))?.loadMs === 840);
+  const oldId = randomUUID();
+  await beacon({ kind: "view", id: oldId, sessionId: randomUUID(), path: "/pricing", url: "https://orbit.example/pricing", at: Date.now() - 3 * 86_400_000 });
+  const oldRow = await viewOf(oldId);
+  check("a view claiming to be days old is dated now", oldRow != null && Date.now() - oldRow.createdAt.getTime() < 60_000, `got ${oldRow?.createdAt?.toISOString()}`);
+  const futureId = randomUUID();
+  await beacon({ kind: "view", id: futureId, sessionId: randomUUID(), path: "/pricing", url: "https://orbit.example/pricing", at: Date.now() + 3_600_000 });
+  const futureRow = await viewOf(futureId);
+  check("…and one from the future is never dated ahead", futureRow != null && futureRow.createdAt.getTime() <= Date.now() + 1000, `got ${futureRow?.createdAt?.toISOString()}`);
+  await db.delete(pageViews).where(inArray(pageViews.id, [batchId, oldId, futureId]));
 
   // The limiter is per IP and runs before every branch: rotating the User-Agent, or sending
   // only dwell beacons, used to walk straight past it.

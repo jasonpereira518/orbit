@@ -5,7 +5,7 @@
  * Run: npx tsx scripts/smoke-relationship-gather.ts
  */
 import "./smoke/_env";
-import { MAX_CHUNKS, WINDOW_CHARS, buildWindow, formatMessageLine, speakerFor } from "../src/lib/relationship-engine/gather";
+import { MAX_CHUNKS, WINDOW_CHARS, buildWindow, formatMessageLine, signalSpeaker, speakerFor } from "../src/lib/relationship-engine/gather";
 import type { WindowMessage } from "../src/lib/relationship-engine/types";
 
 function check(label: string, condition: boolean, detail?: string) {
@@ -58,5 +58,18 @@ check("row limit only: truncatedBefore = first kept message", limitOnly.truncate
 // A single message longer than a window is clipped, never dropped (the watermark must move).
 const huge = buildWindow("c1", [msg(0, "y".repeat(50_000))], ["linkedin"])!;
 check("huge single message: one message, clipped", huge.messages.length === 1 && huge.text.length <= WINDOW_CHARS);
+
+console.log("\ndeep read");
+check("signal speaker: their invitation is theirs", signalSpeaker("li-export:invitation_received:k:c", "Maya") === "Maya");
+check("signal speaker: your invitation is yours", signalSpeaker("li-export:invitation_sent:k:c", "Maya") === "Me");
+check("signal speaker: a recommendation they wrote is theirs", signalSpeaker("li-export:recommendation_received:k:c", "Maya") === "Maya");
+check("signal speaker: one you wrote is yours", signalSpeaker("li-export:recommendation_given:k:c", "Maya") === "Me");
+check("signal speaker: your LinkedIn note", signalSpeaker("li-export:note:k:c", "Maya") === "My note");
+check("signal speaker: a message row is not a signal", signalSpeaker("li-msg:abc", "Maya") === null && signalSpeaker(null, "Maya") === null);
+const start = buildWindow("c1", big, ["linkedin"], false, { keepStart: true })!;
+check("keepStart: the window starts at the very first message", start.messages[0].interactionId === big[0].interactionId);
+check("keepStart: nothing reported as cut", start.truncatedBefore === null);
+check("keepStart: still one window's worth", start.text.length <= WINDOW_CHARS);
+check("keepStart: hitting the row limit means newer rows wait, not a cut", buildWindow("c1", big, ["linkedin"], true, { keepStart: true })!.truncatedBefore === null);
 
 console.log("\nsmoke-relationship-gather: all checks passed");

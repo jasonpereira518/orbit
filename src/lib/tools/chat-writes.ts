@@ -237,7 +237,8 @@ const CORE_WRITES: readonly ChatWrite[] = [
         previous.notes = before.notes ?? null;
       }
       if (!Object.keys(patch).length) throw new UserFacingError("Nothing to change");
-      await updateContactForUser(userId, contactId, patch, { skipRevalidate: true });
+      // Confirmed by the person before it runs: theirs.
+      await updateContactForUser(userId, contactId, patch, { skipRevalidate: true, by: "user" });
       return { resultId: contactId, href: `/contacts/${contactId}`, undo: { tool: "restore_contact_fields", input: { contactId, fields: previous } } };
     },
   },

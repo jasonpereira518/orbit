@@ -6,7 +6,7 @@ import { after } from "next/server";
 import { FeedbackTrigger } from "@/components/feedback/feedback-trigger";
 import { FeedbackWidgetLazy } from "@/components/feedback/feedback-widget-lazy";
 import { SurveyPromptLazy } from "@/components/surveys/survey-prompt-lazy";
-import { FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
+import { COSMO_SURFACE_KEY, FEEDBACK_SURFACE_KEY } from "@/lib/surfaces";
 import { shouldShowTermsNotice } from "@/lib/legal";
 import { AppShell } from "@/components/layout/app-shell";
 import { ViewerPlanProvider } from "@/components/viewer-plan";
@@ -26,7 +26,7 @@ import { OfflineSync } from "@/components/layout/offline-sync";
 import { MeetingSessionProvider } from "@/components/capture/meeting-session";
 import { VoiceDock } from "@/components/chat/voice/voice-dock";
 import { captureAttribution } from "@/lib/attribution-capture";
-import { captureRadarTimeZone } from "@/lib/radar/digest";
+import { captureRadarTimeZone, radarIsOnFromSettings } from "@/lib/radar/digest";
 import { TZ_COOKIE, isValidTimeZone } from "@/lib/reminder-due-bucket";
 import {
   bootstrapAuthenticatedUser,
@@ -217,6 +217,7 @@ export default async function AppLayout({
       viewingAsUser={visibility.viewingAsUser}
       linkedinReminder={{ ...linkedinReminder, email: settings.email ?? null }}
       creditsIntroDue={creditsIntroDue}
+      radarOn={radarIsOnFromSettings(settings.radarEnabledAt, settings.radarPaused)}
       tour={{
         active: tourRailVisible(settings),
         stop: settings.tourStop,
@@ -243,7 +244,7 @@ export default async function AppLayout({
       {/* Above any page, like the meeting recorder: an Orbit Voice call keeps going when you
           leave Chat, and docks at the middle right until you come back. Inside the meeting
           provider so a call can start the recorder ("record this meeting"). */}
-      <VoiceDock />
+      <VoiceDock orb={!visibility.hidden.has(COSMO_SURFACE_KEY)} tourActive={tourRailVisible(settings)} />
       </MeetingSessionProvider>
 
       {/* Deliberately a SIBLING of AppShell, not a child. AppShell early-returns a bare

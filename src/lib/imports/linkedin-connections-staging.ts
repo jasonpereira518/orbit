@@ -4,6 +4,7 @@ import { getDb } from "@/db";
 import { contacts, importJobRows, imports } from "@/db/schema";
 import { UserFacingError } from "@/lib/errors";
 import { buildDuplicateIndex, DUPLICATE_MERGE_CONFIDENCE, findDuplicateCandidatesIndexed } from "@/lib/duplicates";
+import { indexStoredIdentities } from "@/lib/contact-identity";
 import { stageImportRows } from "@/lib/import-job-rows";
 import { LINKEDIN_IMPORT_TYPE } from "@/lib/import-adapters/linkedin-import-types";
 import { isImportId } from "@/lib/imports/import-ids";
@@ -55,6 +56,8 @@ export async function matchConnections(userId: string, rows: unknown): Promise<C
     columns: { id: true, fullName: true, email: true, linkedinUrl: true, xHandle: true, company: true, title: true },
   });
   const index = buildDuplicateIndex(existing);
+  // Same as the engine that runs the import, so the preview names the same people.
+  await indexStoredIdentities(userId, index, existing);
   const matches: ConnectionMatch[] = [];
   for (const row of parsed.data) {
     const top = findDuplicateCandidatesIndexed(index, {

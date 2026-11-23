@@ -41,6 +41,7 @@ import {
 import { requireUserId } from "@/lib/auth";
 import { patchYou, previewYou } from "@/lib/career-profile";
 import { clearCareerProfile, loadYouCurrent, saveCareerPatch } from "@/lib/career-profile-server";
+import { deepReadOn } from "@/lib/deep-read";
 import { isYouTarget, type YouTarget } from "@/lib/linkedin-you-shape";
 import { REVERT_REFUSAL_MESSAGE, describeRevert } from "@/lib/import-revert-policy";
 import { revertImport } from "@/lib/import-revert";
@@ -100,6 +101,7 @@ import { actionFailure } from "@/lib/action-failure";
 import { lastCompletedImportAt } from "@/lib/import-history";
 import { LINKEDIN_UPLOAD_IMPORT_TYPES } from "@/lib/import-adapters/linkedin-import-types";
 import { UserFacingError } from "@/lib/errors";
+import { avatarRouteUrl } from "@/lib/contact-avatar-url";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { demoAddressBookPreview, recordDemoContactsImport } from "@/lib/demo-workspace-actions";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
@@ -247,7 +249,8 @@ export async function previewLinkedInYou(target: YouTarget, text: string) {
     return refusal("That file isn’t one Orbit can read for your profile.");
   }
   try {
-    return { fields: previewYou(target, text, await loadYouCurrent(userId)) };
+    const history = await deepReadOn(userId);
+    return { fields: previewYou(target, text, await loadYouCurrent(userId), { history }) };
   } catch (err) {
     return refusal(await linkedInExportErrorMessage(err, "imports.preview-linkedin-you"));
   }
@@ -265,7 +268,8 @@ export async function applyLinkedInYou(input: { target: YouTarget; text: string;
   }
   let patch: ReturnType<typeof patchYou>;
   try {
-    patch = patchYou(input.target, input.text, input.keys, await loadYouCurrent(userId), new Date());
+    const history = await deepReadOn(userId);
+    patch = patchYou(input.target, input.text, input.keys, await loadYouCurrent(userId), new Date(), { history });
   } catch (err) {
     return refusal(await linkedInExportErrorMessage(err, "imports.apply-linkedin-you"));
   }
@@ -628,7 +632,7 @@ async function finishForImport(
       // Right after an import almost nobody has a stored photo yet — the backfill runs later —
       // so a face that can be looked up is pointed at the on-demand route. Its initials turn
       // into the photo if one comes back, and stay initials on a miss.
-      photo: p.profileImageUrl ?? (p.canResolvePhoto ? `/api/avatars/${p.id}` : null),
+      photo: p.profileImageUrl ?? (p.canResolvePhoto ? avatarRouteUrl(p.id, null) : null),
     })),
   };
 }

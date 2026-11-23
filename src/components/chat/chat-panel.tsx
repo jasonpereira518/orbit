@@ -307,7 +307,7 @@ function initialAttachFromUrl(): { picks: ContextPerson[]; token: string } | nul
   return addMentionPick([], id, [params.get("name")?.trim()]);
 }
 
-type LoadedThread = Awaited<ReturnType<typeof getChatThread>>;
+type LoadedThread = NonNullable<Awaited<ReturnType<typeof getChatThread>>>;
 
 /**
  * Wait for an answer the server is still writing on a thread that was left mid-turn, then put
@@ -476,6 +476,10 @@ export function ChatPanel({
   // A live Orbit Voice call (held by VoiceDock in the layout) takes the message list's place.
   const voiceCall = useVoiceDock().call;
   const voiceThreadOnMount = useRef(voiceCall?.threadId ?? null);
+  // The call takes the message list's place only in its OWN thread. Any other thread (or a new
+  // chat) shows normally while the call stays docked, so the composer and ask_chat can never
+  // write to different threads under one title.
+  const voiceHere = Boolean(voiceCall?.threadId && voiceCall.threadId === threadId);
   /** The `+` menu is outside the field, so it reaches the splice through here. */
   const composerRef = useRef<MentionComposerHandle | null>(null);
   const stickToBottomRef = useRef(true);
@@ -931,13 +935,13 @@ export function ChatPanel({
   const loadThread = useCallback(async (id: string, opts?: { prefetched?: boolean }) => {
     const seq = ++loadSeqRef.current;
     const taken = opts?.prefetched ? threadPrefetch.take(id) : null;
-    const ready = taken && "value" in taken && taken.value.thread.id === id ? taken.value : null;
+    const ready = taken && "value" in taken && taken.value?.thread.id === id ? taken.value : null;
     // A prefetch older than THREAD_PREFETCH_FRESH_MS shows at once, then is re-read below.
     const revalidate = ready && taken && "fresh" in taken && !taken.fresh;
     // An already-landed prefetch swaps straight in: no spinner frame in between.
     if (!ready) setLoadingThread(true);
     try {
-      let loaded: LoadedThread;
+      let loaded: LoadedThread | null;
       if (ready) {
         loaded = ready;
       } else if (taken && "promise" in taken && taken.promise) {
@@ -949,6 +953,11 @@ export function ChatPanel({
         loaded = await getChatThread(id);
       }
       if (seq !== loadSeqRef.current) return;
+      // Deleted, or never this account's: say so and leave the panel as it is.
+      if (!loaded) {
+        toast.error("That chat isn’t there anymore");
+        return;
+      }
       const shown = applyThread(loaded, { opening: true });
       // Left mid-answer and back: the server kept writing it, so wait for it to land. Stop
       // works on it as on any answer: it marks the turn, and aborts this tab's send if the
@@ -990,7 +999,7 @@ export function ChatPanel({
           (current) => {
             // Only onto the same untouched thread: another load, a send or an edit since the
             // stale copy went up wins over this read, and an unchanged thread is left as is.
-            if (seq !== loadSeqRef.current || current.thread.id !== id) return;
+            if (!current || seq !== loadSeqRef.current || current.thread.id !== id) return;
             if (messagesRef.current !== shown) return;
             if (JSON.stringify(current) === JSON.stringify(loaded)) return;
             applyThread(current, { opening: false });
@@ -2043,8 +2052,8 @@ export function ChatPanel({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {/* `relative` so the jump button can sit on the scroller's bottom edge — above the
               composer, but not inside the scrolling content, where it would scroll away. */}
-          {voiceCall && <div ref={setVoiceSlot} className="flex min-h-0 flex-1 flex-col" />}
-          <div className={cn("relative flex min-h-0 flex-1 flex-col", voiceCall && "hidden")}>
+          {voiceHere && <div ref={setVoiceSlot} className="flex min-h-0 flex-1 flex-col" />}
+          <div className={cn("relative flex min-h-0 flex-1 flex-col", voiceHere && "hidden")}>
           <div
             ref={listRef}
             onScroll={onListScroll}

@@ -32,6 +32,7 @@ const LONG_MONTH = new Intl.DateTimeFormat("en", { month: "long", year: "numeric
 
 function amount(a: Allowance, n: number): string {
   if (a === "meeting" || a === "shortform") return `${(n / 3600).toFixed(1)}h`;
+  if (a === "assistant") return `${Math.round(n / 60).toLocaleString("en")}m`;
   return Math.round(n).toLocaleString("en");
 }
 
@@ -195,13 +196,14 @@ export default async function MoneyUsagePage() {
         <AdminPanel title="Last 12 months">
           <TrendTable
             label="Last 12 months"
-            columns={["AI credits", "Meeting hrs", "Short-form hrs", "Enrichments", "Contacts added"]}
+            columns={["AI credits", "Meeting hrs", "Short-form hrs", "Cosmo min", "Enrichments", "Contacts added"]}
             rows={[...trend].reverse().map((p) => ({
               period: MONTH.format(new Date(`${p.month}-01T00:00:00Z`)),
               values: [
                 Math.round(p.credits),
                 Math.round((p.meeting / 3600) * 10) / 10,
                 Math.round((p.shortform / 3600) * 10) / 10,
+                Math.round(p.assistant / 60),
                 p.enrichment,
                 p.contacts,
               ],

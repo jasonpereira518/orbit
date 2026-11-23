@@ -79,6 +79,17 @@ async function invalidRowsSince(source: string) {
 async function main() {
   console.log("Webhook rejection ledger is throttled per source...");
 
+  // No Svix headers at all: turned away before verification, so it writes nothing — and,
+  // run first, it would otherwise take the hour's one invalid-row latch (ORBIT-X).
+  const headerless = new Request("http://localhost/api/webhooks/clerk", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  const headerlessStatus = (await call(clerkPost as Post, headerless)).status;
+  check("clerk answers a headerless POST with 400", headerlessStatus === 400, String(headerlessStatus));
+  check("a headerless POST writes no ledger row", (await invalidRowsSince("clerk")).length === 0);
+
   const clerkStatuses: number[] = [];
   for (let i = 0; i < 3; i++) {
     clerkStatuses.push((await call(clerkPost as Post, svixGarbage("/api/webhooks/clerk", i))).status);

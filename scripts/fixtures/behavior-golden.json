@@ -23,6 +23,7 @@
       "dueFollowUps": 5,
       "strongConnections": 19,
       "pendingReminders": 8,
+      "dueReminders": 3,
       "topCompany": null
     },
     "recentContacts": [
@@ -2946,6 +2947,10 @@
       }
     ],
     "dueCount": 8,
+    "dueBreakdown": {
+      "reminders": 3,
+      "followUps": 5
+    },
     "totalCount": 23,
     "canUseExtension": true,
     "alerts": [],
@@ -2959,6 +2964,7 @@
     "lastName": "Chen",
     "preferredName": null,
     "nameGuess": null,
+    "fieldSources": null,
     "company": "OpenAI",
     "companyId": "<companies:OpenAI>",
     "title": "Partnerships Lead",
@@ -4138,7 +4144,7 @@
                   "maxLength": 500
                 },
                 "notes": {
-                  "description": "Replaces the existing notes.",
+                  "description": "Added to the end of their notes, dated; existing notes are kept.",
                   "type": "string",
                   "maxLength": 5000
                 },
@@ -4743,6 +4749,100 @@
             }
           },
           {
+            "name": "list_radar_cards",
+            "title": "Radar suggestions",
+            "description": "Who Orbit's radar currently suggests reaching out to, and why — job changes, news, events, going quiet, goals — the same cards the radar page shows.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "default": 5,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "list_radar_finds",
+            "title": "Radar finds",
+            "description": "What radar's weekly web search found for the user that is not in their network yet: events near them, people to meet (each with someone they know who can introduce them), and programs with deadlines. Every find has a link the search returned. Nothing here is a contact until the user saves it on the radar page.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {}
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "what_needs_attention",
+            "title": "What needs attention",
+            "description": "What's waiting for the user right now: reminders and follow-ups due, notes to review, replies to their feedback, and account problems (a disconnected mailbox, a missing AI key). The same list as the notification bell.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "default": 8,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 15
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "radar_briefing",
+            "title": "Radar briefing",
+            "description": "Radar's briefing in one call: how many people it suggests today and this week, the top few with why, and how many drafts are ready.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {}
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "integration_status",
+            "title": "Integration status",
+            "description": "Which apps the user has connected to Orbit (Notion, Granola and others), whether each is working or needs reconnecting, and when it last synced.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {}
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
             "name": "list_my_recruiters",
             "title": "The user's recruiters",
             "description": "Recruiters the user has logged: name, firm, specialty, the user's status with them and their own rating.",
@@ -5152,6 +5252,75 @@
               "required": [
                 "opportunityId",
                 "status"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "schedule_recommendation",
+            "title": "Act on a radar card",
+            "description": "Act on one of radar's suggestions (id from list_radar_cards) by scheduling a follow-up reminder with that person in 3, 7 or 14 days.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "recommendationId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "days": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "const": 3
+                    },
+                    {
+                      "type": "number",
+                      "const": 7
+                    },
+                    {
+                      "type": "number",
+                      "const": 14
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "recommendationId",
+                "days"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "snooze_recommendation",
+            "title": "Snooze a radar card",
+            "description": "Snooze one of radar's suggestions (id from list_radar_cards) for a week (1w) or a month (1m).",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "recommendationId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "length": {
+                  "type": "string",
+                  "enum": [
+                    "1w",
+                    "1m"
+                  ]
+                }
+              },
+              "required": [
+                "recommendationId",
+                "length"
               ]
             },
             "execution": {
@@ -5667,6 +5836,7 @@
       "lastName": "Chen",
       "preferredName": null,
       "nameGuess": null,
+      "fieldSources": null,
       "company": "OpenAI",
       "companyId": "<companies:OpenAI>",
       "title": "Partnerships Lead",
@@ -6398,6 +6568,7 @@
       "dueFollowUps": 4,
       "strongConnections": 20,
       "pendingReminders": 11,
+      "dueReminders": 2,
       "topCompany": null
     },
     "recentContacts": [
@@ -9246,6 +9417,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.526255,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9323,6 +9495,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.454951,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9398,6 +9571,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.324546,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9476,6 +9650,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.49756,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9551,6 +9726,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.27669,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9626,6 +9802,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.418147,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9703,6 +9880,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.40021,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9781,6 +9959,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.771154,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9859,6 +10038,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.409512,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9923,10 +10103,10 @@
       "closeness": 19,
       "full_name": "Golden Mcpperson",
       "key_facts": [],
-      "last_name": null,
+      "last_name": "Mcpperson",
       "ai_summary": null,
       "company_id": null,
-      "first_name": null,
+      "first_name": "Golden",
       "name_guess": null,
       "search_tsv": "'golden':1A 'golden-mcp@example.com':3C 'mcpperson':2A",
       "met_context": null,
@@ -9934,6 +10114,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.255,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -9998,10 +10179,10 @@
       "closeness": 50,
       "full_name": "Golden Newperson",
       "key_facts": [],
-      "last_name": null,
+      "last_name": "Newperson",
       "ai_summary": "Golden Newperson is Engineer at Acme. Recent conversations covered: Golden: met at the extension test..",
       "company_id": "<companies:Acme>",
-      "first_name": null,
+      "first_name": "Golden",
       "name_guess": null,
       "search_tsv": "'..':20 'acme':3B,10 'at':9,16 'conversations':12 'covered':13 'engineer':4B,8 'extension':18 'golden':1A,5,14 'is':7 'met':15 'newperson':2A,6 'recent':11 'test':19 'the':17",
       "met_context": null,
@@ -10009,6 +10190,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.51086,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10087,6 +10269,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.442721,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10162,6 +10345,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.37256,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10243,6 +10427,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.532241,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10318,6 +10503,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.354222,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10396,6 +10582,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.586005,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10474,6 +10661,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.602105,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10555,6 +10743,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.552619,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10633,6 +10822,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.74794,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10708,6 +10898,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.28665,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10786,6 +10977,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.679665,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10864,6 +11056,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.350052,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -10943,6 +11136,16 @@
       "cadence_days": null,
       "linkedin_url": "https://www.linkedin.com/in/sarah-chen-demo",
       "closeness_raw": 0.914428,
+      "field_sources": {
+        "email": {
+          "s": "calendar",
+          "at": "<ts>"
+        },
+        "title": {
+          "s": "user",
+          "at": "<ts>"
+        }
+      },
       "linkedin_slug": "sarah-chen-demo",
       "mastodon_acct": null,
       "opportunities": [],
@@ -11023,6 +11226,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.562079,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -11102,6 +11306,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.542824,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -11182,6 +11387,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.569512,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],
@@ -11260,6 +11466,7 @@
       "cadence_days": null,
       "linkedin_url": null,
       "closeness_raw": 0.548583,
+      "field_sources": null,
       "linkedin_slug": null,
       "mastodon_acct": null,
       "opportunities": [],

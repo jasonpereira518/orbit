@@ -52,6 +52,7 @@ import { loadPostSignals } from "@/lib/radar/signals/activity";
 import { produceEmailSignals } from "@/lib/radar/signals/email";
 import { openRadarAi } from "@/lib/radar/explain";
 import { radarNoteKey } from "@/lib/radar/why-prompt";
+import { loadRelationshipContexts, relationshipFactLines, type RelationshipContext } from "@/lib/relationship-context";
 import { reportError, reportUnlessQuiet } from "@/lib/report-error";
 import { runSettledPool } from "@/lib/sync-scheduler";
 import { deadlineAfter, deadlineReached } from "@/lib/time-budget";
@@ -73,8 +74,6 @@ const HOUR_MS = 3_600_000;
 
 /** How long a claimed account stays claimed if its run dies without releasing it. */
 export const RADAR_LEASE_MS = 10 * 60 * 1000;
-/** The UTC hour the nightly pass aims every account at. `ops.yml` runs it at 04:17. */
-export const RADAR_NIGHTLY_HOUR_UTC = 4;
 /** A failed run retries after this, rather than waiting for the next night. */
 const RETRY_AFTER_MS = 6 * HOUR_MS;
 /** A page view older than this since the last run refreshes in the background. */
@@ -86,7 +85,7 @@ export const RADAR_STALE_MS = 24 * HOUR_MS;
  */
 export const RADAR_AI_BUDGET_MS = 25_000;
 /**
- * The editor's off switch. If `/admin/analytics/radar` shows cards it moved up are not
+ * The editor's off switch. If `/admin/growth/radar` shows cards it moved up are not
  * accepted more often than cards it moved down, it is noise: turn it off here, and the plan
  * keeps the scorer's order and reasons (a card's why can still be asked for on demand).
  */
@@ -283,17 +282,34 @@ export function scorePicks(
       picks.push(pick);
     }
   }
+  return picks.map((pick) => ({ ...pick, inputsHash: noteKeyOf(rowById.get(pick.contactId)!, pick) }));
+}
+
+function noteKeyOf(row: RadarCandidateRow, pick: RadarPick, relationship?: readonly string[]): string {
+  return radarNoteKey({
+    contactName: (row.preferredName ?? "").trim() || row.fullName,
+    title: row.title,
+    company: row.company,
+    kind: pick.kind,
+    reasons: pick.reasons,
+    evidence: pick.evidence,
+    relationship,
+  });
+}
+
+/**
+ * LinkedIn deep read: a card's note is written with how you met and where you overlapped
+ * (explain.ts, editor.ts), so its key must move when those do. One read for the batch; with the
+ * deep read off the map is empty and every key stays as scorePicks made it.
+ */
+async function keyWithRelationship(userId: string, picks: NewRecommendation[], candidates: readonly RadarCandidateRow[]): Promise<NewRecommendation[]> {
+  const deep = await loadRelationshipContexts(userId, picks.map((p) => p.contactId)).catch(() => new Map<string, RelationshipContext>());
+  if (!deep.size) return picks;
+  const rowById = new Map(candidates.map((c) => [c.id, c]));
   return picks.map((pick) => {
-    const row = rowById.get(pick.contactId)!;
-    const inputsHash = radarNoteKey({
-      contactName: (row.preferredName ?? "").trim() || row.fullName,
-      title: row.title,
-      company: row.company,
-      kind: pick.kind,
-      reasons: pick.reasons,
-      evidence: pick.evidence,
-    });
-    return { ...pick, inputsHash };
+    const lines = relationshipFactLines(deep.get(pick.contactId));
+    const row = rowById.get(pick.contactId);
+    return lines.length && row ? { ...pick, inputsHash: noteKeyOf(row, pick, lines) } : pick;
   });
 }
 
@@ -466,7 +482,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
         // mail is the one an accept needs to find its email again.
         await mark("score");
         const allSignals = [...emailSignals, ...signals, ...posts, ...connect];
-        const scored = scorePicks(
+        const scored = await keyWithRelationship(userId, scorePicks(
           candidates,
           allSignals,
           targetKeys,
@@ -477,7 +493,7 @@ export async function runRadarForUser(userId: string, opts: RadarRunOptions): Pr
           focus,
           userTz,
           activeProjects
-        );
+        ), candidates);
 
         // No proof, no card: the index is only what this run read (its signals' source rows and
         // its candidates), each tied to the person it was read for, so a card can only cite

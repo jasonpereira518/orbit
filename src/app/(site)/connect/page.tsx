@@ -84,7 +84,7 @@ export default function ConnectPage() {
       <DocBody toc={TOC}>
         <DocSection id="claude" index={1} title="Claude">
           <ol>
-            <li>Open Settings → Connectors → Add custom connector.</li>
+            <li>Open Customize → Connectors → + → Add custom connector (or Settings → Connectors).</li>
             <li>
               Paste your Orbit connector URL. You will find it in Orbit under Settings → API
               and connectors; it is your Orbit address followed by <code>/api/mcp</code>.

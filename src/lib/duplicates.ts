@@ -2,6 +2,7 @@ import type { Contact } from "@/db/schema";
 import { ROLE_EMAIL_LOCALS } from "@/lib/names/classify";
 import { nameKey, nameSimilarity } from "@/lib/names/key";
 import { sameGivenName } from "@/lib/names/nicknames";
+import { formatPersonName } from "@/lib/names/parse";
 
 /**
  * The columns duplicate detection actually reads.
@@ -14,7 +15,7 @@ import { sameGivenName } from "@/lib/names/nicknames";
 export type DuplicateSubject = Pick<
   Contact,
   "id" | "fullName" | "email" | "linkedinUrl" | "xHandle" | "company" | "title"
->;
+> & { phone?: string | null };
 
 /**
  * The line between "confident enough to merge on its own" and "ask a human".
@@ -43,6 +44,15 @@ export const DIFFERENT_PROFILE_CONFIDENCE = 0.6;
 
 function normalize(s: string | null | undefined) {
   return (s || "").trim().toLowerCase();
+}
+
+/**
+ * The exact-name key: the name as it would be stored (`formatPersonName`), lower-cased. A row
+ * saved before names were formatted ("DOE, JANE") and the same person arriving formatted
+ * ("Jane Doe") meet on one key; otherwise a re-sync with no identifier makes a duplicate.
+ */
+function exactNameKey(s: string | null | undefined) {
+  return normalize(formatPersonName(s)?.fullName ?? s);
 }
 
 /** Punctuation, accents and case folded away for fuzzy name compares. */
@@ -198,6 +208,7 @@ export type DuplicateIndex = {
   byLinkedin: Map<string, DuplicateSubject[]>;
   byX: Map<string, DuplicateSubject[]>;
   byEmail: Map<string, DuplicateSubject[]>;
+  byPhone: Map<string, DuplicateSubject[]>;
   byNameCompany: Map<string, DuplicateSubject[]>;
   byNameTitle: Map<string, DuplicateSubject[]>;
   byName: Map<string, DuplicateSubject[]>;
@@ -244,6 +255,7 @@ function emptyIndex(): DuplicateIndex {
     byLinkedin: new Map(),
     byX: new Map(),
     byEmail: new Map(),
+    byPhone: new Map(),
     byNameCompany: new Map(),
     byNameTitle: new Map(),
     byName: new Map(),
@@ -259,7 +271,7 @@ function emptyIndex(): DuplicateIndex {
  * which silently under-merged mid-batch contacts. One body cannot drift from itself.
  */
 export function addToDuplicateIndex(index: DuplicateIndex, contact: DuplicateSubject) {
-  const name = normalize(contact.fullName);
+  const name = exactNameKey(contact.fullName);
   const email = normalize(contact.email);
   const linkedin = linkedinSlug(contact.linkedinUrl);
   const xHandle = normalizeXHandle(contact.xHandle);
@@ -269,10 +281,28 @@ export function addToDuplicateIndex(index: DuplicateIndex, contact: DuplicateSub
   if (linkedin) pushTo(index.byLinkedin, linkedin, contact);
   if (xHandle) pushTo(index.byX, xHandle, contact);
   if (email) pushTo(index.byEmail, email, contact);
+  const phone = normalizePhone(contact.phone);
+  if (phone) pushTo(index.byPhone, phone, contact);
   if (name && company) pushTo(index.byNameCompany, compositeKey(name, company), contact);
   if (name && title) pushTo(index.byNameTitle, compositeKey(name, title), contact);
   if (name) pushTo(index.byName, name, contact);
   for (const key of fuzzyBucketKeys(contact.fullName)) pushTo(index.fuzzyBuckets, key, contact);
+}
+
+/**
+ * File a contact under one more identifier it owns in `contact_identities` (a second email,
+ * a phone, an older LinkedIn URL), so a record carrying that identifier finds them. Values
+ * arrive already normalized by `identityKeysFor`.
+ */
+export function addIdentityToIndex(index: DuplicateIndex, key: { kind: string; value: string }, contact: DuplicateSubject) {
+  const map =
+    key.kind === "email" ? index.byEmail
+    : key.kind === "phone_e164" ? index.byPhone
+    : key.kind === "linkedin_slug" ? index.byLinkedin
+    : key.kind === "x_handle" ? index.byX
+    : null;
+  if (!map || map.get(key.value)?.includes(contact)) return;
+  pushTo(map, key.value, contact);
 }
 
 export function buildDuplicateIndex(existing: DuplicateSubject[]): DuplicateIndex {
@@ -286,6 +316,7 @@ export type DuplicateProbe = {
   email?: string | null;
   linkedinUrl?: string | null;
   xHandle?: string | null;
+  phone?: string | null;
   company?: string | null;
   title?: string | null;
 };
@@ -304,7 +335,7 @@ export function findDuplicateCandidatesIndexed(
   index: DuplicateIndex,
   incoming: DuplicateProbe
 ): DuplicateMatch[] {
-  const name = normalize(incoming.fullName);
+  const name = exactNameKey(incoming.fullName);
   const email = normalize(incoming.email);
   const linkedin = linkedinSlug(incoming.linkedinUrl);
   const xHandle = normalizeXHandle(incoming.xHandle);
@@ -327,7 +358,7 @@ export function findDuplicateCandidatesIndexed(
     const theirs = linkedin ? linkedinSlug(contact.linkedinUrl) : "";
     if (!theirs || theirs === linkedin) return { contact, reason, confidence, strong: false };
     const sameCompany = Boolean(company) && company === normalize(contact.company);
-    const exactName = Boolean(name) && name === normalize(contact.fullName);
+    const exactName = Boolean(name) && name === exactNameKey(contact.fullName);
     if (sameCompany && exactName) {
       return { contact, reason: `${reason} (LinkedIn profile changed)`, confidence, strong: false };
     }
@@ -355,6 +386,8 @@ export function findDuplicateCandidatesIndexed(
   if (linkedin) addAll(index.byLinkedin.get(linkedin), "Same LinkedIn URL", 0.98, true);
   if (xHandle) addAll(index.byX.get(xHandle), "Same X handle", 0.97, true);
   if (email) addAll(index.byEmail.get(email), "Same email", 0.95, true);
+  const phone = normalizePhone(incoming.phone);
+  if (phone) addAll(index.byPhone.get(phone), "Same phone", 0.95, true);
   if (name && company)
     addAll(
       index.byNameCompany.get(compositeKey(name, company)),

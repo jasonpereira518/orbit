@@ -19,8 +19,10 @@ const mix = (a: Rgb, b: Rgb, t: number): Rgb =>
  * Orbit's voice as one self-lit aurora orb. Mode and audio levels steer it every frame from a
  * ref, so audio never re-renders React and a mode change blends instead of restarting the loop.
  */
-export function VoiceOrbit({ controls, mode, muted }: {
+export function VoiceOrbit({ controls, mode, muted, pointer }: {
   controls: RefObject<VoiceAgentControls | null>; mode: VoiceMode; muted: boolean;
+  /** Where the pointer is over the orb (-1..1), or null when it isn't: the lights lean toward it. */
+  pointer?: RefObject<{ x: number; y: number } | null>;
 }) {
   const root = useRef<HTMLCanvasElement>(null);
   const reduced = usePrefersReducedMotion();
@@ -38,8 +40,8 @@ export function VoiceOrbit({ controls, mode, muted }: {
       size = canvas.clientWidth;
       canvas.width = canvas.height = Math.round(size * dpr);
     };
-    const observer = new ResizeObserver(resize);
-    observer.observe(canvas);
+    // Re-checked every frame (in `tick`), not by a ResizeObserver: Cosmo's orb is resized as it
+    // moves between slots, and a missed observation left a 5px backing store stretched to 58px.
     resize();
     let frame = 0;
     let input = 0;
@@ -47,11 +49,14 @@ export function VoiceOrbit({ controls, mode, muted }: {
     let weights = orbWeights(live.current.mode);
     let morph = 0;
     let spin = 0;
+    // The pointer's pull, eased so the lights drift rather than snap; `near` fades it in and out.
+    let lean = { x: 0, y: 0, near: 0 };
     let last = performance.now();
     const tick = (now: number) => {
       const dt = Math.min(now - last, 100);
       last = now;
       const { mode, muted, reduced } = live.current;
+      if (canvas.clientWidth !== size || Math.min(2, window.devicePixelRatio || 1) !== dpr) resize();
       const levels = controls.current?.getLevels() ?? { input: 0, output: 0 };
       input = smoothVoiceLevel(input, muted ? 0 : levels.input, dt);
       output = smoothVoiceLevel(output, mode === "speaking" ? levels.output : 0, dt);
@@ -62,15 +67,21 @@ export function VoiceOrbit({ controls, mode, muted }: {
       spin += (p.lightSpeed * dt) / 1000;
       canvas.style.setProperty("--voice-input", String(input));
       canvas.style.setProperty("--voice-output", String(output));
-      drawOrb(ctx, size, dpr, p, reduced ? 0 : now / 1000, morph, spin);
+      const target = reduced ? null : (pointer?.current ?? null);
+      const k = 1 - Math.exp(-dt / 140);
+      lean = {
+        x: lean.x + ((target?.x ?? 0) - lean.x) * k,
+        y: lean.y + ((target?.y ?? 0) - lean.y) * k,
+        near: lean.near + ((target ? 1 : 0) - lean.near) * k,
+      };
+      drawOrb(ctx, size, dpr, p, reduced ? 0 : now / 1000, morph, spin, lean);
       frame = requestAnimationFrame(tick);
     };
     frame = requestAnimationFrame(tick);
     return () => {
       cancelAnimationFrame(frame);
-      observer.disconnect();
     };
-  }, [controls]);
+  }, [controls, pointer]);
 
   return (
     <canvas
@@ -84,7 +95,16 @@ export function VoiceOrbit({ controls, mode, muted }: {
   );
 }
 
-function drawOrb(ctx: CanvasRenderingContext2D, size: number, dpr: number, p: OrbParams, t: number, morph: number, spin: number) {
+function drawOrb(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  dpr: number,
+  p: OrbParams,
+  t: number,
+  morph: number,
+  spin: number,
+  lean: { x: number; y: number; near: number } = { x: 0, y: 0, near: 0 },
+) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, size, size);
   if (!size) return;
@@ -131,16 +151,17 @@ function drawOrb(ctx: CanvasRenderingContext2D, size: number, dpr: number, p: Or
   lights.forEach(([color, alpha], k) => {
     const angle = spin * (k % 2 ? -1 : 1) * (1 + k * 0.3) + k * 2.1;
     const d = R * (p.lightRadius + 0.1 * Math.sin(morph * 0.7 + k));
-    const x = c + Math.cos(angle) * d;
-    const y = c + Math.sin(angle) * d;
+    // The lights orbit a centre the pointer pulls on, and burn a little brighter while it's near.
+    const x = c + lean.x * R * 0.35 + Math.cos(angle) * d;
+    const y = c + lean.y * R * 0.35 + Math.sin(angle) * d;
     const light = ctx.createRadialGradient(x, y, 0, x, y, R * 0.8);
-    light.addColorStop(0, rgba(color, alpha * (0.7 + 0.6 * glow)));
+    light.addColorStop(0, rgba(color, alpha * (0.7 + 0.6 * glow + 0.25 * lean.near)));
     light.addColorStop(1, rgba(color, 0));
     ctx.fillStyle = light;
     ctx.fillRect(0, 0, size, size);
   });
-  const hx = c - R * 0.35;
-  const hy = c - R * 0.42;
+  const hx = c - R * 0.35 + lean.x * R * 0.3;
+  const hy = c - R * 0.42 + lean.y * R * 0.3;
   const shine = ctx.createRadialGradient(hx, hy, 0, hx, hy, R * 0.5);
   shine.addColorStop(0, "rgba(255,255,255,0.28)");
   shine.addColorStop(1, "rgba(255,255,255,0)");

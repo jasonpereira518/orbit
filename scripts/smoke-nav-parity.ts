@@ -9,6 +9,7 @@
  *
  * Run: npx tsx scripts/smoke-nav-parity.ts
  */
+import { readFileSync } from "node:fs";
 import { APP_NAV, MOBILE_BOTTOM_NAV, MOBILE_MORE_NAV } from "../src/components/layout/app-nav";
 
 let failures = 0;
@@ -36,6 +37,14 @@ check("no page appears twice (bar and More)", dupes.length === 0, dupes.join(", 
 check(
   "the bar has a More door when the overflow list is not empty",
   more.length === 0 || MOBILE_BOTTOM_NAV.some((item) => "id" in item && item.id === "more")
+);
+
+check("Reminders leads the phone More sheet", more[0] === "/reminders", String(more[0]));
+
+// /constellation is the old name for the page that lives at /graph.
+check(
+  "next.config redirects /constellation to /graph",
+  /source:\s*"\/constellation",\s*destination:\s*"\/graph"/.test(readFileSync("next.config.ts", "utf8"))
 );
 
 if (failures > 0) {

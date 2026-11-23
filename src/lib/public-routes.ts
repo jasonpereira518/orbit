@@ -77,6 +77,9 @@ export const PUBLIC_ROUTES = [
   "/api/contacts/name-sweep",
   "/api/linkedin/timeline-events/backfill",
   "/api/relationships/run",
+  // The one scheduled call (a thirty-minute tick that starts every due job, src/lib/schedules.ts)
+  // — same CRON_SECRET gate as the jobs it starts.
+  "/api/cron/tick",
   "/api/ops/sweep",
   "/api/ops/speech-usage",
   "/api/ops/billing-reconcile",
@@ -119,8 +122,9 @@ export const PUBLIC_ROUTES = [
   // The same beacon at its old path (an ad-blocker list pattern), kept as a thin alias for one
   // release so a cached client keeps reporting. Remove together with `src/app/api/track`.
   "/api/track",
-  // Crawler files (`src/app/robots.ts`, `src/app/sitemap.ts`). The proxy matcher sends
-  // `.txt` and `.xml` through Clerk, so without these a crawler is redirected to sign-in.
+  // Crawler files (`src/app/robots.ts`, `src/app/sitemap.ts`). The proxy matcher skips
+  // `.txt` and `.xml` paths now, so these are a net: if that regresses, a crawler would be
+  // redirected to sign-in.
   // Deliberately NOT in WAITLIST_ALLOWED_PATHS: the waitlist host stays unbranded.
   "/robots.txt",
   "/sitemap.xml",
