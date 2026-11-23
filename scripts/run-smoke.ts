@@ -718,6 +718,7 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-stress-resilience-repros": "pglite",
   "smoke-stress-recurrence-edge": "pure",
   "smoke-stress-net-guard-edge": "pure",
+  "smoke-security-lint": "pure",
   "smoke-unsubscribe-guard": "pglite",
   "smoke-contact-job-matches": "pglite",
   "smoke-opportunity-extract": "pure",

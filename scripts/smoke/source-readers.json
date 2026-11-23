@@ -458,6 +458,11 @@
   "smoke-security-headers.ts": [
     "src/lib/security-headers.ts"
   ],
+  "smoke-security-lint.ts": [
+    "src/actions/",
+    "src/actions/x.ts",
+    "src/lib/csv-export.ts"
+  ],
   "smoke-server-graph.ts": [
     "src/app/(clerk)/(app)",
     "src/app/(clerk)/(app)/layout.tsx",
