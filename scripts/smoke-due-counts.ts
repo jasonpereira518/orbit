@@ -34,8 +34,7 @@ async function main() {
   await db.delete(contacts).where(eq(contacts.userId, USER));
 
   // Noon UTC of the real UTC day, so the seed rows sit on fixed sides of "now" (10:30 before it,
-  // 23:30 after it) whatever the wall clock says. Only the dashboard read still uses the real
-  // clock, and it judges by day, so it agrees except in the first minutes after UTC midnight.
+  // 23:30 after it) whatever the wall clock says. Every read below is handed this same `now`.
   const now = new Date();
   now.setUTCHours(12, 0, 0, 0);
   const dayStart = new Date(now);
@@ -87,7 +86,7 @@ async function main() {
   const due = await getDueCounts(USER, TZ, now);
   t.check("getDueCounts: 6 reminders, 2 follow-ups, 8 total", due.reminders === 6 && due.followUps === 2 && due.total === 8, JSON.stringify(due));
 
-  const dash = await getDashboardData(USER, { tz: TZ });
+  const dash = await getDashboardData(USER, { tz: TZ, now });
   t.check("dashboard Due reminders = 6", dash.stats.dueReminders === 6, String(dash.stats.dueReminders));
   t.check("dashboard Due follow-ups = 2", dash.stats.dueFollowUps === 2, String(dash.stats.dueFollowUps));
 

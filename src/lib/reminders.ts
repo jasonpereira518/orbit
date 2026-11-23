@@ -912,14 +912,15 @@ export async function getDashboardData(
   userId: string,
   // userName may be a promise so the Clerk profile fetch can run concurrently
   // with the DB queries below (its only consumer is graphPreview.summary).
-  options?: { userName?: string | Promise<string | undefined>; tz?: string }
+  // `now` is for tests that pin the clock; the page never passes it.
+  options?: { userName?: string | Promise<string | undefined>; tz?: string; now?: Date }
 ) {
   const db = await getDb();
 
   // Taken BEFORE the reads, not after them: the reminder and suggestion filters run in SQL
   // and have to agree with the due follow-ups about which contacts are due, so all three
   // are judged against this one instant.
-  const now = new Date();
+  const now = options?.now ?? new Date();
   const constellationConfig = await getConstellationConfig();
   // The constellation preview mirrors /graph: engaged-only by default. It has no "show all"
   // of its own — the link into /graph is where that lives — so this is always the engaged scope.
