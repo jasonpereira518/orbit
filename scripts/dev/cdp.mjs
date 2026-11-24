@@ -13,13 +13,31 @@
  * lands before React attaches hits the SSR markup and does nothing.
  */
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+/** Prefer CHROME_PATH; otherwise the first existing Chrome/Chromium binary. */
+function resolveChrome() {
+  const candidates = [
+    process.env.CHROME_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/google-chrome",
+    "/usr/local/bin/google-chrome",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+  ].filter(Boolean);
+  for (const path of candidates) {
+    if (existsSync(path)) return path;
+  }
+  throw new Error(
+    `No Chrome binary found. Set CHROME_PATH or install Chrome. Tried: ${candidates.join(", ")}`
+  );
+}
 
 export async function launch({ width = 1280, height = 800, mobile = false, reduceMotion = false, gpu = false, extraArgs = [] } = {}) {
+  const chrome = resolveChrome();
   const port = 9300 + Math.floor(Math.random() * 500);
   const profile = mkdtempSync(join(tmpdir(), "orbit-cdp-"));
   const args = [
@@ -31,13 +49,16 @@ export async function launch({ width = 1280, height = 800, mobile = false, reduc
     // Software raster by default (deterministic screenshots). Frame-rate measurements pass
     // `gpu: true`: a real user's GPU rasterises, and swiftshader would bill paint to the CPU.
     ...(gpu ? [] : ["--disable-gpu"]),
+    // Cloud / container hosts often need these for headless Chrome.
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
     ...extraArgs,
     `--window-size=${width},${height}`,
     "--use-fake-ui-for-media-stream",
     "--use-fake-device-for-media-stream",
     "about:blank",
   ];
-  const proc = spawn(CHROME, args, { stdio: "ignore" });
+  const proc = spawn(chrome, args, { stdio: "ignore" });
   const started = Date.now();
   let targets = null;
   while (Date.now() - started < 15000) {

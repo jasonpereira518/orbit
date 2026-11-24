@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { CalendarPlus, Clock, Copy, MoreHorizontal, PenLine, Sparkles, X } from "lucide-react";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
@@ -335,7 +334,7 @@ export function RecommendationCard({
                     <MoreHorizontal className="size-4" aria-hidden />
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-52">
-                    <DropdownMenuItem render={<Link href={`/contacts/${rec.contactId}`} />}>Open contact</DropdownMenuItem>
+                    <DropdownMenuItem render={<IntentLink href={`/contacts/${rec.contactId}`} />}>Open contact</DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem variant="destructive" onClick={actions.never}>
                       Not for this person

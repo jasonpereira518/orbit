@@ -12,6 +12,7 @@ const AppStarfield = dynamic(
   { ssr: false }
 );
 import { MobileNav } from "@/components/layout/mobile-nav";
+import { RouteProgress } from "@/components/layout/route-progress";
 import { ViewAsUserBanner } from "@/components/layout/view-as-user-banner";
 import { ConnectivityBanner } from "@/components/layout/connectivity-banner";
 import { OrbitLogo } from "@/components/orbit-logo";
@@ -175,6 +176,9 @@ export function AppShell({
       {/* Transparent in dark so the portalled starfield behind this tree
           shows through; the body still paints `--background` either way. */}
       <div className="flex h-dvh flex-col">
+        {/* Instant feedback on every in-app link click (and router.push via beginRouteProgress).
+            Was implemented but never mounted — silent soft-nav until the skeleton or page landed. */}
+        <RouteProgress />
         <ConnectivityBanner />
         {viewingAsUser && (
           <ViewAsUserBanner hiddenCount={hiddenForUsersSet.size} />

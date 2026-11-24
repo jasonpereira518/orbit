@@ -36,7 +36,9 @@ import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { clerkAppearance } from "@/lib/clerk-appearance";
+import { useFullPrefetch } from "@/lib/intent-prefetch";
 import { useModKeyLabel } from "@/lib/use-mod-key";
+import { useEffect } from "react";
 
 /** Nav destinations whose page leans on a lazy client chunk: warmed on hover or focus. */
 const CHUNK_WARMERS: Record<string, (() => void) | undefined> = {
@@ -211,6 +213,23 @@ export function AppSidebar({
   const captureHidden = hidden.has("page.capture");
   const mod = useModKeyLabel();
   const shortcut = mod === "⌘" ? "⌘K" : "Ctrl K";
+  const fullPrefetch = useFullPrefetch();
+  // After a short idle, warm the daily `prefetchFull` routes once. Phone nav already does
+  // this eagerly; desktop stayed intent-only so a FreshOnArrival refresh would not re-fetch
+  // every visible link. One delayed pass still beats the ~300 ms skeleton hold on a fast
+  // click with no hover (keyboard, or a pointer that never rested).
+  const warmHrefs = ordered
+    .filter((item) => item.prefetchFull && !isNavActive(pathname, item.href))
+    .map((item) => item.href)
+    .join("|");
+  useEffect(() => {
+    if (!warmHrefs) return;
+    const hrefs = warmHrefs.split("|");
+    const id = window.setTimeout(() => {
+      for (const href of hrefs) fullPrefetch(href);
+    }, 1500);
+    return () => window.clearTimeout(id);
+  }, [warmHrefs, fullPrefetch]);
   const tagged = (item: AppNavItem) => {
     const key = surfaceKeyForHref(item.href);
     return key !== null && hiddenForUsers.has(key);

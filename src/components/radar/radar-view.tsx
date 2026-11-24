@@ -2,11 +2,11 @@
 
 import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { format, formatDistanceToNow } from "date-fns";
 import { ChevronLeft, ChevronRight, Focus, LayoutList, RefreshCw, Wand2 } from "lucide-react";
 import { AiKeyNotice } from "@/components/ai-key-notice";
 import { Button } from "@/components/ui/button";
+import { IntentLink } from "@/components/ui/intent-link";
 import { useViewerPlan } from "@/components/viewer-plan";
 import { RecommendationCard, type RecommendationCardData } from "@/components/radar/recommendation-card";
 import { RadarSettingsSheet } from "@/components/radar/radar-settings-sheet";
@@ -246,9 +246,9 @@ function AutopilotDid({ items }: { items: RadarAutopilotItem[] }) {
           <li key={a.id} className="flex items-center justify-between gap-2 text-sm">
             <span className="min-w-0 truncate" suppressHydrationWarning>
               Follow-up with{" "}
-              <Link href={`/contacts/${a.contactId}`} className="font-medium text-primary hover:underline">
+              <IntentLink href={`/contacts/${a.contactId}`} className="font-medium text-primary hover:underline">
                 {a.contactName}
-              </Link>
+              </IntentLink>
               {a.dueDate ? ` on ${format(new Date(a.dueDate), "EEE d MMM")}` : ""}
             </span>
             <Button
@@ -390,9 +390,9 @@ function EmptyState({
         <p className="mt-1 text-sm text-muted-foreground">
           Add a few contacts or import your LinkedIn connections, and Radar will start suggesting who to reach out to.
         </p>
-        <Link href="/imports" className="mt-4 inline-block text-sm font-medium text-primary hover:underline">
+        <IntentLink href="/imports" className="mt-4 inline-block text-sm font-medium text-primary hover:underline">
           Import your network
-        </Link>
+        </IntentLink>
       </div>
     );
   }

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { IntentLink } from "@/components/ui/intent-link";
 import { saveResearchedPerson } from "@/actions/web-research";
 import { friendlyError } from "@/lib/errors";
 import { LINKEDIN_PROFILE, requestBrief, type Brief } from "@/lib/research-client";
@@ -281,10 +282,10 @@ function DossierCard({ brief, refreshing, onRefresh }: { brief: PersonBrief; ref
             <RefreshCw className={refreshing ? "size-4 animate-spin" : "size-4"} aria-hidden />
           </Button>
           {saved ? (
-            <Link href={`/contacts/${saved.contactId}`} className="inline-flex items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 hover:underline">
+            <IntentLink href={`/contacts/${saved.contactId}`} className="inline-flex items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 hover:underline">
               <Check className="size-4" aria-hidden />
               {saved.existing ? "Already in Orbit" : "Saved"}
-            </Link>
+            </IntentLink>
           ) : (
             <Button size="sm" disabled={saving} onClick={save}>
               {saving ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <UserPlus className="size-4" aria-hidden />}

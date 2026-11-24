@@ -10,6 +10,8 @@ import {
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { beginRouteProgress } from "@/components/layout/route-progress";
+import { useFullPrefetch } from "@/lib/intent-prefetch";
 import { cn } from "@/lib/utils";
 import {
   ReactFlow,
@@ -774,6 +776,7 @@ function GraphCanvasInner({
   layoutKey: string;
 }) {
   const router = useRouter();
+  const fullPrefetch = useFullPrefetch();
   const {
     fitView,
     fitBounds,
@@ -2124,7 +2127,10 @@ function GraphCanvasInner({
       }
 
       if (compact && node.type === "contact") {
-        router.push(`/contacts/${node.id}`);
+        const href = `/contacts/${node.id}`;
+        beginRouteProgress();
+        fullPrefetch(href);
+        router.push(href);
         return;
       }
       if (node.id === "me" || node.type === "user") {
@@ -2133,7 +2139,7 @@ function GraphCanvasInner({
       }
       onSelect(selectionForContact(node.id, node.data as GraphNodeData));
     },
-    [onSelect, onFocusCluster, data, compact, router]
+    [onSelect, onFocusCluster, data, compact, router, fullPrefetch]
   );
 
   const onNodeMouseEnter: NodeMouseHandler = useCallback(
@@ -2146,6 +2152,9 @@ function GraphCanvasInner({
         onHover(null);
         return;
       }
+      if (compact && node.type === "contact") {
+        fullPrefetch(`/contacts/${node.id}`);
+      }
       setHoveredCluster(null);
       if (node.type !== "contact") {
         onHover(null);
@@ -2153,7 +2162,7 @@ function GraphCanvasInner({
       }
       onHover(node.id);
     },
-    [onHover, hoverClusterAt]
+    [onHover, hoverClusterAt, compact, fullPrefetch]
   );
 
   /**

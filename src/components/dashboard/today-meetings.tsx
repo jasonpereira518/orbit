@@ -16,6 +16,7 @@ import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { IntentLink } from "@/components/ui/intent-link";
 import { requireUserId } from "@/lib/auth";
 import { listUpcomingEvents, relinkEvents } from "@/lib/calendar-events";
 import { hhmmInZone, userTimeZone } from "@/lib/meeting-context";
@@ -210,12 +211,12 @@ export async function TodayMeetingsSection({ now }: { now: Date }) {
             <span className="ml-1.5 text-xs font-normal text-muted-foreground">in Orbit</span>
           </span>
           {r.contactId && who && (
-            <Link
+            <IntentLink
               href={`/contacts/${r.contactId}`}
               className="block truncate text-xs text-muted-foreground underline-offset-2 hover:underline"
             >
               {who}
-            </Link>
+            </IntentLink>
           )}
         </span>
         <Link href="/reminders" className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "shrink-0")}>
@@ -284,12 +285,12 @@ export async function TodayMeetingsSection({ now }: { now: Date }) {
               )}
               <div className="min-w-0 flex-1">
                 {lead?.contactId ? (
-                  <Link
+                  <IntentLink
                     href={`/contacts/${lead.contactId}`}
                     className="block truncate font-medium text-ink underline-offset-2 hover:underline"
                   >
                     {lead.name}
-                  </Link>
+                  </IntentLink>
                 ) : (
                   <p className="truncate font-medium text-ink">{lead ? lead.name : next.title}</p>
                 )}

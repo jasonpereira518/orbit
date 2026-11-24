@@ -3,7 +3,7 @@
 import { emitTourEvent } from "@/lib/tour/tour-events";
 import { tourAnchor } from "@/lib/tour/tour-anchors";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { Building2, ChevronDown, GraduationCap, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -90,6 +90,7 @@ export function ContactsFilters({
   children: ReactNode;
 }) {
   const router = useRouter();
+  const [pending, startTransition] = useTransition();
   const [q, setQ] = useState(initialQ);
   const [company, setCompany] = useState(initialCompany);
   const [companyDraft, setCompanyDraft] = useState(initialCompany);
@@ -135,7 +136,10 @@ export function ContactsFilters({
     // A new query string is a fresh server render already, and a revisited one served from
     // the router cache is re-read by the page's `FreshOnArrival`. The `router.refresh()` that
     // used to follow rendered the whole page a second time per search (LATENCY_PLAN CLI-3).
-    router.replace(href);
+    // startTransition keeps the search pill interactive while the list Suspense streams.
+    startTransition(() => {
+      router.replace(href);
+    });
   }
 
   function scheduleSearch(value: string) {
@@ -192,6 +196,7 @@ export function ContactsFilters({
       <div className="mx-auto w-full max-w-xl">
         <SearchPill
           q={q}
+          searching={pending}
           company={company}
           companyDraft={companyDraft}
           companyOpen={companyOpen}
@@ -345,6 +350,7 @@ export function ContactsFilters({
 
 function SearchPill({
   q,
+  searching,
   company,
   companyDraft,
   companyOpen,
@@ -361,6 +367,7 @@ function SearchPill({
   onMinScoreChange,
 }: {
   q: string;
+  searching: boolean;
   company: string;
   companyDraft: string;
   companyOpen: boolean;
@@ -388,6 +395,7 @@ function SearchPill({
         placeholder="Search contacts…"
         value={q}
         aria-label="Search contacts"
+        aria-busy={searching || undefined}
         autoComplete="off"
         {...tourAnchor("contacts.search")}
         className={cn(
