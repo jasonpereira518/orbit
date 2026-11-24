@@ -4,6 +4,8 @@ import { and, desc, eq, inArray, lte, sql, type SQL } from "drizzle-orm";
 import crypto from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
+import { z } from "zod";
+import { parseInput } from "@/lib/action";
 import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
 import {
   interactions,
@@ -1780,17 +1782,40 @@ export async function searchPeopleWithBrightDataAction(criteria: PeopleSearchCri
 /**
  * Runs the advanced multi-factor people discovery engine
  */
+const discoveryOptionsSchema = z.object({
+  limit: z.number().int().min(1).max(100).optional(),
+  filterProjectId: z.string().max(100).optional(),
+  requireMutual: z.boolean().optional(),
+  onlyEvents: z.boolean().optional(),
+  fresh: z.boolean().optional(),
+  includeExternal: z.boolean().optional(),
+}) satisfies z.ZodType<DiscoveryOptions>;
+
 export async function discoverPeopleAdvancedAction(options: DiscoveryOptions = {}) {
   const userId = await requireOutreachUser();
-  return discoverPeopleAdvanced(userId, options);
+  const parsed = parseInput(discoveryOptionsSchema, options, "outreach.discover-people-advanced");
+  if (!parsed.ok) throw new UserFacingError(parsed.error);
+  return discoverPeopleAdvanced(userId, parsed.value);
 }
+
+const introDraftSchema = z.object({
+  introducerFirstName: z.string().max(200),
+  candidateFullName: z.string().max(200),
+  candidateTitle: z.string().max(300).nullish(),
+  candidateCompany: z.string().max(300).nullish(),
+  relationshipContext: z.string().max(2000),
+  projectTitle: z.string().max(300).nullish(),
+  sharedTopic: z.string().max(300).nullish(),
+}) satisfies z.ZodType<IntroDraftParams>;
 
 /**
  * Generates an introduction request draft to a mutual 1st-degree contact
  */
 export async function generateIntroDraftAction(params: IntroDraftParams) {
   await requireOutreachUser();
-  return generateIntroRequestDraft(params);
+  const parsed = parseInput(introDraftSchema, params, "outreach.generate-intro-draft");
+  if (!parsed.ok) throw new UserFacingError(parsed.error);
+  return generateIntroRequestDraft(parsed.value);
 }
 
 /**
