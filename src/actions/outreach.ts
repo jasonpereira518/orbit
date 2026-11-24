@@ -53,6 +53,12 @@ import { gmailProvider } from "@/lib/email/providers/gmail";
 import { outlookProvider } from "@/lib/email/providers/outlook";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 import { calculateProspectEffectiveness } from "@/lib/outreach-scoring";
+import {
+  generateIntroRequestDraft,
+  discoverPeopleAdvanced,
+  type IntroDraftParams,
+  type DiscoveryOptions,
+} from "@/lib/discovery";
 import { findWarmPaths } from "@/lib/warm-paths-server";
 import { normalizeCompanyKey } from "@/lib/company-name";
 import type { WarmPath } from "@/lib/warm-paths";
@@ -1769,6 +1775,22 @@ export async function enrichProspect(input: {
 export async function searchPeopleWithBrightDataAction(criteria: PeopleSearchCriteria) {
   const userId = await requireOutreachUser();
   return searchPeopleWithBrightData(userId, criteria);
+}
+
+/**
+ * Runs the advanced multi-factor people discovery engine
+ */
+export async function discoverPeopleAdvancedAction(options: DiscoveryOptions = {}) {
+  const userId = await requireOutreachUser();
+  return discoverPeopleAdvanced(userId, options);
+}
+
+/**
+ * Generates an introduction request draft to a mutual 1st-degree contact
+ */
+export async function generateIntroDraftAction(params: IntroDraftParams) {
+  await requireOutreachUser();
+  return generateIntroRequestDraft(params);
 }
 
 /**

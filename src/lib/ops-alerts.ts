@@ -374,7 +374,8 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
   if (syncSilentFor === null || syncSilentFor > SYNC_SCHEDULE_SILENT_MS) {
     out.push({
       id: "sync.schedule_missed",
-      severity: "warning",
+      // Critical: sync-run starts on every tick, so this is also "the scheduler is dead".
+      severity: "critical",
       title: "Connector sync has stopped running",
       detail: sync.lastStartedAt
         ? `Last started ${sync.lastStartedAt.toISOString()}; mailboxes and calendars are not being synced.`
@@ -724,7 +725,7 @@ export function evaluateOpsConditions(s: OpsSnapshot, now: Date): OpsCondition[]
       id: "purge.stuck",
       severity: "critical",
       title: "An account deletion is stuck",
-      detail: `${s.stuckPurges} deletion run(s) stopped after ${PURGE_MAX_ATTEMPTS} attempts — rows the user asked to delete are still in the database. See data_purge_runs.last_error.`,
+      detail: `${s.stuckPurges} deletion run(s) gave up after ${PURGE_MAX_ATTEMPTS} attempts or sat untouched for two hours — rows the user asked to delete are still in the database. See data_purge_runs.last_error.`,
       href: "/admin/health",
     });
   }

@@ -119,6 +119,14 @@ jobs:
         env:
           SLACK_OPS_CRITICAL_WEBHOOK_URL: ${{ secrets.SLACK_OPS_CRITICAL_WEBHOOK_URL }}
 
+      # `continue-on-error` above lets the page step run, but it also kept every run green
+      # while production answered 402 (from Nov 20, 2026). A down probe now ends the run red.
+      - name: Fail the run when production is down
+        if: steps.health.outcome == 'failure'
+        run: |
+          echo "::error::production answered HTTP ${{ steps.health.outputs.code }}"
+          exit 1
+
       # The drift sweep: the same route the tick starts every thirty minutes, plus where `main` is.
       - name: Run the ops sweep
         if: (github.event.schedule == '15 */3 * * *' || github.event_name == 'workflow_dispatch') && steps.health.outcome == 'success'
