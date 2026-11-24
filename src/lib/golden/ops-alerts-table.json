@@ -61,7 +61,7 @@
         "detail": "Last started 2026-09-15T03:00:00.000Z; mailboxes and calendars are not being synced.",
         "href": "/admin/health",
         "id": "sync.schedule_missed",
-        "severity": "warning",
+        "severity": "critical",
         "title": "Connector sync has stopped running"
       }
     ],
@@ -381,7 +381,7 @@
   {
     "conditions": [
       {
-        "detail": "1 deletion run(s) stopped after 5 attempts — rows the user asked to delete are still in the database. See data_purge_runs.last_error.",
+        "detail": "1 deletion run(s) gave up after 5 attempts or sat untouched for two hours — rows the user asked to delete are still in the database. See data_purge_runs.last_error.",
         "href": "/admin/health",
         "id": "purge.stuck",
         "severity": "critical",

@@ -84,7 +84,7 @@ async function main() {
     const rows = await activeRows(threadId);
     check("both rows land active", rows.every((r) => r.isActive));
     check("no slot until something is versioned", rows.every((r) => r.slot === null));
-    const thread = await getChatThread(threadId);
+    const thread = (await getChatThread(threadId))!;
     check("getChatThread shows one turn", thread.messages.length === 2);
     check("with no version switcher (only one version exists)", thread.versions.length <= 1);
     void t1;
@@ -141,7 +141,7 @@ async function main() {
     check("switch reports the version's ids", switched?.version === 1 && switched.userMessageId === t1.userId);
     const afterSwitch = await activeRows(threadId);
     check("version 1 is active again, version 2 is not", afterSwitch.every((r) => r.version === 1));
-    const loaded = await getChatThread(threadId);
+    const loaded = (await getChatThread(threadId))!;
     check("getChatThread now shows version 1's content", loaded.messages.find((m) => m.role === "assistant")?.content === "Answer to: Who do I know at Ramp?");
     check("but the switcher still lists all versions", loaded.versions.length === 2);
     check("switching to a version that does not exist is a no-op, not a throw", (await switchVersion(db, USER, threadId, target.slot, 99)) === null);

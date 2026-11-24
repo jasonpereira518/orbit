@@ -6,27 +6,27 @@ import { loadThread, markThreadRead, type FeedbackThread } from "@/lib/feedback-
 
 /**
  * A feedback conversation, live: server-sent events carrying the whole thread every time it
- * changes, so a reply shows up on the other side within about a second.
+ * changes, so a reply shows up on the other side within about five seconds.
  *
  * Reuses `maxDuration = 60` on purpose. Vercel Hobby caps a deployment at 12 functions and
  * every DISTINCT maxDuration value is its own function; 60 already exists, so this route costs
  * none. The stream ends a few seconds before that ceiling and `retry:` tells EventSource to
  * reconnect at once — to the person reading, it is one continuous connection.
  *
- * ponytail: the server checks the thread once a second per open connection (two indexed
+ * ponytail: the server checks the thread every 5 seconds per open connection (two indexed
  * reads). Fine at a founder's feedback volume; move to Postgres LISTEN/NOTIFY or a pub/sub
  * channel if many conversations are ever open at once.
  */
 export const maxDuration = 60;
 
 const STREAM_MS = 55_000;
-const TICK_MS = 1_000;
+const TICK_MS = 5_000;
 const HEARTBEAT_MS = 15_000;
 
 /**
  * What, if it differs, is worth sending: new messages, a status change, the gift opened, and
  * the OTHER side reading or typing. Never the viewer's own read stamp — every push stamps it,
- * so including it would make each push trigger the next, once a second, forever.
+ * so including it would make each push trigger the next, every tick, forever.
  */
 function signature(thread: FeedbackThread, side: "user" | "operator"): string {
   const other = side === "user" ? "operator" : "user";

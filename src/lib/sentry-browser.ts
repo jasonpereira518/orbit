@@ -19,6 +19,9 @@ init({
   replaysSessionSampleRate: 0,
   replaysOnErrorSampleRate: 0,
   sendDefaultPii: false,
+  // The browser lost the network mid-request. Orbit already tells the person (the offline
+  // banner, `friendlyError`'s offline copy); as an exception it is noise (ORBIT-V).
+  ignoreErrors: ["Failed to fetch"],
   // Calendar, scan and MCP URLs carry their credential in the path (src/lib/sentry-scrub.ts).
   beforeSend: scrubSentryEvent,
   beforeSendTransaction: scrubSentryEvent,

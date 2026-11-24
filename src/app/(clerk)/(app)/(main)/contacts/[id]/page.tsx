@@ -52,6 +52,7 @@ import { getSettings } from "@/actions/settings";
 import { isLoggedTouch, latestLoggedTouch } from "@/lib/interaction-provenance";
 import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
+import { avatarRouteUrl } from "@/lib/contact-avatar-url";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { loadRelationshipContexts, type RelationshipContext } from "@/lib/relationship-context";
@@ -354,7 +355,7 @@ export default async function ContactDetailPage({
             // this page's payload. The hero only needs to know a stored photo exists.
             contact.sharedAvatarUrl ??
             (contact.profileImageUrl?.trim().startsWith("data:image/")
-              ? `/api/avatars/${contact.id}`
+              ? avatarRouteUrl(contact.id, null)
               : contact.profileImageUrl)
           }
           linkedinUrl={contact.linkedinUrl}

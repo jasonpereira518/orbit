@@ -202,13 +202,13 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
     flush();
   }
 
-  // Live results: every 30 s while the tab is visible and the poll is near the screen.
+  // Live results: every 60 s while the tab is visible and the poll is near the screen.
   useEffect(() => {
     if (!near) return;
     const tick = async () => {
       if (document.visibilityState !== "visible" || inFlight.current || Date.now() < holdPollUntil.current) return;
       try {
-        const res = await fetch("/api/waitlist-poll/results", { cache: "no-store" });
+        const res = await fetch("/api/waitlist-poll/results");
         if (!res.ok) return;
         const data = (await res.json()) as { ok?: boolean; counts?: Record<string, number>; voters?: number };
         if (!data.ok || !data.counts || typeof data.voters !== "number") return;
@@ -218,7 +218,7 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
         // Offline: the next tick tries again.
       }
     };
-    const id = window.setInterval(() => void tick(), 30_000);
+    const id = window.setInterval(() => void tick(), 60_000);
     const onVisible = () => void tick();
     document.addEventListener("visibilitychange", onVisible);
     return () => {
