@@ -32,12 +32,15 @@ function check(label: string, ok: boolean, detail = "") {
 /**
  * Ceilings: today's depths. Before the DB-6/DB-15 fix (the count awaited after the page, the
  * lexical arms awaited after the embedding) this meter read 2, 2 and 5 for the three
- * contacts paths.
+ * contacts paths. After lexical-only search (no hybrid `rankContacts`, no search-path
+ * `count(*)`): prefix/phrase search are page then tags (2). The skipped count used to run
+ * beside the page and mask the tags round trip in this meter; wall-clock settle is still
+ * lower without waiting on hybrid + count (see docs/audits/2026-11-24-perceived-speed.md).
  */
 const PATHS: Array<{ name: string; max: number; run: () => Promise<unknown> }> = [
   { name: "contacts first page", max: 1, run: () => listContactsPage(USER, { limit: 50 }) },
-  { name: "contacts search 'hop' (prefix)", max: 1, run: () => listContactsPage(USER, { q: "ho", limit: 50 }) },
-  { name: "contacts search 'engineer at acme'", max: 3, run: () => listContactsPage(USER, { q: "engineer at acme", limit: 50 }) },
+  { name: "contacts search 'hop' (prefix)", max: 2, run: () => listContactsPage(USER, { q: "ho", limit: 50 }) },
+  { name: "contacts search 'engineer at acme'", max: 2, run: () => listContactsPage(USER, { q: "engineer at acme", limit: 50 }) },
   { name: "duplicates name scan", max: 1, run: () => findNameCollisions(USER, 99) },
   {
     name: "avatar backfill probe",
