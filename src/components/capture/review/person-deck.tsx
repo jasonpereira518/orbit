@@ -133,6 +133,7 @@ export function PersonDeck({
   preferredContactId,
   lockedName,
   onDecide,
+  onDecideBulk,
   onBack,
   onStartOver,
 }: {
@@ -143,6 +144,7 @@ export function PersonDeck({
   preferredContactId?: string | null;
   lockedName?: string | null;
   onDecide: (key: string, decision: CaptureDecision) => void;
+  onDecideBulk?: (decisions: Record<string, CaptureDecision>) => void;
   /** Reopen the previous card (its decision is cleared). */
   onBack: (key: string) => void;
   /** Abandon the whole capture. */
@@ -166,10 +168,31 @@ export function PersonDeck({
     return -1;
   }, [index, items, people]);
 
+  const remainingUndecided = useMemo(
+    () => items.filter((it) => !people[it.key]),
+    [items, people]
+  );
+
   const draftFor = useCallback(
     (item: BulkNotePersonPreview) => drafts[item.key] ?? draftFromItem(item, people[item.key], preferredContactId),
     [drafts, people, preferredContactId]
   );
+
+  const acceptAllRemaining = useCallback(() => {
+    const bulk: Record<string, CaptureDecision> = {};
+    for (const it of remainingUndecided) {
+      const itemIdx = items.findIndex((item) => item.key === it.key);
+      const draft = draftFor(it);
+      bulk[it.key] = decisionFromDraft("accept", itemIdx >= 0 ? itemIdx : 0, draft);
+    }
+    if (onDecideBulk) {
+      onDecideBulk(bulk);
+    } else {
+      for (const [k, d] of Object.entries(bulk)) {
+        onDecide(k, d);
+      }
+    }
+  }, [draftFor, items, onDecide, onDecideBulk, remainingUndecided]);
 
   useEffect(() => {
     rootRef.current?.focus({ preventScroll: true });
@@ -240,6 +263,17 @@ export function PersonDeck({
           })}
         </div>
         <div className="flex items-center gap-1">
+          {remainingUndecided.length > 1 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs font-medium border-primary/30 text-primary hover:bg-primary/10"
+              onClick={acceptAllRemaining}
+              title="Keep all remaining people with their suggested details"
+            >
+              <Check className="mr-1 size-3.5" /> Keep all ({remainingUndecided.length})
+            </Button>
+          )}
           <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={previousDecided < 0} onClick={back}>
             <Undo2 className="size-3.5" /> Back
           </Button>

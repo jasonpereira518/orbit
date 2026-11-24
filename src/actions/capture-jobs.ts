@@ -22,6 +22,7 @@ import {
   queueCaptureJobRow,
   recordCaptureChoicesRow,
   recordCaptureDecisionRow,
+  recordCaptureDecisionsBulkRow,
   mergeCaptureBatchRows,
   toCaptureJobView,
   type CaptureJobView,
@@ -340,6 +341,21 @@ export async function recordCaptureDecision(
     return { ok: true, job: toCaptureJobView(row) };
   } catch (err) {
     return { ok: false, error: await actionFailure(err, "Couldn’t save that decision — it’ll be asked again", "capture-jobs.record-capture-decision") };
+  }
+}
+
+/** Multiple cards decided at once; atomic bulk merge. */
+export async function recordCaptureDecisionsBulk(
+  jobId: string,
+  decisions: Record<string, CaptureDecision>
+): Promise<Ok | Fail> {
+  try {
+    const userId = await requireUserId();
+    const row = await recordCaptureDecisionsBulkRow(userId, jobId, decisions);
+    if (!row) return { ok: false, error: "That capture is no longer open for review" };
+    return { ok: true, job: toCaptureJobView(row) };
+  } catch (err) {
+    return { ok: false, error: await actionFailure(err, "Couldn’t save decisions — try again?", "capture-jobs.record-capture-decisions-bulk") };
   }
 }
 

@@ -60,6 +60,29 @@ export function ContactStatPills({
               you&apos;re in touch, and how they fit your goals — ranked against everyone else
               you know.
             </p>
+            <div className="space-y-1.5 border-t pt-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Recency (time since touch)</span>
+                <span className="font-medium text-foreground">{Math.round(closeness.recency * 100)}%</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Cadence (interaction frequency)</span>
+                <span className="font-medium text-foreground">{Math.round(closeness.cadence * 100)}%</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Relationship strength</span>
+                <span className="font-medium text-foreground">{Math.round(closeness.strength * 100)}%</span>
+              </div>
+              {Math.round(closeness.goalRelevance * 100) > 0 && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Goal alignment</span>
+                  <span className="font-medium text-foreground">{Math.round(closeness.goalRelevance * 100)}%</span>
+                </div>
+              )}
+            </div>
+            <p className="border-t pt-2 text-2xs text-muted-foreground">
+              Closeness decays over time when out of touch. Log touches to keep this connection in your inner orbit.
+            </p>
             <p className="border-t pt-2 text-muted-foreground">
               Health, next to it, is how the conversation itself is going: reply speed, who
               writes, and recency.
