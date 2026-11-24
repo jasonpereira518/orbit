@@ -101,6 +101,7 @@ import { actionFailure } from "@/lib/action-failure";
 import { lastCompletedImportAt } from "@/lib/import-history";
 import { LINKEDIN_UPLOAD_IMPORT_TYPES } from "@/lib/import-adapters/linkedin-import-types";
 import { UserFacingError } from "@/lib/errors";
+import { avatarRouteUrl } from "@/lib/contact-avatar-url";
 import { isDemoWorkspace } from "@/lib/demo-workspace";
 import { demoAddressBookPreview, recordDemoContactsImport } from "@/lib/demo-workspace-actions";
 import { RATE_LIMITS, consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
@@ -631,7 +632,7 @@ async function finishForImport(
       // Right after an import almost nobody has a stored photo yet — the backfill runs later —
       // so a face that can be looked up is pointed at the on-demand route. Its initials turn
       // into the photo if one comes back, and stay initials on a miss.
-      photo: p.profileImageUrl ?? (p.canResolvePhoto ? `/api/avatars/${p.id}` : null),
+      photo: p.profileImageUrl ?? (p.canResolvePhoto ? avatarRouteUrl(p.id, null) : null),
     })),
   };
 }

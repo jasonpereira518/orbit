@@ -155,8 +155,13 @@ export async function loadAttachmentBytes(
  * `ATTACHMENT_RETENTION_MS` ago, and uploads never sent (older than `ORPHAN_UPLOAD_TTL_MS`).
  * Rows are cleared first, then blobs deleted best-effort — a Blob outage leaves an orphan the
  * next run's listing finds, never a row pointing at nothing it still needs.
+ * `listOrphans: false` skips that Blob listing (it defaults on).
  */
-export async function sweepEmailAttachments(now = new Date(), limit = 200): Promise<{ settled: number; orphans: number }> {
+export async function sweepEmailAttachments(
+  now = new Date(),
+  limit = 200,
+  opts: { listOrphans?: boolean } = {}
+): Promise<{ settled: number; orphans: number }> {
   const db = await getDb();
   const cutoff = new Date(now.getTime() - ATTACHMENT_RETENTION_MS);
   const picked = rowsOf<{ attachments: EmailAttachmentRef[] }>(
@@ -181,6 +186,9 @@ export async function sweepEmailAttachments(now = new Date(), limit = 200): Prom
   }
 
   let orphans = 0;
+  // The listing is a Blob "advanced operation" (metered, capped on Hobby) and finds only files no
+  // email_sends row points at, so no table read can say it is worth doing. The caller runs it daily.
+  if (opts.listOrphans === false) return { settled, orphans };
   try {
     // One page a run; each run starts over. Fine at this volume.
     const page = await client.list({ prefix: `${ATTACHMENT_PREFIX}/`, limit: 1000 });

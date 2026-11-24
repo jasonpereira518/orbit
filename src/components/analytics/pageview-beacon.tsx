@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { useReportWebVitals } from "next/web-vitals";
 import { isInternalBrowser, isTrackedPath } from "@/lib/analytics-redact";
@@ -8,9 +8,9 @@ import { readNavStart, waitForContent } from "@/lib/nav-timing";
 import { PV_SESSION_KEY } from "@/lib/pageview-session";
 
 /**
- * Sends one page view per navigation, how long its content took to appear, the time spent
- * on it when the page goes away, and — for the document's first view only — its Core Web
- * Vitals (LCP, INP, CLS) from Next's built-in `useReportWebVitals`.
+ * Reports one page view per navigation — with how long its content took to appear, the time
+ * spent on it and, for the document's first view only, its Core Web Vitals (LCP, INP, CLS)
+ * from Next's built-in `useReportWebVitals` — as a single `sendBeacon` when the visitor leaves.
  *
  * Mounted in the ROOT layout, so it covers marketing, auth, checkout and the product with
  * one instance. It must never import anything that reaches `@/db` — a client component
@@ -115,30 +115,102 @@ function authFlowOf(path: string): string | null {
 const IDLE_MS = 60_000;
 const ACTIVITY_EVENTS = ["pointermove", "pointerdown", "keydown", "scroll", "wheel", "touchstart"] as const;
 
-function post(payload: Record<string, unknown>, viaBeacon: boolean): Promise<void> {
+/**
+ * One page view, from the moment it appears until the visitor is done with it.
+ *
+ * EVERYTHING ABOUT IT TRAVELS IN ONE REQUEST. The view's own fields, how long its content took
+ * to appear, its Core Web Vitals and the time spent on it all wait here until the visitor leaves
+ * (a route change, a tab switch, the page going away), then go out as a single beacon. They used
+ * to be a request each — three or four serverless invocations per view, each with its own auth
+ * and database write. `pending` holds the view's own fields until the first send; every later
+ * send is an `update` that patches the same row.
+ */
+type View = {
+  id: string;
+  /** The Clerk flow this view belongs to, if any, so its later steps carry on with it. */
+  flow: string | null;
+  /** When the clock last started, or 0 while it is stopped. `accumulated` is what is banked. */
+  since: number;
+  accumulated: number;
+  /** The view's insert, until a beacon carrying it has gone out. Null afterwards. */
+  pending: Record<string, unknown> | null;
+  load: { loadMs: number; navType: "hard" | "soft" } | null;
+  /** The largest of each metric seen; the server keeps the largest too. */
+  vitals: { lcpMs?: number; inpMs?: number; clsMilli?: number };
+  /** Load or vitals changed since the last send. */
+  dirty: boolean;
+  /** The dwell the last send carried, so an unchanged view sends nothing at all. */
+  sentDwell: number;
+  /** Left for good (route change). Anything arriving after that has to send itself. */
+  closed: boolean;
+};
+
+/** The last input, for the idle cut-off. */
+let lastActivity = 0;
+
+/** Bank the visible stretch and stop the clock. Idempotent. */
+function settle(view: View) {
+  if (view.since !== 0) {
+    // Never past the idle cut-off: time after the last input plus the grace is not reading.
+    const end = Math.min(Date.now(), lastActivity + IDLE_MS);
+    view.accumulated += Math.max(0, end - view.since);
+    view.since = 0;
+  }
+}
+
+/**
+ * Send a view's batch, unless nothing in it is new.
+ *
+ * SENDS THE RUNNING DWELL TOTAL, NOT A DELTA, and may fire several times for one view — once
+ * per tab-away, once more on the way out. That is deliberate: there is no event that reliably
+ * means "they are gone for good", so the only safe moment to report is every time they leave,
+ * and the server keeps the largest figure it has seen. A visitor who reads, switches away,
+ * comes back and reads more ends up with the sum of both stretches.
+ */
+function sendView(view: View) {
+  const dwellMs = view.accumulated;
+  if (!view.pending && !view.dirty && dwellMs <= view.sentDwell) return;
+  const payload = {
+    ...(view.pending ?? { kind: "update", id: view.id }),
+    ...view.load,
+    ...view.vitals,
+    ...(dwellMs > 0 ? { dwellMs } : {}),
+  };
+  view.pending = null;
+  view.dirty = false;
+  view.sentDwell = dwellMs;
+  post(payload);
+}
+
+/** A metric or load that lands once the visitor has already gone: nothing else will send it. */
+function sendIfAway(view: View) {
+  if (view.closed || document.visibilityState === "hidden") {
+    settle(view);
+    sendView(view);
+  }
+}
+
+function post(payload: Record<string, unknown>): void {
   try {
     const body = JSON.stringify(payload);
-    if (viaBeacon && typeof navigator.sendBeacon === "function") {
-      // A Blob rather than a bare string, so the request keeps its JSON content type —
-      // sendBeacon defaults to text/plain, which the route would not parse.
-      navigator.sendBeacon(
-        "/api/p/v",
-        new Blob([body], { type: "application/json" })
-      );
-      return Promise.resolve();
+    // A Blob rather than a bare string, so the request keeps its JSON content type —
+    // sendBeacon defaults to text/plain, which the route would not parse. It also queues
+    // past unload, which a fetch started on `pagehide` is not guaranteed to.
+    if (
+      typeof navigator.sendBeacon === "function" &&
+      navigator.sendBeacon("/api/p/v", new Blob([body], { type: "application/json" }))
+    ) {
+      return;
     }
-    return fetch("/api/p/v", {
+    // No sendBeacon, or its queue is full.
+    void fetch("/api/p/v", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
       keepalive: true,
-    }).then(
-      () => {},
-      () => {}
-    );
+    }).catch(() => {});
   } catch {
     // Blocked by an extension, offline, CSP. Nothing to do and nothing to report.
-    return Promise.resolve();
   }
 }
 
@@ -150,7 +222,7 @@ function post(payload: Record<string, unknown>, viaBeacon: boolean): Promise<voi
  * vitals for that later view.
  */
 let firstRouteSeen = false;
-let firstView: { id: string; sent: Promise<void> } | null = null;
+let firstView: View | null = null;
 
 type WebVitalsCallback = Parameters<typeof useReportWebVitals>[0];
 
@@ -166,88 +238,25 @@ const reportVital: WebVitalsCallback = (metric) => {
   // first document load's.
   const nav = (metric as { navigationType?: string }).navigationType;
   if (nav === "soft-navigation" || nav === "back-forward-cache") return;
-  const field =
-    metric.name === "LCP"
-      ? { lcpMs: Math.round(metric.value) }
-      : metric.name === "INP"
-        ? { inpMs: Math.round(metric.value) }
-        : metric.name === "CLS"
-          ? { clsMilli: Math.round(metric.value * 1000) }
-          : null;
-  if (!field) return;
-  // INP and CLS are final as the page hides, which is when `sendBeacon` is the only safe
-  // transport. The view's own insert has long landed by then; waiting on it covers an LCP
-  // reported before it has.
-  const viaBeacon = document.visibilityState === "hidden";
-  void view.sent.then(() => post({ kind: "vitals", id: view.id, ...field }, viaBeacon));
+  const value = metric.name === "CLS" ? Math.round(metric.value * 1000) : Math.round(metric.value);
+  const key = metric.name === "LCP" ? "lcpMs" : metric.name === "INP" ? "inpMs" : metric.name === "CLS" ? "clsMilli" : null;
+  if (!key) return;
+  if (value > (view.vitals[key] ?? -1)) {
+    view.vitals[key] = value;
+    view.dirty = true;
+  }
+  // INP and CLS are final as the page hides, which can be just after the visibility handler
+  // below has flushed — and a beacon is the only safe transport by then.
+  sendIfAway(view);
 };
 
 export function PageviewBeacon() {
   const pathname = usePathname();
   useReportWebVitals(reportVital);
-  /**
-   * The view currently on screen.
-   *
-   * `since` is when the clock last started, or 0 while it is stopped — a visitor who
-   * switches tabs stops accruing time, and starts again when they come back.
-   * `accumulated` is everything banked from earlier visible stretches.
-   */
-  const open = useRef<{
-    id: string;
-    since: number;
-    accumulated: number;
-    /** The view's own insert request; a dwell sent before it lands would update nothing. */
-    sent: Promise<void>;
-    flow: string | null;
-  } | null>(null);
+  /** The view currently on screen. */
+  const open = useRef<View | null>(null);
   /** The view just left, so a step within the same sign-in flow can carry on with it. */
-  const previous = useRef<{ id: string; accumulated: number; sent: Promise<void>; flow: string | null } | null>(null);
-  /** The last input, for the idle cut-off. */
-  const lastActivity = useRef(0);
-
-  // Both of these touch nothing but the ref, so an empty dependency list makes them
-  // genuinely stable for the life of the component — which is what lets the effects below
-  // list `flush` honestly instead of suppressing the lint rule that asks for it.
-  /** Bank the current visible stretch and stop the clock. Idempotent. */
-  const settle = useCallback(() => {
-    const current = open.current;
-    if (!current) return null;
-    if (current.since !== 0) {
-      // Never past the idle cut-off: time after the last input plus the grace is not reading.
-      const end = Math.min(Date.now(), lastActivity.current + IDLE_MS);
-      current.accumulated += Math.max(0, end - current.since);
-      current.since = 0;
-    }
-    return current;
-  }, []);
-
-  /**
-   * Report time on the current page.
-   *
-   * SENDS THE RUNNING TOTAL, NOT A DELTA, and may fire several times for one view — once
-   * per tab-away, once more on the way out. That is deliberate: there is no event that
-   * reliably means "they are gone for good", so the only safe moment to report is every
-   * time they leave, and the server keeps the largest figure it has seen. A visitor who
-   * reads, switches away, comes back and reads more ends up with the sum of both stretches
-   * instead of just the first, which is what the earlier one-shot version recorded.
-   */
-  const flush = useCallback(
-    (viaBeacon: boolean) => {
-      const current = settle();
-      if (!current || current.accumulated <= 0) return;
-      const payload = { kind: "dwell", id: current.id, dwellMs: current.accumulated };
-      if (viaBeacon) {
-        // The page may be going away: `sendBeacon` now, or never.
-        void post(payload, true);
-      } else {
-        // A route change, so the page is staying and there is time to wait. A short visit's
-        // dwell could otherwise overtake its own view's insert, update no row, and leave the
-        // view with no time at all — the same race the `load` beacon already waits out.
-        void current.sent.then(() => post(payload, false));
-      }
-    },
-    [settle]
-  );
+  const previous = useRef<View | null>(null);
 
   useEffect(() => {
     const isFirstRoute = !firstRouteSeen;
@@ -262,18 +271,26 @@ export function PageviewBeacon() {
     // restored session). Otherwise every second it sat unseen counted as reading, and the
     // `visibilitychange` handler would not reset it because the clock was already running.
     const hidden = document.visibilityState === "hidden";
-    lastActivity.current = now;
+    lastActivity = now;
+
+    // Leaving this route — either to another one, or out of the app entirely. This is the
+    // one departure that really is final for this view.
+    const leave = (view: View) => {
+      settle(view);
+      sendView(view);
+      view.closed = true;
+      previous.current = view;
+      open.current = null;
+    };
 
     // A later step of the sign-in or sign-up flow already on screen: keep timing that view.
     const flow = authFlowOf(pathname);
     const prior = previous.current;
     if (flow && prior && prior.flow === flow) {
-      open.current = { ...prior, since: hidden ? 0 : now };
-      return () => {
-        flush(false);
-        previous.current = open.current;
-        open.current = null;
-      };
+      prior.closed = false;
+      prior.since = hidden ? 0 : now;
+      open.current = prior;
+      return () => leave(prior);
     }
 
     const id = crypto.randomUUID();
@@ -284,8 +301,12 @@ export function PageviewBeacon() {
     // Null means this view is a document load rather than a client-side navigation.
     const navStart = readNavStart(pathname);
 
-    const viewSent = post(
-      {
+    const view: View = {
+      id,
+      flow,
+      since: hidden ? 0 : now,
+      accumulated: 0,
+      pending: {
         kind: "view",
         id,
         sessionId: sid,
@@ -294,52 +315,57 @@ export function PageviewBeacon() {
         // attribution cookie uses. The server decides the stored route, not the client.
         url: window.location.href,
         referrer,
+        // The view is sent when the visitor leaves it, so it says when it began: the server
+        // dates the row and picks the day's visitor salt from this, not from the send.
+        at: now,
         // "Don't count this browser", set from /admin/analytics.
         internal: isInternalBrowser(),
         automated: navigator.webdriver === true,
       },
-      false
-    );
-    open.current = { id, since: hidden ? 0 : now, accumulated: 0, sent: viewSent, flow };
-    if (isFirstRoute) firstView = { id, sent: viewSent };
+      load: null,
+      vitals: {},
+      dirty: false,
+      sentDwell: 0,
+      closed: false,
+    };
+    open.current = view;
+    if (isFirstRoute) firstView = view;
 
-    // Page-load timing (`src/lib/nav-timing.ts`). The `load` beacon waits for the view's
-    // own request to settle, because it UPDATEs the row that request inserts — sent first,
-    // it would match nothing and the measurement would be lost without a trace.
+    // Page-load timing (`src/lib/nav-timing.ts`), carried by the view's own beacon.
     const measuring = new AbortController();
-    void waitForContent(measuring.signal).then(async (readyAt) => {
+    void waitForContent(measuring.signal).then((readyAt) => {
       if (readyAt === null) return;
-      const navType = navStart === null ? "hard" : "soft";
-      const loadMs = readyAt - (navStart ?? 0);
-      await viewSent;
-      void post({ kind: "load", id, loadMs, navType }, false);
+      view.load = { loadMs: readyAt - (navStart ?? 0), navType: navStart === null ? "hard" : "soft" };
+      view.dirty = true;
+      sendIfAway(view);
     });
 
-    // Leaving this route — either to another one, or out of the app entirely. This is the
-    // one departure that really is final for this view, so the ref is cleared after it.
     return () => {
       measuring.abort();
-      flush(false);
-      previous.current = open.current;
-      open.current = null;
+      leave(view);
     };
-  }, [pathname, flush]);
+  }, [pathname]);
 
   useEffect(() => {
     // `pagehide` rather than `beforeunload`: it is the one that fires on iOS Safari and
     // when a page enters the back/forward cache. `visibilitychange` covers tab switches
     // and app backgrounding, which on mobile is how most sessions actually end.
-    const onHide = () => flush(true);
+    const flush = () => {
+      const view = open.current;
+      if (!view) return;
+      settle(view);
+      sendView(view);
+    };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") {
         // Report what we have so far, but keep the view open — they may come back, and
         // clearing it here is what used to make "time on page" mean "time until the first
         // tab switch".
-        flush(true);
+        flush();
       } else if (open.current && open.current.since === 0) {
         // Back on screen: restart the clock without losing what was already banked.
         const now = Date.now();
-        lastActivity.current = now;
+        lastActivity = now;
         open.current.since = now;
       }
     };
@@ -347,7 +373,7 @@ export function PageviewBeacon() {
     // pointermove: two property writes, no allocation.
     const onActivity = () => {
       const now = Date.now();
-      lastActivity.current = now;
+      lastActivity = now;
       const current = open.current;
       if (current && current.since === 0 && document.visibilityState === "visible") {
         current.since = now;
@@ -357,24 +383,24 @@ export function PageviewBeacon() {
     // the stretch at the last input plus the grace, so the check's own lateness adds nothing.
     const idleCheck = window.setInterval(() => {
       const current = open.current;
-      if (current && current.since !== 0 && Date.now() - lastActivity.current > IDLE_MS) {
-        settle();
+      if (current && current.since !== 0 && Date.now() - lastActivity > IDLE_MS) {
+        settle(current);
       }
     }, 15_000);
-    window.addEventListener("pagehide", onHide);
+    window.addEventListener("pagehide", flush);
     document.addEventListener("visibilitychange", onVisibility);
     for (const type of ACTIVITY_EVENTS) {
       window.addEventListener(type, onActivity, { passive: true, capture: true });
     }
     return () => {
       window.clearInterval(idleCheck);
-      window.removeEventListener("pagehide", onHide);
+      window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", onVisibility);
       for (const type of ACTIVITY_EVENTS) {
         window.removeEventListener(type, onActivity, { capture: true });
       }
     };
-  }, [flush, settle]);
+  }, []);
 
   return null;
 }

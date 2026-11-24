@@ -12,6 +12,7 @@ import {
 import type { RecruiterDraft } from "@/lib/recruiter-message-types";
 import { startGmailOAuth, type GmailSendIdentity } from "@/actions/gmail";
 import { Button } from "@/components/ui/button";
+import { CompanyChip } from "@/components/recruiters/company-chip";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -149,7 +150,7 @@ export function ComposeWorkspace({
                     <span className="min-w-0 flex-1 text-sm">
                       <span className="block font-medium">{r.fullName}</span>
                       <span className="block text-muted-foreground">
-                        {r.firm || "Unknown firm"} · {r.email}
+                        {r.firm ? <CompanyChip name={r.firm} size="sm" className="align-middle" /> : "Unknown firm"} · {r.email}
                       </span>
                       {!r.hasHistory && (
                         <span className="mt-0.5 block text-xs text-muted-foreground-subtle">

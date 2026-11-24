@@ -314,6 +314,21 @@ function asPayload(value: unknown): Record<string, unknown> {
   return (value ?? {}) as Record<string, unknown>;
 }
 
+/** Whether any row is claimable right now: the same predicate `drainOutbox` claims by. */
+export async function hasDueOutbox(): Promise<boolean> {
+  const db = await getDb();
+  return (
+    rowsOf(
+      await db.execute(sql`
+        SELECT 1 FROM connector_outbox
+         WHERE status = 'pending' AND next_attempt_at IS NOT NULL AND next_attempt_at <= now()
+           AND (claimed_until IS NULL OR claimed_until < now())
+         LIMIT 1
+      `)
+    ).length > 0
+  );
+}
+
 export async function drainOutbox(opts: {
   budgetMs: number;
   max: number;

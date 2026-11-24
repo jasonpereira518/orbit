@@ -7,7 +7,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { emailEvents, emailThreads, ignoredPeople, userSettings } from "@/db/schema";
+import { emailEvents, emailThreads, ignoredPeople, recruitingOverrides, userSettings } from "@/db/schema";
 import { deleteEmailEventChunks } from "./search-index";
 import { INBOX_IGNORED_CONTEXT, statusFor, type ExtractedEvent, type ThreadResult } from "./types";
 
@@ -112,11 +112,29 @@ export async function deleteInboxDismissals(userId: string): Promise<void> {
     .where(and(eq(ignoredPeople.userId, userId), eq(ignoredPeople.context, INBOX_IGNORED_CONTEXT)));
 }
 
+/**
+ * The Email insights switch, on. A fresh enable backfills from scratch and is due at once.
+ * Shared by the Settings switch and by connecting Gmail from the Recruiting page, so the two
+ * cannot drift; the caller has already checked the plan and the mail scope.
+ */
+export async function enableEmailIntel(userId: string): Promise<void> {
+  const db = await getDb();
+  await db
+    .insert(userSettings)
+    .values({ userId, emailIntelEnabled: 1 })
+    .onConflictDoUpdate({
+      target: userSettings.userId,
+      set: { emailIntelEnabled: 1, emailIntelCursorAt: null, emailIntelNextAt: null, updatedAt: new Date() },
+    });
+}
+
 /** Everything the feature recorded for one account, and the switch itself. */
 export async function deleteEmailIntelData(userId: string): Promise<void> {
   const db = await getDb();
   await db.delete(emailEvents).where(eq(emailEvents.userId, userId));
   await db.delete(emailThreads).where(eq(emailThreads.userId, userId));
+  // The Recruiting board's corrections are about those events: a company's name taken from mail.
+  await db.delete(recruitingOverrides).where(eq(recruitingOverrides.userId, userId));
   await deleteEmailEventChunks(userId);
   await deleteInboxDismissals(userId);
   await db

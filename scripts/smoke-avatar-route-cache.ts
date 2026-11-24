@@ -19,7 +19,7 @@ import { eq } from "drizzle-orm";
 import { GET } from "../src/app/api/avatars/[contactId]/route";
 import { getDb } from "../src/db";
 import { contacts } from "../src/db/schema";
-import { avatarRouteUrl, noPhotoMarker } from "../src/lib/contact-avatar-url";
+import { AVATAR_NO_VERSION, avatarRouteUrl, clientContactAvatarUrl, noPhotoMarker } from "../src/lib/contact-avatar-url";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -50,12 +50,12 @@ run(async () => {
     check("a stored photo gets a versioned URL", a.startsWith(`/api/avatars/${id}?v=`), a);
     check("a different photo gets a different URL", a !== b, `${a} vs ${b}`);
     check("the same photo always gets the same URL", a === avatarRouteUrl(id, ` ${PHOTO_A} `));
-    check("no photo: unversioned (on-demand resolution)", avatarRouteUrl(id, null) === `/api/avatars/${id}`);
-    check("a no-photo marker: unversioned", avatarRouteUrl(id, noPhotoMarker()) === `/api/avatars/${id}`);
-    check(
-      "an inline photo already routed: unversioned",
-      avatarRouteUrl(id, `/api/avatars/${id}`) === `/api/avatars/${id}`
-    );
+    const none = `/api/avatars/${id}?v=${AVATAR_NO_VERSION}`;
+    check("no photo (on-demand resolution): the no-version marker", avatarRouteUrl(id, null) === none);
+    check("a no-photo marker: the no-version marker", avatarRouteUrl(id, noPhotoMarker()) === none);
+    check("an inline photo already routed: the no-version marker", avatarRouteUrl(id, `/api/avatars/${id}`) === none);
+    check("an inline photo's own builder is versioned too", clientContactAvatarUrl(id, "data:image/png;base64,AAAA") === none);
+    check("and a route URL already carrying ?v= is kept", avatarRouteUrl(id, none) === none);
     check(
       "a caller's cache-busting query is kept",
       avatarRouteUrl(id, `/api/avatars/${id}?t=123`) === `/api/avatars/${id}?t=123`
@@ -84,6 +84,9 @@ run(async () => {
     const plain = await get(`/api/avatars/${mine!.id}`);
     check("an unversioned request still redirects", plain.headers.get("location") === PHOTO_A);
     check("but is not marked cacheable", plain.headers.get("cache-control") === null, String(plain.headers.get("cache-control")));
+    const noVersion = await get(avatarRouteUrl(mine!.id, null));
+    check("the no-version marker redirects too", noVersion.headers.get("location") === PHOTO_A);
+    check("and is not cacheable either (the photo can change under an unchanged URL)", noVersion.headers.get("cache-control") === null, String(noVersion.headers.get("cache-control")));
 
     // The invalidation path: the photo changes, the page's next read carries the new URL,
     // so the browser asks a URL it has never cached, and is sent to the new photo.
@@ -97,6 +100,7 @@ run(async () => {
     const foreign = await get(avatarRouteUrl(theirs!.id, PHOTO_A));
     check("another user's contact is a 404, versioned or not", foreign.status === 404, String(foreign.status));
     check("with no redirect", foreign.headers.get("location") === null);
+    check("the 404 is cacheable for hours, not one", /max-age=(\d+)/.exec(foreign.headers.get("cache-control") ?? "")?.[1] === "21600", String(foreign.headers.get("cache-control")));
   } finally {
     await db.delete(contacts).where(eq(contacts.id, mine!.id));
     await db.delete(contacts).where(eq(contacts.id, theirs!.id));

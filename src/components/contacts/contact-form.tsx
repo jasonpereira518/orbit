@@ -184,11 +184,17 @@ export function ContactForm({
     lastLookupUrl.current = trimmed;
     setLookingUp(true);
     try {
-      const profile = await lookupLinkedInProfile({
+      const result = await lookupLinkedInProfile({
         linkedinUrl: trimmed,
         fullName: form.fullName,
         email: form.email,
       });
+      if (!result.ok) {
+        lastLookupUrl.current = "";
+        toast.error(result.error);
+        return;
+      }
+      const profile = result.value;
       if (!profile) {
         toast.message("Couldn’t find a matching LinkedIn profile");
         return;

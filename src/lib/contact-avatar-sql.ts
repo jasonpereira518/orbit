@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { contacts } from "@/db/schema";
-import { NO_PHOTO_PREFIX } from "@/lib/contact-avatar-url";
+import { AVATAR_NO_VERSION, NO_PHOTO_PREFIX } from "@/lib/contact-avatar-url";
 
 /** A contact's LinkedIn URL must be on a linkedin.com host before it may show a shared photo. */
 export const LINKEDIN_HOST_RE = "^(https?://)?([a-z0-9-]+\\.)*linkedin\\.com/";
@@ -58,7 +58,7 @@ export const sharedAvatarUrlSql = sql<string | null>`(CASE WHEN ${contacts.profi
  */
 export const clientAvatarUrlSql = sql<string | null>`coalesce(${sharedAvatarUrlSql}, CASE
   WHEN ${contacts.profileImageUrl} IS NULL THEN NULL
-  WHEN substr(${contacts.profileImageUrl}, 1, 11) = 'data:image/' THEN '/api/avatars/' || ${contacts.id}
+  WHEN substr(${contacts.profileImageUrl}, 1, 11) = 'data:image/' THEN '/api/avatars/' || ${contacts.id} || ${"?v=" + AVATAR_NO_VERSION}
   WHEN btrim(${contacts.profileImageUrl}) = '' THEN NULL
   WHEN ${contacts.profileImageUrl} LIKE ${NO_PHOTO_PREFIX + "%"} THEN NULL
   WHEN ${contacts.profileImageUrl} LIKE '%unavatar.io%'
