@@ -42,7 +42,7 @@ import type {
 } from "@/lib/capture/types";
 import { actionFailure } from "@/lib/action-failure";
 import { parseInput } from "@/lib/action";
-import { discardCaptureJobSchema, queueCaptureJobSchema, recordCaptureChoicesSchema } from "@/lib/capture/job-input";
+import { discardCaptureJobSchema, queueCaptureJobSchema, recordCaptureChoicesSchema, recordCaptureDecisionsBulkSchema } from "@/lib/capture/job-input";
 import { hashSourceNote } from "@/lib/suggested-reminder-utils";
 import { assertEventOwnedBy } from "@/lib/events/store";
 
@@ -351,6 +351,13 @@ export async function recordCaptureDecisionsBulk(
 ): Promise<Ok | Fail> {
   try {
     const userId = await requireUserId();
+    const parsed = parseInput(
+      recordCaptureDecisionsBulkSchema,
+      { jobId, decisions },
+      "capture-jobs.record-capture-decisions-bulk"
+    );
+    if (!parsed.ok) return parsed;
+    ({ jobId, decisions } = parsed.value);
     const row = await recordCaptureDecisionsBulkRow(userId, jobId, decisions);
     if (!row) return { ok: false, error: "That capture is no longer open for review" };
     return { ok: true, job: toCaptureJobView(row) };
