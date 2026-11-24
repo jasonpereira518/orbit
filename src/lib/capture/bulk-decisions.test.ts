@@ -5,7 +5,7 @@ import { decisionFromDraft, draftFromItem } from "@/components/capture/review/pe
 import type { BulkNotePersonPreview } from "@/lib/capture/types";
 
 describe("capture bulk decisions & person deck helper", () => {
-  const mockItem: BulkNotePersonPreview = {
+  const mockItem = {
     key: "person-1",
     duplicates: [],
     parsed: {
@@ -18,7 +18,7 @@ describe("capture bulk decisions & person deck helper", () => {
       summary: "Discussed AI infrastructure and edge models.",
       takeaways: ["Discussed AI infrastructure", "Working on edge models"],
     },
-  };
+  } as unknown as BulkNotePersonPreview;
 
   it("draftFromItem initializes draft with parsed values", () => {
     const draft = draftFromItem(mockItem, undefined);
@@ -39,8 +39,8 @@ describe("capture bulk decisions & person deck helper", () => {
     assert.equal(decision.decision, "accept");
     assert.equal(decision.index, 0);
     assert.equal(decision.relationshipScore, 3);
-    assert.equal(decision.edits.name, "Jane Doe");
-    assert.equal(decision.edits.company, "Acme AI");
+    assert.equal(decision.edits?.name, "Jane Doe");
+    assert.equal(decision.edits?.company, "Acme AI");
   });
 
   it("bulk decisions can be constructed for all undecided cards", () => {
@@ -54,7 +54,7 @@ describe("capture bulk decisions & person deck helper", () => {
           company: "Beta Corp",
           role: "Product Manager",
         },
-      },
+      } as unknown as BulkNotePersonPreview,
     ];
 
     const bulkMap: Record<string, ReturnType<typeof decisionFromDraft>> = {};
@@ -65,9 +65,9 @@ describe("capture bulk decisions & person deck helper", () => {
     }
 
     assert.equal(Object.keys(bulkMap).length, 2);
-    assert.equal(bulkMap["person-1"].decision, "accept");
-    assert.equal(bulkMap["person-1"].edits.name, "Jane Doe");
-    assert.equal(bulkMap["person-2"].decision, "accept");
-    assert.equal(bulkMap["person-2"].edits.name, "John Smith");
+    assert.equal(bulkMap["person-1"]?.decision, "accept");
+    assert.equal(bulkMap["person-1"]?.edits?.name, "Jane Doe");
+    assert.equal(bulkMap["person-2"]?.decision, "accept");
+    assert.equal(bulkMap["person-2"]?.edits?.name, "John Smith");
   });
 });
