@@ -693,7 +693,7 @@ export function FindProspectsSearch({
                               className={cn(
                                 "shrink-0 rounded-full px-2 py-0.5 text-3xs font-semibold border",
                                 candidate.tier === "must_meet"
-                                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/25"
+                                  ? "bg-success/10 text-success border-success/25"
                                   : candidate.tier === "strong_fit"
                                   ? "bg-primary/10 text-primary border-primary/25"
                                   : "bg-muted/80 text-muted-foreground border-border/70"
@@ -723,13 +723,13 @@ export function FindProspectsSearch({
 
                   {/* Warm Intro Callout Banner (if mutual contact exists) */}
                   {candidate.introPath && (
-                    <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-2.5 flex items-center justify-between gap-2">
+                    <div className="rounded-xl border border-success/25 bg-success/5 p-2.5 flex items-center justify-between gap-2">
                       <div className="min-w-0 flex items-center gap-2 text-xs">
-                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-success/10 text-success">
                           <UserCheck className="h-3.5 w-3.5" />
                         </span>
                         <div className="truncate">
-                          <span className="font-medium text-emerald-950 dark:text-emerald-200 block truncate text-xs">
+                          <span className="font-medium text-foreground block truncate text-xs">
                             Warm intro via {candidate.introPath.introducerName}
                           </span>
                           <span className="text-2xs text-muted-foreground block truncate">
@@ -745,7 +745,7 @@ export function FindProspectsSearch({
                           setIntroCandidate(candidate);
                           setIntroDialogOpen(true);
                         }}
-                        className="h-7 text-xs border-emerald-500/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 shrink-0 rounded-lg px-2.5"
+                        className="h-7 text-xs border-success/30 text-success hover:bg-success/10 shrink-0 rounded-lg px-2.5"
                       >
                         Request Intro
                       </Button>
@@ -763,7 +763,7 @@ export function FindProspectsSearch({
                         {candidate.matchReason}
                       </span>
                       {Boolean(candidate.matchedProjects && candidate.matchedProjects.length > 0) && (
-                        <span className="rounded-full border border-purple-500/25 bg-purple-500/10 px-2 py-0.5 text-3xs font-medium text-purple-700 dark:text-purple-300 inline-flex items-center gap-1">
+                        <span className="rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-3xs font-medium text-primary inline-flex items-center gap-1">
                           <Sparkles className="h-2.5 w-2.5 shrink-0" />
                           <span className="truncate">
                             Project: {candidate.matchedProjects![0].projectTitle}
@@ -771,7 +771,7 @@ export function FindProspectsSearch({
                         </span>
                       )}
                       {Boolean(candidate.eventOverlap && candidate.eventOverlap.coAttendedCount > 0) && (
-                        <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-3xs font-medium text-amber-700 dark:text-amber-300 inline-flex items-center gap-1">
+                        <span className="rounded-full border border-warning/25 bg-warning/10 px-2 py-0.5 text-3xs font-medium text-warning inline-flex items-center gap-1">
                           <span className="truncate">
                             {candidate.eventOverlap!.coAttendedCount} shared event
                             {candidate.eventOverlap!.coAttendedCount > 1 ? "s" : ""}
@@ -794,7 +794,7 @@ export function FindProspectsSearch({
                           </span>
                         ))}
                       {candidate.recentNews && (
-                        <span className="rounded-full border border-emerald-500/20 bg-emerald-500/5 px-2.5 py-0.5 text-3xs font-medium text-emerald-600 dark:text-emerald-400 truncate max-w-full inline-flex items-center gap-1">
+                        <span className="rounded-full border border-success/20 bg-success/5 px-2.5 py-0.5 text-3xs font-medium text-success truncate max-w-full inline-flex items-center gap-1">
                           <TrendingUp className="h-2.5 w-2.5 shrink-0" />
                           <span className="truncate">{candidate.recentNews}</span>
                         </span>

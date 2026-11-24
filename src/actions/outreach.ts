@@ -49,6 +49,8 @@ import { searchPeopleWithBrightData, getBrightDataConfig, type PeopleSearchCrite
 import { getOutreachFlowSuggestions } from "@/lib/outreach-suggestions";
 import { runCampaignDeepSearch } from "@/lib/campaign-deep-search";
 import { generateLinkedInBrowserUsePrompt, type LinkedInBrowserTarget } from "@/lib/browser-use";
+import { z } from "zod";
+import { parseInput } from "@/lib/action";
 import { gmailProvider } from "@/lib/email/providers/gmail";
 import { outlookProvider } from "@/lib/email/providers/outlook";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
@@ -1777,12 +1779,39 @@ export async function searchPeopleWithBrightDataAction(criteria: PeopleSearchCri
   return searchPeopleWithBrightData(userId, criteria);
 }
 
+/** The browser sends these; nothing else is read. `filterProjectId` is a user_projects id. */
+const discoveryOptionsSchema = z
+  .object({
+    limit: z.number().int().min(1).max(100).optional(),
+    filterProjectId: z.string().uuid().optional(),
+    requireMutual: z.boolean().optional(),
+    onlyEvents: z.boolean().optional(),
+    fresh: z.boolean().optional(),
+    includeExternal: z.boolean().optional(),
+  })
+  .strict();
+
+/** Names and context that end up in a drafted email: plain strings, capped. */
+const introDraftParamsSchema = z
+  .object({
+    introducerFirstName: z.string().trim().min(1).max(100),
+    candidateFullName: z.string().trim().min(1).max(200),
+    candidateTitle: z.string().max(200).nullish(),
+    candidateCompany: z.string().max(200).nullish(),
+    relationshipContext: z.string().trim().min(1).max(500),
+    projectTitle: z.string().max(200).nullish(),
+    sharedTopic: z.string().max(200).nullish(),
+  })
+  .strict();
+
 /**
  * Runs the advanced multi-factor people discovery engine
  */
 export async function discoverPeopleAdvancedAction(options: DiscoveryOptions = {}) {
   const userId = await requireOutreachUser();
-  return discoverPeopleAdvanced(userId, options);
+  const parsed = parseInput(discoveryOptionsSchema, options, "outreach.discover-people-advanced");
+  if (!parsed.ok) throw new UserFacingError(parsed.error);
+  return discoverPeopleAdvanced(userId, parsed.value);
 }
 
 /**
@@ -1790,7 +1819,9 @@ export async function discoverPeopleAdvancedAction(options: DiscoveryOptions = {
  */
 export async function generateIntroDraftAction(params: IntroDraftParams) {
   await requireOutreachUser();
-  return generateIntroRequestDraft(params);
+  const parsed = parseInput(introDraftParamsSchema, params, "outreach.generate-intro-draft");
+  if (!parsed.ok) throw new UserFacingError(parsed.error);
+  return generateIntroRequestDraft(parsed.value);
 }
 
 /**
