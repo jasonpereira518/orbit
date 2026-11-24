@@ -59,7 +59,7 @@ export function RecruitingSetup({
   return (
     <div className="space-y-3 rounded-2xl border border-border/70 bg-card p-5">
       <div>
-        <h2 className="font-[family-name:var(--font-display)] text-lg text-ink">Let your inbox fill this in</h2>
+        <h2 className="font-heading text-lg text-ink">Let your inbox fill this in</h2>
         <p className="mt-1 max-w-prose text-sm text-muted-foreground">
           Applications, recruiter emails and interviews become a card per company, and Orbit keeps each one current on
           its own.
