@@ -38,6 +38,7 @@ import { DISCOVER_SYSTEM, toDiscoveryResult } from "@/lib/web-research";
 import { backgroundSearchRoom } from "@/lib/web-search-budget";
 import type { RadarEvidence } from "@/lib/radar/types";
 import { personTitle } from "@/lib/radar/person-title";
+import { loadContactNetworkNodes, scoreMutualIntroPath } from "@/lib/discovery";
 
 export type RadarWebKind = "event" | "person" | "program";
 
@@ -180,14 +181,40 @@ async function findPeople(userId: string, city: string | null, goals: string[], 
     .candidates.filter((c) => c.company && cited.has(safeHttpUrl(c.url) ?? ""))
     .slice(0, MAX_PER_KIND);
   if (candidates.length === 0) return [];
-  // Only people someone the account knows can introduce: someone at (or from) their organisation.
+  // Only people someone the account knows can introduce: someone at (or from) their organisation,
+  // or a mutual connection from shared workplace tenure or events.
   const paths = await findWarmPaths(userId, orgKeysFor(candidates.map((c) => c.company)), 1);
+  const contactNodes = await loadContactNetworkNodes(userId).catch(() => []);
   const out: NewOpportunity[] = [];
   for (const c of candidates) {
     const [key] = orgKeysFor([c.company]);
     const introducer = key ? paths.get(key)?.[0] : undefined;
+    let introLabel = introducer ? `${introducer.fullName} ${introducer.reasonLabel}` : null;
+    let introducerContactId = introducer?.contactId;
+
+    if (!introducer && contactNodes.length > 0) {
+      const mutualRes = scoreMutualIntroPath(
+        {
+          id: `radar-cand-${c.fullName}`,
+          fullName: c.fullName,
+          company: c.company,
+          title: c.title,
+          linkedinUrl: c.url,
+          source: "web_research",
+        },
+        contactNodes
+      );
+      if (mutualRes.bestIntroPath) {
+        introducerContactId = mutualRes.bestIntroPath.introducerContactId;
+        introLabel = `${mutualRes.bestIntroPath.introducerName} ${mutualRes.bestIntroPath.relationshipContext}`;
+      }
+    }
+
     // No introducer, or the "new" person is someone they already know.
-    if (!introducer || introducer.fullName.toLowerCase() === c.fullName.toLowerCase()) continue;
+    if (!introducerContactId || !introLabel) continue;
+    const introducerName = introducer?.fullName || introLabel.split(" ")[0];
+    if (introducerName.toLowerCase() === c.fullName.toLowerCase()) continue;
+
     const url = safeHttpUrl(c.url)!;
     out.push({
       userId,
@@ -196,15 +223,15 @@ async function findPeople(userId: string, city: string | null, goals: string[], 
       url,
       why: c.whyMatches,
       expiresAt: new Date(now.getTime() + PERSON_OFFER_DAYS * DAY_MS),
-      relatedContactIds: [introducer.contactId],
+      relatedContactIds: [introducerContactId],
       evidence: [
         proofOf(url, "Their page", "person_to_meet"),
         {
-          label: `${introducer.fullName} ${introducer.reasonLabel}`,
+          label: introLabel,
           at: null,
           code: "person_to_meet",
-          aboutContactId: introducer.contactId,
-          proof: { type: "record", table: "contacts", id: introducer.contactId },
+          aboutContactId: introducerContactId,
+          proof: { type: "record", table: "contacts", id: introducerContactId },
         },
       ],
       dedupeKey: `person:${url}`,
