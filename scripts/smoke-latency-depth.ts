@@ -1,5 +1,4 @@
 /**
-// ci: retrigger Actions on tip
  * Sequential round trips on the hot read paths (LATENCY_PLAN.md §4, "depth assertions").
  *
  * On neon-http every statement is its own HTTPS round trip, so a page's server time is
