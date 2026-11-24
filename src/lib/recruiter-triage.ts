@@ -4,6 +4,7 @@ import {
   EXCLUDED_JOB_BOARD_DOMAINS,
   type GmailHeaderSummary,
 } from "@/lib/gmail";
+import { firmFromEmail, parseFromHeader } from "@/lib/recruiter-detect";
 import type { RecruiterStage } from "@/lib/recruiter-stages";
 
 /**
@@ -81,9 +82,7 @@ export function classifySenderKind(
   }
   if (isBulkMail(header)) return "bulk";
 
-  if (ATS_SENDER_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) {
-    return "ats";
-  }
+  if (isAtsVendorDomain(domain)) return "ats";
 
   const local = localPartOf(header.from);
   if (AUTOMATED_LOCAL_PARTS.test(local)) return "ats";
@@ -245,11 +244,12 @@ export function triageThread(signals: ThreadSignals): TriageOutcome {
     score += 2;
     reasons.push("outcome language");
   }
-  if (userReplied) {
+  if (userReplied && inbound.length > 0) {
     // Enough on its own. By this point the correspondent is a person (bulk and ATS are
     // already gone) and the thread matched the recruiter query, so a two-way exchange is both
     // the highest-value case and a rare one — the precision bias is meant to suppress
-    // borderline broadcasts, not conversations the user actually took part in.
+    // borderline broadcasts, not conversations the user actually took part in. A cold email
+    // nobody answered is not an exchange: every sent-arm hit would otherwise reach the model.
     score += TRIAGE_ACCEPT;
     reasons.push("you replied");
   }
@@ -262,4 +262,135 @@ export function triageThread(signals: ThreadSignals): TriageOutcome {
         : "rejected";
 
   return { kind, score, decision, reasons };
+}
+
+// --- Companies from automated mail ----------------------------------------------------------
+
+export function isAtsVendorDomain(domain: string): boolean {
+  return ATS_SENDER_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`));
+}
+
+/**
+ * An application that is not for a job. The gate on reading a stage by rule from a sender
+ * that is not an ATS vendor: "Your application has been received" from a bank's no-reply is a
+ * credit card, from a landlord an apartment, from a university a place.
+ *
+ * A deny-list rather than a list of job words: "Thank you for applying to Stripe" from
+ * `no-reply@stripe.com` carries no job word at all, and a wrong card costs the user one click
+ * ("Not a job") where a dropped real stage is invisible. Callers pass the From line too.
+ */
+const NON_JOB_APPLICATION_RE =
+  /\b(credit\s*card|debit\s*card|\bcard\b|loan|mortgage|apartment|lease|rental|insurance|membership|passport|admissions?|financ(e|ing))\b/i;
+
+export function isNonJobApplication(text: string): boolean {
+  return NON_JOB_APPLICATION_RE.test(text);
+}
+
+/** What a display name wraps around the company: "Stripe Recruiting", "AMD Careers". */
+const GENERIC_NAME_WORDS_RE =
+  /\b(recruiting|recruitment|recruiters?|careers?|talent(\s+acquisition)?|hiring(\s+team)?|jobs?|team|no-?reply|notifications?|campus|university|early\s+careers?|people|hr|candidates?|applications?)\b/gi;
+
+const VENDOR_NAMES_RE =
+  /^(greenhouse|lever|workday|myworkday|icims|ashby|ashbyhq|jobvite|smartrecruiters|workable|bamboohr|taleo|oracle|pymetrics|hackerrank|hirevue|codesignal)$/i;
+
+/** Words that end a company name in running text — a job title or filler follows it. */
+const STOP_WORDS_RE =
+  /^(engineer(ing)?|intern(ship)?s?|developer|analyst|manager|associate|scientist|designer|software|product|data|summer|fall|spring|winter|position|role|program|graduate|grad|co-?op|full|part|your|the|this|our|we|you|thank|thanks|hi|dear|update|congratulations|application|next|steps?|team|and|for|is|has)$/i;
+
+/** Workday, iCIMS and Taleo put the tenant in the local part: `mastercard@myworkday.com`. */
+const TENANT_LOCAL_PART_DOMAINS = ["myworkday.com", "icims.com", "taleo.net"];
+
+/** A capitalized run of up to five words — the shape of a company name in a sentence. */
+const NAME = String.raw`([A-Z0-9][\w&'’.-]*(?:\s+[A-Z0-9][\w&'’.-]*){0,4})`;
+
+/**
+ * No "Company - …" pattern on purpose: ATS subjects routinely open with the CANDIDATE's name
+ * ("Jason - Update from Abridge"), and that rule filed a company called Jason.
+ */
+const PHRASE_PATTERNS = [
+  new RegExp(String.raw`(?:[Aa]pplying|[Aa]pplied|[Aa]pplication|[Cc]andidacy|[Ii]nterest)\s+(?:to|with|at)\s+(?:the\s+)?${NAME}`),
+  new RegExp(String.raw`\b(?:position|role|internship|opportunity|job|team)\s+at\s+${NAME}`),
+  new RegExp(String.raw`\b(?:[Uu]pdate|[Mm]essage|[Nn]ote|[Nn]ews|[Ff]eedback)\s+from\s+${NAME}`),
+  new RegExp(String.raw`\b[Yy]our\s+${NAME}\s+application\b`),
+  new RegExp(String.raw`${NAME}\s+has\s+invited\s+you`),
+];
+/** A subject that ends "… at Plaid" names the company; mid-sentence "at" in a body does not. */
+const SUBJECT_PATTERNS = [...PHRASE_PATTERNS, new RegExp(String.raw`\bat\s+${NAME}\s*[!.]?\s*$`)];
+const BODY_PATTERNS = PHRASE_PATTERNS;
+
+/** Short names read as acronyms: "amd" is AMD, "mastercard" is Mastercard. */
+function fromToken(token: string): string {
+  return token.length <= 4 ? token.toUpperCase() : token.charAt(0).toUpperCase() + token.slice(1);
+}
+
+/** Cuts a capture at the first word that cannot be part of a company name. */
+function cleanCapture(raw: string): string | null {
+  const words: string[] = [];
+  for (const word of raw.trim().split(/\s+/)) {
+    const bare = word.replace(/[!.,;:'’]+$/, "");
+    if (!bare || STOP_WORDS_RE.test(bare)) break;
+    words.push(bare);
+    // "…application to Ramp. Unfortunately" — punctuation ends the name with the sentence.
+    if (bare !== word) break;
+  }
+  const name = words.join(" ").trim();
+  if (!name || name.length > 60 || VENDOR_NAMES_RE.test(name)) return null;
+  return name;
+}
+
+function firstMatch(text: string, patterns: RegExp[]): string | null {
+  for (const pattern of patterns) {
+    const m = text.match(pattern);
+    const name = m?.[1] ? cleanCapture(m[1]) : null;
+    if (name) return name;
+  }
+  return null;
+}
+
+/**
+ * "Stripe Recruiting" → Stripe, "Plaid via Lever" → Plaid. Trusted only when it carried a
+ * generic word or is a single token: "Jane Smith" sending through Greenhouse is a person,
+ * and a person is not a company.
+ */
+function companyFromDisplayName(from: string): string | null {
+  const display = from.match(/^\s*"?([^"<]+?)"?\s*</)?.[1]?.split(/\s+via\s+/i)[0]?.trim();
+  if (!display || display.includes("@")) return null;
+  const stripped = display.replace(GENERIC_NAME_WORDS_RE, " ").replace(/[-–—|,:]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!stripped || VENDOR_NAMES_RE.test(stripped)) return null;
+  const hadGenericWord = stripped !== display.replace(/\s+/g, " ").trim();
+  if (!hadGenericWord && stripped.split(" ").length > 1) return null;
+  return stripped.length <= 60 ? stripped : null;
+}
+
+/**
+ * The hiring company an automated email is about, by rule, or null to say "ask the model".
+ *
+ * Never the sender's domain when that domain is an ATS vendor's — every Workday tenant mails
+ * from `myworkday.com`, which is how one board once filed Mastercard and AMD under "Myworkday".
+ * First match wins, most explicit first.
+ */
+export function atsCompanyOf(mail: { from: string; subject: string; text: string }): string | null {
+  const parsed = parseFromHeader(mail.from);
+  const domain = parsed?.email.split("@")[1] ?? "";
+  const local = parsed?.email.split("@")[0] ?? "";
+
+  const fromSubject = firstMatch(mail.subject, SUBJECT_PATTERNS);
+  if (fromSubject) return fromSubject;
+
+  if (TENANT_LOCAL_PART_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) {
+    const token = local.toLowerCase().replace(/[^a-z]/g, "");
+    if (token.length >= 2 && !AUTOMATED_LOCAL_PARTS.test(local) && !ROLE_LOCAL_PARTS.test(local) && !VENDOR_NAMES_RE.test(token)) {
+      return fromToken(token);
+    }
+  }
+
+  const fromName = companyFromDisplayName(mail.from);
+  if (fromName) return fromName;
+
+  const fromBody = firstMatch(mail.text, BODY_PATTERNS);
+  if (fromBody) return fromBody;
+
+  // A role address on the company's own domain: careers@stripe.com.
+  if (domain && !isAtsVendorDomain(domain)) return firmFromEmail(parsed!.email);
+  return null;
 }

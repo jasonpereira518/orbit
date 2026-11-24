@@ -55,7 +55,7 @@ export function IntroRequestDialog({
       toast.success("Intro request email copied to clipboard!");
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      toast.error("Failed to copy email");
+      toast.error("Couldn’t copy that email");
     }
   }
 

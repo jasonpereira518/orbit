@@ -623,6 +623,9 @@ export const RECRUITER_SENT_QUERY_TERMS =
  */
 export const ATS_SENDER_DOMAINS = [
   "greenhouse.io",
+  // Greenhouse's and Workable's candidate mail goes out from these rather than the brand domain.
+  "greenhouse-mail.io",
+  "workablemail.com",
   "lever.co",
   "myworkday.com",
   "icims.com",
