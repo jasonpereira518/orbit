@@ -13,11 +13,10 @@
  * `requireUserId()` wrapper around it.
  */
 
-import { and, eq, inArray, not, or, sql } from "drizzle-orm";
+import { and, eq, inArray, not, sql } from "drizzle-orm";
 import { nonPersonContactSql } from "@/lib/non-person-participant";
 import { getDb, rowsOf } from "@/db";
 import { contactTags, contacts, tags } from "@/db/schema";
-import { rankContacts } from "@/lib/contact-ranking";
 import { contactSearchCondition, nameMatchTierSql } from "@/lib/contact-search-rank";
 import { importIdsFrom } from "@/lib/imports/import-ids";
 import {
@@ -30,7 +29,7 @@ import {
 import { contactsListSelection } from "@/lib/contact-avatar-sql";
 import { openNameGuess } from "@/lib/contact-name-guess";
 import { trackSearchPerformed } from "@/lib/search-events";
-import { schoolCondition, type RankedContact } from "@/lib/hybrid-search";
+import { schoolCondition } from "@/lib/hybrid-search";
 import { listSchools } from "@/lib/events/target-companies";
 import {
   CONTACTS_PAGE_SIZE,
@@ -69,26 +68,12 @@ export async function listContactsPage(
   const conditions = [eq(contacts.userId, userId), not(nonPersonContactSql())];
 
   const q = filters?.q?.trim();
-  // Reused below by `contactsOrderBy` (relevance ranking) and by the match-reason map — one
-  // hybrid-search call serves widening, ranking, and explaining, instead of asking thrice.
-  let semanticIds: string[] = [];
-  let matchReasons = new Map<string, string>();
+  // Lexical only on this page. Hybrid `rankContacts` (FTS + trigram + experience + semantic)
+  // used to await before every 3+ char search and dominated settle time at 10k (~300–400 ms
+  // server). Meaning-only matches stay on ⌘K / chat; the list uses `contactSearchCondition`
+  // and `nameMatchTierSql` for order (LATENCY_PLAN #14 / DB-6).
   if (q) {
-    // Short queries are prefix lookups ("mar" -> Marcus) that `contactSearchCondition` alone
-    // already serves well; below this length a semantic round trip only adds latency.
-    // At 3+ chars, OR in contacts whose title/company/experience is a semantic match
-    // even when no literal keyword overlaps ("Full-time SWE at Google" finding someone
-    // whose stored role is "Software Engineer" at Google, full time). Request the max
-    // hybridSearchContacts will give (80) rather than its default 12, since this list
-    // also drives relevance ordering, not just widening the match.
-    const ranked = q.length >= 3 ? await rankContacts(userId, q, 80) : [];
-    semanticIds = ranked.map((r) => r.id);
-    matchReasons = matchReasonsFor(ranked);
-    conditions.push(
-      semanticIds.length
-        ? or(contactSearchCondition(q, userId), inArray(contacts.id, semanticIds))!
-        : contactSearchCondition(q, userId)
-    );
+    conditions.push(contactSearchCondition(q, userId));
   }
   // Name matches first in every sort while searching; see `contacts-page-cursor.ts`.
   const tier = q ? nameMatchTierSql(q) : null;
@@ -168,9 +153,11 @@ export async function listContactsPage(
 
   if (cursor) conditions.push(contactsCursorCondition(cursor, tier));
 
-  // The total needs only the conditions, so it runs beside the page rather than after it:
-  // one round trip less on every first page and every search (LATENCY_PLAN DB-15).
-  const totalP = cursor ? Promise.resolve(null) : countContacts(and(...conditions));
+  // Skip `count(*)` on search (and on cursor pages): it repeats the same lexical predicate
+  // and was a large slice of settle time (LATENCY_PLAN DB-15). Unfiltered first pages still
+  // get an exact total for the subtitle.
+  const totalP =
+    cursor || q ? Promise.resolve(null) : countContacts(and(...conditions));
   // Still awaited below; this only keeps a failed count from going unhandled when the page
   // query throws first.
   totalP.catch(() => {});
@@ -178,7 +165,7 @@ export async function listContactsPage(
     .select({ ...contactsListSelection, nameTier: tier ?? sql<number>`2` })
     .from(contacts)
     .where(and(...conditions))
-    .orderBy(...contactsOrderBy(sort, tier, semanticIds))
+    .orderBy(...contactsOrderBy(sort, tier))
     // One extra row answers "is there more" without a second count.
     .limit(limit + 1);
 
@@ -196,7 +183,7 @@ export async function listContactsPage(
 
   // The first page of a search is the search; "load more" (a cursor) is not another one.
   if (q && !cursor) {
-    trackSearchPerformed({ userId, surface: "contacts_page", query: q, resultCount: total ?? page.length });
+    trackSearchPerformed({ userId, surface: "contacts_page", query: q, resultCount: page.length });
   }
 
   return {
@@ -223,31 +210,12 @@ export async function listContactsPage(
       lastInteractionAt: row.lastInteractionAt,
       source: row.source ?? null,
       tags: tagsByContact.get(row.id) ?? [],
-      matchReason: matchReasons.get(row.id) ?? null,
+      matchReason: null,
       fromImport: addedHere.has(row.id),
     })),
     nextCursor: hasMore ? encodeContactsCursor(contactsCursorFor(sort, page[page.length - 1], Boolean(tier))) : null,
     total,
   };
-}
-
-/**
- * Why a contact showed up, for the ones where that isn't obvious from the row itself.
- *
- * A contact only gets a reason when it matched via the `experience` or `semantic` arm and
- * *neither* `fts` nor `trigram` — i.e. only when nothing already visible on the row (name,
- * company, title) would explain the match. A contact whose company field literally says
- * "Google" doesn't need a label telling the user it matched "Google"; one who matches only
- * because a past role or an unrelated-looking bio was semantically similar does.
- */
-function matchReasonsFor(ranked: RankedContact[]): Map<string, string> {
-  const reasons = new Map<string, string>();
-  for (const r of ranked) {
-    if (r.matchedArms.includes("fts") || r.matchedArms.includes("trigram")) continue;
-    if (r.matchedArms.includes("experience")) reasons.set(r.id, "Matched via work history");
-    else if (r.matchedArms.includes("semantic")) reasons.set(r.id, "Matched by meaning");
-  }
-  return reasons;
 }
 
 /**

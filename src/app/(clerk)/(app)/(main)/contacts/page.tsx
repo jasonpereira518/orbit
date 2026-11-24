@@ -59,6 +59,7 @@ export default async function ContactsPage({
   const explicitSort = isContactSort(params.sort) ? params.sort : undefined;
   const sort: ContactSort = explicitSort ?? (params.q?.trim() ? "relevance" : "name");
   const quiet = parseQuietDays(params.quiet);
+  const searching = Boolean(params.q?.trim());
 
   const filters = {
     q: params.q,
@@ -83,15 +84,13 @@ export default async function ContactsPage({
       quiet !== null
   );
 
-  // Start the list query immediately, but do not hold the filter chrome behind it. Letters /
-  // plan / schools are cheap and stable across keystrokes; awaiting them alone lets the
-  // search pill stay painted while the list streams (search settle was server-bound at 10k).
+  // Kick the list query first and never await letters / plan / schools in this function —
+  // they used to serialize ahead of every `?q=` navigation under a contended DB. Suspense
+  // below lets the list race them.
   const pagePromise = listContactsPage({ ...filters, limit: CONTACTS_PAGE_SIZE });
-  const [letters, planOverview, schoolOptions] = await Promise.all([
-    listContactLetters(),
-    getPlanOverview(),
-    listContactSchoolOptions(),
-  ]);
+  const lettersPromise = listContactLetters();
+  const planPromise = getPlanOverview();
+  const schoolsPromise = listContactSchoolOptions();
 
   const listKey = [
     params.q,
@@ -105,13 +104,30 @@ export default async function ContactsPage({
     params.importId,
   ].join("|");
 
+  const filterProps = {
+    initialQ: params.q || "",
+    initialCompany: params.company || "",
+    initialMinScore: params.minScore || "",
+    initialFollowUp: params.followUp || "",
+    initialSort: sort,
+    initialQuiet: quiet === null ? "" : String(quiet),
+    initialTag: params.tag || "",
+    initialSchool: params.school || "",
+    initialLetter: params.letter || "",
+    importId: params.importId,
+  };
+
   return (
     <PeopleListShell
       active="contacts"
       title="Contacts"
       subtitle={
-        <Suspense fallback="Your network">
-          <ContactsSubtitle pagePromise={pagePromise} filtersActive={filtersActive} />
+        <Suspense fallback={searching ? "Showing matches" : "Your network"}>
+          <ContactsSubtitle
+            pagePromise={pagePromise}
+            filtersActive={filtersActive}
+            searching={searching}
+          />
         </Suspense>
       }
       actions={
@@ -137,52 +153,110 @@ export default async function ContactsPage({
     >
       <RenderStamp />
       <div className="space-y-6">
-        <ContactQuotaNotice
-          used={planOverview.usage.used}
-          limit={planOverview.usage.limit}
-        />
-        <ContactsFilters
-          initialQ={params.q || ""}
-          initialCompany={params.company || ""}
-          initialMinScore={params.minScore || ""}
-          initialFollowUp={params.followUp || ""}
-          initialSort={sort}
-          initialQuiet={quiet === null ? "" : String(quiet)}
-          initialTag={params.tag || ""}
-          initialSchool={params.school || ""}
-          schoolOptions={schoolOptions}
-          initialLetter={params.letter || ""}
-          importId={params.importId}
+        <Suspense fallback={null}>
+          <QuotaNotice planPromise={planPromise} />
+        </Suspense>
+        <Suspense
+          fallback={
+            <ContactsFilters {...filterProps} schoolOptions={{ mine: [], network: [] }}>
+              <ContactsListRowsSkeleton />
+            </ContactsFilters>
+          }
         >
-          {/*
-            Keyed on the filters so a new query starts from a clean list rather than appending
-            onto the previous one's pages. Note this is the *filter* identity, not the contact
-            data — the list used to be keyed on the latter, which meant every keystroke tore
-            down and rebuilt the whole subtree.
-          */}
-          <Suspense key={listKey} fallback={<ContactsListRowsSkeleton />}>
-            <ContactsListBody
-              pagePromise={pagePromise}
-              filters={filters}
-              letters={letters}
-              activeLetter={params.letter ?? null}
-            />
-          </Suspense>
-        </ContactsFilters>
+          <FiltersWithChrome
+            filterProps={filterProps}
+            filters={filters}
+            schoolsPromise={schoolsPromise}
+            lettersPromise={lettersPromise}
+            pagePromise={pagePromise}
+            listKey={listKey}
+            activeLetter={params.letter ?? null}
+          />
+        </Suspense>
       </div>
     </PeopleListShell>
+  );
+}
+
+async function QuotaNotice({
+  planPromise,
+}: {
+  planPromise: ReturnType<typeof getPlanOverview>;
+}) {
+  const planOverview = await planPromise;
+  return (
+    <ContactQuotaNotice
+      used={planOverview.usage.used}
+      limit={planOverview.usage.limit}
+    />
+  );
+}
+
+async function FiltersWithChrome({
+  filterProps,
+  filters,
+  schoolsPromise,
+  lettersPromise,
+  pagePromise,
+  listKey,
+  activeLetter,
+}: {
+  filterProps: {
+    initialQ: string;
+    initialCompany: string;
+    initialMinScore: string;
+    initialFollowUp: string;
+    initialSort: ContactSort;
+    initialQuiet: string;
+    initialTag: string;
+    initialSchool: string;
+    initialLetter: string;
+    importId?: string;
+  };
+  filters: ContactsListFilters;
+  schoolsPromise: ReturnType<typeof listContactSchoolOptions>;
+  lettersPromise: ReturnType<typeof listContactLetters>;
+  pagePromise: Promise<PageResult>;
+  listKey: string;
+  activeLetter: string | null;
+}) {
+  // Schools (and letters for the A–Z rail) are independent of the list query; awaiting them
+  // here only gates the filter chrome, while `pagePromise` keeps running for the inner Suspense.
+  const [schoolOptions, letters] = await Promise.all([schoolsPromise, lettersPromise]);
+  return (
+    <ContactsFilters {...filterProps} schoolOptions={schoolOptions}>
+      {/*
+        Keyed on the filters so a new query starts from a clean list rather than appending
+        onto the previous one's pages. Note this is the *filter* identity, not the contact
+        data — the list used to be keyed on the latter, which meant every keystroke tore
+        down and rebuilt the whole subtree.
+      */}
+      <Suspense key={listKey} fallback={<ContactsListRowsSkeleton />}>
+        <ContactsListBody
+          pagePromise={pagePromise}
+          filters={filters}
+          letters={letters}
+          activeLetter={activeLetter}
+        />
+      </Suspense>
+    </ContactsFilters>
   );
 }
 
 async function ContactsSubtitle({
   pagePromise,
   filtersActive,
+  searching,
 }: {
   pagePromise: Promise<PageResult>;
   filtersActive: boolean;
+  searching: boolean;
 }) {
   const page = await pagePromise;
-  if (page.total === null) return "Your network";
+  // Searches skip `count(*)` — no exact total. Don't claim "Your network" while filtering.
+  if (page.total === null) {
+    return searching || filtersActive ? "Showing matches" : "Your network";
+  }
   // `total` counts what the filters matched, not the network. Calling a filtered
   // count "in your network" told someone with 24 contacts that they had 6 — and
   // the more prominent the filters get, the more often that reads as data loss.

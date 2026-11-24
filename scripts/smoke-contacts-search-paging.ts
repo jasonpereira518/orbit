@@ -19,6 +19,7 @@ import {
   type ContactsCursor,
 } from "../src/lib/contacts-page-cursor";
 import type { ContactSort } from "../src/lib/contacts-page";
+import { listContactsPage } from "../src/lib/contacts-page-query";
 import { run } from "./smoke/_env";
 
 const U = "smoke-contacts-search-paging-user";
@@ -77,24 +78,31 @@ run(async () => {
   check("and accepted without one", decodeContactsCursor(plain, "name", false) !== null);
   check("no search, no tier in the ORDER BY", contactsOrderBy("name", null).length === 3);
 
-  // The default when searching (main's #188): one ranked page from hybrid search, no cursor.
-  // The name tier leads the rank too, so a name match the ranking never produced (a short
-  // query, or a literal-only hit) still sits above a prose-only row the ranking did produce.
+  // The default when searching: one lexical page ordered by name tier (hybrid widening was
+  // removed from listContactsPage for settle latency). Notes still match via search_tsv.
   const tier = nameMatchTierSql("Priya");
-  const byName = new Map((await db.select({ id: contacts.id, fullName: contacts.fullName }).from(contacts).where(eq(contacts.userId, U))).map((r) => [r.fullName, r.id]));
-  const rankedOnlyHassan = [byName.get("Hassan Ali")!];
   const relevance = await db
     .select({ fullName: contacts.fullName })
     .from(contacts)
     .where(and(eq(contacts.userId, U), contactSearchCondition("Priya")))
-    .orderBy(...contactsOrderBy("relevance", tier, rankedOnlyHassan));
+    .orderBy(...contactsOrderBy("relevance", tier));
   check(
-    "relevance: name tiers still lead a ranking that only produced the notes mention",
+    "relevance: name tiers lead; notes mention (FTS) last",
     JSON.stringify(relevance.map((r) => r.fullName)) === JSON.stringify(["Priya Nair", "Priya Raman", "Priyanka Das", "Hassan Ali"]),
     JSON.stringify(relevance.map((r) => r.fullName))
   );
-  const noQuery = contactsOrderBy("relevance", null, rankedOnlyHassan);
-  check("relevance without a search is rank, then name", noQuery.length === 4);
+  const listed = await listContactsPage(U, { q: "Priya", sort: "relevance", limit: 50 });
+  check("listContactsPage search skips count(*) (total null)", listed.total === null, String(listed.total));
+  check(
+    "listContactsPage is lexical: name hits then notes mention, no matchReason labels",
+    JSON.stringify(listed.items.map((r) => r.fullName)) ===
+      JSON.stringify(["Priya Nair", "Priya Raman", "Priyanka Das", "Hassan Ali"]) &&
+      listed.items.every((r) => r.matchReason === null),
+    JSON.stringify(listed.items.map((r) => [r.fullName, r.matchReason]))
+  );
+  const noQuery = contactsOrderBy("relevance", null, []);
+  // Still `0::int` + name + id — a constant rank keeps the ORDER BY shape stable.
+  check("relevance without rank ids is constant rank, then name", noQuery.length === 4);
   check("relevance never takes a cursor", decodeContactsCursor(plain, "relevance", true) === null);
 
   // Cursor fields are all shape-checked (audit L-11): a tampered cursor starts over, it never

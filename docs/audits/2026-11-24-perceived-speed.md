@@ -110,3 +110,20 @@ No regressions; all remain under 200 ms.
 ## Verdict
 
 The harness named soft-nav without hover as the real gap. Idle daily-route prefetch + RouteProgress cut fast-click ready time by ~2/3. Profile opens and INP were already healthy; search chrome now streams without claiming a server-time win.
+
+---
+
+## Follow-up: contacts search settle (lexical list)
+
+Same method (prod demo build, 10k fixture, `ORBIT_SIM_DB_LATENCY_MS=20`). Change: `listContactsPage` is lexical-only (no `await rankContacts`), skips `count(*)` when `q` is set, and the contacts page no longer awaits letters/plan/schools before starting the list.
+
+### search-bench at 10k
+
+| Query | Settled before | Settled after | Server before | Server after |
+|---|---:|---:|---:|---:|
+| ai | 303 | **256** | ~97 | **85** |
+| sarah | 459 | **291** (−37%) | ~298 | **120** (−60%) |
+| engineer at acme | 605 | **402** (−34%) | ~414 | **203** (−51%) |
+| zzzz-no-match | 478 | **295** (−38%) | ~296 | **132** (−55%) |
+
+`sarah` lands at ~debounce (150) + lexical server (~120). Tradeoff: meaning-only matches no longer widen the `/contacts` list (still available via ⌘K / chat).
