@@ -5,8 +5,8 @@
  * employment history (contact_experiences), and event history to identify warm intro paths.
  */
 
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { getDb, rowsOf } from "@/db";
+import { and, eq, sql } from "drizzle-orm";
+import { getDb } from "@/db";
 import { contacts, contactExperiences, eventAttendees } from "@/db/schema";
 import { sharedAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import type { ContactNetworkNode } from "../scorers/mutual-graph-scorer";

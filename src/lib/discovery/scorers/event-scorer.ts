@@ -15,7 +15,7 @@ export type EventScoreResult = {
 
 export function scoreEventProximity(
   candidate: RawCandidate,
-  context: UserDiscoveryContext
+  _context?: UserDiscoveryContext
 ): EventScoreResult {
   let score = 0;
   const reasons: string[] = [];

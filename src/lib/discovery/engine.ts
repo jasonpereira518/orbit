@@ -24,7 +24,6 @@ import { scoreMutualIntroPath } from "./scorers/mutual-graph-scorer";
 import { scoreEventProximity } from "./scorers/event-scorer";
 import { scoreInstitutionalAffinity } from "./scorers/institution-scorer";
 import { synthesizeExplanation } from "./explainer";
-import { buildDeepDiscoveryQueries } from "./query-builder";
 import type {
   DiscoveryOptions,
   RawCandidate,

@@ -188,7 +188,7 @@ async function findPeople(userId: string, city: string | null, goals: string[], 
   const out: NewOpportunity[] = [];
   for (const c of candidates) {
     const [key] = orgKeysFor([c.company]);
-    let introducer = key ? paths.get(key)?.[0] : undefined;
+    const introducer = key ? paths.get(key)?.[0] : undefined;
     let introLabel = introducer ? `${introducer.fullName} ${introducer.reasonLabel}` : null;
     let introducerContactId = introducer?.contactId;
 

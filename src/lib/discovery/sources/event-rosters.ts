@@ -5,9 +5,8 @@
  * Merges repeat appearances into unified RawCandidate profiles.
  */
 
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { getDb, rowsOf } from "@/db";
-import { eventAttendees, events } from "@/db/schema";
 import type { RawCandidate } from "../types";
 
 type EventAttendeeRow = {

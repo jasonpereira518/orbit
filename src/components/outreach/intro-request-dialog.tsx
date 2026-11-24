@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Copy, ExternalLink, Mail, UserCheck } from "lucide-react";
+import { Check, Copy, Mail, UserCheck } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -26,23 +26,27 @@ export function IntroRequestDialog({
   candidate: BrightDataCandidate | null;
 }) {
   const [copied, setCopied] = useState(false);
+  const [editedBody, setEditedBody] = useState<string | null>(null);
 
-  if (!candidate || !candidate.introPath) return null;
+  const introPath = candidate?.introPath;
+  const firstName = introPath?.introducerName.split(" ")[0] || introPath?.introducerName || "";
 
-  const introPath = candidate.introPath;
-  const firstName = introPath.introducerName.split(" ")[0] || introPath.introducerName;
+  const draft =
+    candidate && introPath
+      ? generateIntroRequestDraft({
+          introducerFirstName: firstName,
+          candidateFullName: candidate.fullName,
+          candidateTitle: candidate.title,
+          candidateCompany: candidate.company,
+          relationshipContext: introPath.relationshipContext,
+          projectTitle: candidate.matchedProjects?.[0]?.projectTitle,
+          sharedTopic: candidate.matchedProjects?.[0]?.sharedTopics?.[0],
+        })
+      : { subject: "", body: "" };
 
-  const draft = generateIntroRequestDraft({
-    introducerFirstName: firstName,
-    candidateFullName: candidate.fullName,
-    candidateTitle: candidate.title,
-    candidateCompany: candidate.company,
-    relationshipContext: introPath.relationshipContext,
-    projectTitle: candidate.matchedProjects?.[0]?.projectTitle,
-    sharedTopic: candidate.matchedProjects?.[0]?.sharedTopics?.[0],
-  });
+  const body = editedBody ?? draft.body;
 
-  const [body, setBody] = useState(draft.body);
+  if (!candidate || !introPath) return null;
 
   async function handleCopy() {
     try {
@@ -56,7 +60,7 @@ export function IntroRequestDialog({
   }
 
   function handleOpenMailto() {
-    const mailto = `mailto:${encodeURIComponent(introPath.email || "")}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(body)}`;
+    const mailto = `mailto:${encodeURIComponent(introPath?.email || "")}?subject=${encodeURIComponent(draft.subject)}&body=${encodeURIComponent(body)}`;
     window.open(mailto, "_blank");
   }
 
@@ -107,7 +111,7 @@ export function IntroRequestDialog({
             </span>
             <Textarea
               value={body}
-              onChange={(e) => setBody(e.target.value)}
+              onChange={(e) => setEditedBody(e.target.value)}
               rows={8}
               className="resize-none text-xs font-mono leading-relaxed"
             />
