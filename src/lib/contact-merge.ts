@@ -101,6 +101,8 @@ const REPOINTED_TABLES: { table: string; column: string; scoped: boolean }[] = [
   // Pending assistant send drafts. ON DELETE SET NULL, so leaving them off unlinked the draft
   // from the person it was written to. No unique index.
   { table: "agent_send_requests", column: "contact_id", scoped: true },
+  // Radar v2 Connect / double-opt-in secondary contact. ON DELETE SET NULL; no unique index.
+  { table: "recommendations", column: "secondary_contact_id", scoped: true },
 ];
 
 /** Fold a statement's moved ids into the archive row, additively. */

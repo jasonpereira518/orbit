@@ -161,7 +161,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   radar_moment_last_day text,
   radar_moment_email_enabled integer NOT NULL DEFAULT 1,
   radar_enabled_at timestamptz,
-  radar_opened_at timestamptz
+  radar_opened_at timestamptz,
+  radar_steering jsonb NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE UNIQUE INDEX IF NOT EXISTS user_settings_inbound_log_token_uidx ON user_settings(inbound_log_token) WHERE inbound_log_token IS NOT NULL;
 CREATE TABLE IF NOT EXISTS companies (
@@ -275,6 +276,18 @@ CREATE TABLE IF NOT EXISTS radar_opportunities (
   evidence jsonb NOT NULL DEFAULT '[]'::jsonb,
   related_contact_ids uuid[] NOT NULL DEFAULT '{}',
   score integer NOT NULL DEFAULT 0,
+  base_score integer,
+  ai_delta integer,
+  bucket text,
+  play_type text,
+  ai_note jsonb,
+  draft jsonb,
+  inputs_hash text,
+  first_seen_at timestamptz,
+  last_seen_at timestamptz,
+  seen_count integer NOT NULL DEFAULT 0,
+  acted_at timestamptz,
+  outcome_at timestamptz,
   status text NOT NULL DEFAULT 'found',
   dismiss_reason text,
   dedupe_key text NOT NULL,
@@ -625,6 +638,10 @@ CREATE TABLE IF NOT EXISTS recommendations (
   draft jsonb,
   autopilot jsonb,
   suggested_calendar_invite jsonb,
+  secondary_contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL,
+  play_type text,
+  play_state jsonb,
+  pinned_until timestamptz,
   first_seen_at timestamptz,
   last_seen_at timestamptz,
   seen_count integer NOT NULL DEFAULT 0,
@@ -3239,7 +3256,9 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 249 = contacts.sort_key ignores parenthesised text, so "Briana (Simmons) Medley" sorts under M
 // (UX walkthrough Task 19). Scanned every remote ref on Nov 18 2026: main (merged draft_edits, 248)
 // is the highest, so this takes 249.
-export const SCHEMA_VERSION = 249;
+// 250 = Radar v2 opportunity engine: user_settings.radar_steering, recommendations.secondary_contact_id /
+// play_type / play_state / pinned_until, and radar_opportunities unified scoring/impression/draft/outcome columns.
+export const SCHEMA_VERSION = 250;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3884,6 +3903,8 @@ export const SCALE_DDL: string[] = [
   // v133: Radar's contact children. Recommendations are rewritten nightly and feedback
   // is kept for suppression, so both see contact deletes and merges.
   `CREATE INDEX IF NOT EXISTS recommendations_contact_idx ON recommendations(contact_id)`,
+  `CREATE INDEX IF NOT EXISTS recommendations_secondary_contact_idx ON recommendations(secondary_contact_id) WHERE secondary_contact_id IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS radar_opportunities_user_status_score_idx ON radar_opportunities(user_id, status, score DESC)`,
   `CREATE INDEX IF NOT EXISTS recommendation_feedback_contact_idx
      ON recommendation_feedback(contact_id)`,
   // v135: Radar's outside-world signals, same reasoning: contact deletes and merges.
@@ -4769,6 +4790,24 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // v182: which model made a stored vector.
   await ensureColumn(client, "contact_embeddings", "embedding_model", "text");
   await ensureColumn(client, "memory_chunks", "embedding_model", "text");
+  // v250: Radar v2 opportunity engine.
+  await ensureColumn(client, "user_settings", "radar_steering", "jsonb NOT NULL DEFAULT '{}'::jsonb");
+  await ensureColumn(client, "recommendations", "secondary_contact_id", "uuid");
+  await ensureColumn(client, "recommendations", "play_type", "text");
+  await ensureColumn(client, "recommendations", "play_state", "jsonb");
+  await ensureColumn(client, "recommendations", "pinned_until", "timestamptz");
+  await ensureColumn(client, "radar_opportunities", "base_score", "integer");
+  await ensureColumn(client, "radar_opportunities", "ai_delta", "integer");
+  await ensureColumn(client, "radar_opportunities", "bucket", "text");
+  await ensureColumn(client, "radar_opportunities", "play_type", "text");
+  await ensureColumn(client, "radar_opportunities", "ai_note", "jsonb");
+  await ensureColumn(client, "radar_opportunities", "draft", "jsonb");
+  await ensureColumn(client, "radar_opportunities", "inputs_hash", "text");
+  await ensureColumn(client, "radar_opportunities", "first_seen_at", "timestamptz");
+  await ensureColumn(client, "radar_opportunities", "last_seen_at", "timestamptz");
+  await ensureColumn(client, "radar_opportunities", "seen_count", "integer NOT NULL DEFAULT 0");
+  await ensureColumn(client, "radar_opportunities", "acted_at", "timestamptz");
+  await ensureColumn(client, "radar_opportunities", "outcome_at", "timestamptz");
 
   // Schema v17 note-processing provenance columns (interactions/reminders note_batch_id
   // and friends), and admin console v2's own indexes, are covered by the shared `alters`
@@ -5794,6 +5833,24 @@ const alters = [
   // LinkedIn deep read PR 2 (schema 247): how you met and the kind of relationship, each quoted.
   `ALTER TABLE relationship_digests ADD COLUMN IF NOT EXISTS origin jsonb`,
   `ALTER TABLE relationship_digests ADD COLUMN IF NOT EXISTS relationship jsonb`,
+  // Schema v250: Radar v2 opportunity engine.
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS radar_steering jsonb NOT NULL DEFAULT '{}'::jsonb`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS secondary_contact_id uuid REFERENCES contacts(id) ON DELETE SET NULL`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS play_type text`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS play_state jsonb`,
+  `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS pinned_until timestamptz`,
+  `ALTER TABLE radar_opportunities ADD COLUMN IF NOT EXISTS base_score integer`,
+  `ALTER TABLE radar_opportunities ADD COLUMN IF NOT EXISTS ai_delta integer`,
+  `ALTER TABLE radar_opportunities ADD COLUMN IF NOT EXISTS bucket text`,
+  `ALTER TABLE radar_opportunities ADD COLUMN IF NOT EXISTS play_type text`,
+  `ALTER TABLE radar_opportunities ADD COLUMN IF NOT EXISTS ai_note jsonb`,
+  `ALTER TABLE radar_opportunities ADD COLUMN IF NOT EXISTS draft jsonb`,
+  `ALTER TABLE radar_opportunities ADD COLUMN IF NOT EXISTS inputs_hash text`,
+  `ALTER TABLE radar_opportunities ADD COLUMN IF NOT EXISTS first_seen_at timestamptz`,
+  `ALTER TABLE radar_opportunities ADD COLUMN IF NOT EXISTS last_seen_at timestamptz`,
+  `ALTER TABLE radar_opportunities ADD COLUMN IF NOT EXISTS seen_count integer NOT NULL DEFAULT 0`,
+  `ALTER TABLE radar_opportunities ADD COLUMN IF NOT EXISTS acted_at timestamptz`,
+  `ALTER TABLE radar_opportunities ADD COLUMN IF NOT EXISTS outcome_at timestamptz`,
 ];
 
 /**

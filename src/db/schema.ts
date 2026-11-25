@@ -28,9 +28,12 @@ import type {
   RadarModel,
   RadarOpportunityKind,
   RadarOpportunityStatus,
+  RadarPlayState,
+  RadarPlayType,
   RadarReason,
   RadarRunStatus,
   RadarRunTrigger,
+  RadarSteering,
   RecommendationBucket,
   RecommendationKind,
   RecommendationStatus,
@@ -729,6 +732,8 @@ export const userSettings = pgTable("user_settings", {
    * nav's Radar icon pulses green while there are any (`countNewRadarSuggestions`).
    */
   radarOpenedAt: timestamp("radar_opened_at", { withTimezone: true }),
+  /** User-configured Radar v2 steering: focus topics, target roles/orgs, cadence mode. */
+  radarSteering: jsonb("radar_steering").$type<RadarSteering>().default({}).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [
@@ -1298,6 +1303,18 @@ export const radarOpportunities = pgTable(
     evidence: jsonb("evidence").$type<RadarEvidence[]>().default([]).notNull(),
     relatedContactIds: uuid("related_contact_ids").array().notNull().default(sql`'{}'`),
     score: integer("score").default(0).notNull(),
+    baseScore: integer("base_score"),
+    aiDelta: integer("ai_delta"),
+    bucket: text("bucket").$type<RecommendationBucket>(),
+    playType: text("play_type").$type<RadarPlayType>(),
+    aiNote: jsonb("ai_note").$type<RadarAiNote>(),
+    draft: jsonb("draft").$type<RadarDraft>(),
+    inputsHash: text("inputs_hash"),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    seenCount: integer("seen_count").default(0).notNull(),
+    actedAt: timestamp("acted_at", { withTimezone: true }),
+    outcomeAt: timestamp("outcome_at", { withTimezone: true }),
     status: text("status").$type<RadarOpportunityStatus>().default("found").notNull(),
     dismissReason: text("dismiss_reason"),
     dedupeKey: text("dedupe_key").notNull(),
@@ -3068,6 +3085,13 @@ export const recommendations = pgTable(
     autopilot: jsonb("autopilot").$type<RadarAutopilotAction>(),
     /** A suggested calendar invite, prepared ahead of time so the user can send/confirm in 1 click. */
     suggestedCalendarInvite: jsonb("suggested_calendar_invite").$type<RadarCalendarInvite>(),
+    /** Second contact for Connect / double-opt-in intro plays. */
+    secondaryContactId: uuid("secondary_contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    /** Play execution pattern & multi-step state (e.g. double-opt-in intro progress). */
+    playType: text("play_type").$type<RadarPlayType>(),
+    playState: jsonb("play_state").$type<RadarPlayState>(),
+    /** Reactive pinning deadline once the user has seen or started acting on a card. */
+    pinnedUntil: timestamp("pinned_until", { withTimezone: true }),
     /** Impressions: stamped when the card is rendered on /radar or in the briefing. */
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),

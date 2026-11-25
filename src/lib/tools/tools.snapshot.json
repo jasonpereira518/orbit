@@ -1822,8 +1822,10 @@
           "company",
           "kind",
           "lane",
+          "playType",
           "priority",
           "why",
+          "nextStep",
           "proof"
         ]
       },
@@ -1927,7 +1929,8 @@
           "today",
           "total",
           "drafts",
-          "top"
+          "top",
+          "topFinds"
         ]
       },
       "surfaceKey": null,

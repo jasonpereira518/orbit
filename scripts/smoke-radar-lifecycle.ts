@@ -86,8 +86,16 @@ run(async () => {
 
   try {
     await ensureUserSettings(USER);
-    // Pro: a plan of 7, a Today strip of 3.
-    await db.update(userSettings).set({ compedPlan: "orbit", radarEnabledAt: at(-30), radarDigestTz: "UTC" }).where(eq(userSettings.userId, USER));
+    // Pro: weekly mode explicitly set to verify weekly-freeze rhythm.
+    await db
+      .update(userSettings)
+      .set({
+        compedPlan: "orbit",
+        radarEnabledAt: at(-30),
+        radarDigestTz: "UTC",
+        radarSteering: { cadenceMode: "weekly" },
+      })
+      .where(eq(userSettings.userId, USER));
 
     // Three inner-circle people gone quiet: the week's plan (a plan holds at most half its size,
     // 3 of 7, of any one kind). Each met long ago (met gate).
@@ -193,7 +201,13 @@ run(async () => {
     await ensureUserSettings(OTHER);
     await db
       .update(userSettings)
-      .set({ radarEnabledAt: at(-30), radarDailyEnabled: 0, radarNextAt: at(7, -1), lastActiveAt: at(7) })
+      .set({
+        radarEnabledAt: at(-30),
+        radarDailyEnabled: 0,
+        radarNextAt: at(7, -1),
+        lastActiveAt: at(7),
+        radarSteering: { cadenceMode: "weekly" },
+      })
       .where(eq(userSettings.userId, OTHER));
     const claimed = await claimRadarUsers(500, at(7), { includeUnopened: true });
     await db.update(userSettings).set({ radarLeaseUntil: null }).where(inArray(userSettings.userId, claimed));
@@ -202,6 +216,40 @@ run(async () => {
     await runRadarForUser(OTHER, { trigger: "schedule", now: at(7), ai: false });
     const [row] = await db.select({ next: userSettings.radarNextAt }).from(userSettings).where(eq(userSettings.userId, OTHER));
     t.check("and its next run is the Monday after", row?.next !== null && localClock(row!.next!, "UTC").weekday === 1 && row!.next! > at(7), String(row?.next?.toISOString()));
+
+    console.log("\nreactive cadence (Radar v2 default)");
+    const REACTIVE = fakeUserId("radar-reactive");
+    await ensureUserSettings(REACTIVE);
+    await db
+      .update(userSettings)
+      .set({ compedPlan: "orbit", radarEnabledAt: at(-30), radarDigestTz: "UTC" })
+      .where(eq(userSettings.userId, REACTIVE));
+    const rContact = await insertContact(db, REACTIVE, 91, {
+      closenessTier: "inner",
+      closenessEvidence: 0.8,
+      closeness: 90,
+      lastInteractionAt: at(-65),
+    });
+    await db.insert(interactions).values({ userId: REACTIVE, contactId: rContact.id, interactionType: "meeting", interactionDate: at(-90) });
+    await claimRadarLease(REACTIVE, at(0));
+    const rRun1 = await runRadarForUser(REACTIVE, { trigger: "manual", now: at(0), ai: false });
+    t.check("default cadence runs in reactive mode", rRun1.ok && rRun1.mode === "reactive", JSON.stringify(rRun1));
+    // Add another contact mid-week — reactive cadence surfaces it immediately instead of waiting for Monday.
+    const rContact2 = await insertContact(db, REACTIVE, 92, {
+      closenessTier: "inner",
+      closenessEvidence: 0.8,
+      closeness: 88,
+      lastInteractionAt: at(-62),
+    });
+    await db.insert(interactions).values({ userId: REACTIVE, contactId: rContact2.id, interactionType: "meeting", interactionDate: at(-90) });
+    await claimRadarLease(REACTIVE, at(2));
+    const rRun2 = await runRadarForUser(REACTIVE, { trigger: "manual", now: at(2), ai: false });
+    const rLive = await db
+      .select({ contactId: recommendations.contactId })
+      .from(recommendations)
+      .where(and(eq(recommendations.userId, REACTIVE), eq(recommendations.status, "pending")));
+    t.check("reactive mode surfaces newly qualified cards immediately mid-week", rRun2.ok && rLive.some((r) => r.contactId === rContact2.id), JSON.stringify(rLive));
+    await purgeUsers(db, [REACTIVE]);
   } finally {
     await purgeUsers(db, [USER, OTHER]);
   }

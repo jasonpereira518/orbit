@@ -32,34 +32,48 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { cleanSingleLine, fenceUntrusted, guardModelOutput } from "@/lib/ai-security";
 import { RADAR_BUCKETS, type RadarPick } from "@/lib/radar/score";
-import { KIND_LABELS, recommendationKey, type RadarAiNote, type RadarEvidence, type RadarReason } from "@/lib/radar/types";
+import {
+  KIND_LABELS,
+  RADAR_PLAY_TYPES,
+  recommendationKey,
+  type RadarAiNote,
+  type RadarEvidence,
+  type RadarPlayType,
+  type RadarReason,
+  type RadarSteering,
+} from "@/lib/radar/types";
 import { scrubPunctuation } from "@/lib/message-format";
 
 /** Cards the model sees: the top of the verified list after learning, before the plan's caps. */
-export const RADAR_EDITOR_SIZE = 20;
+export const RADAR_EDITOR_SIZE = 24;
 /** The most the model may add or take away, in score points. Below every bucket gap. */
 export const RADAR_EDITOR_MAX_ADJUST = 15;
 /** A prep card this close to its meeting cannot be pushed down. */
 export const RADAR_EDITOR_PROTECT_PREP_MS = 48 * 60 * 60 * 1000;
-const WHY_MAX = 160;
+const WHY_MAX = 180;
+const NEXT_STEP_MAX = 120;
+const TALKING_POINT_MAX = 100;
 const OPENER_MAX = 300;
 const GOALS_MAX = 8;
 
+const PLAY_TYPE_SET: ReadonlySet<string> = new Set(RADAR_PLAY_TYPES);
+
 export const RADAR_EDITOR_SYSTEM = [
-  "You help someone decide who in their professional network to contact first this week.",
-  "A rules engine has already chosen each candidate and written the factual reasons why.",
-  "Given the person's goals and those reasons, adjust each candidate's priority:",
-  `an integer from -${RADAR_EDITOR_MAX_ADJUST} to ${RADAR_EDITOR_MAX_ADJUST}, positive when this contact matters more right now`,
-  "than the rules alone suggest, negative when less, 0 when the rules have it right.",
+  "You are Orbit's Opportunity Analyst helping someone decide who in their network to act on right now.",
+  "A rules engine has already chosen each verified candidate and written the factual reasons why.",
+  "Given the person's goals, active projects, steering focus, and those reasons, adjust each candidate's priority:",
+  `an integer from -${RADAR_EDITOR_MAX_ADJUST} to ${RADAR_EDITOR_MAX_ADJUST}, positive when this opportunity unlocks real leverage right now,`,
+  "negative when routine or low leverage, 0 when the rules have it right.",
   "Most adjustments should be 0 or small. Do not reward someone only for being close;",
   "the rules already count that.",
-  'For each, also write a "why": one sentence under 20 words on why now, plain and specific,',
-  'and an "opener": one sentence the person could send as the first line of a message,',
-  "warm, no flattery, no exclamation marks, no links, and never a question about something",
-  "you were not told. Use only the reasons and context given. Never invent a fact, a shared",
-  "interest, a mutual contact, a job history, a person or a date.",
-  "Never state a number of days or weeks; say recently, a while, or soon.",
-  'Reply as {"items": [{"id": string, "adjust": integer, "why": string, "opener": string}]} with one item per candidate.',
+  'For each candidate, return:',
+  `- "playType": one of ${RADAR_PLAY_TYPES.join(", ")}`,
+  '- "why": one crisp sentence (under 24 words) explaining the opportunity thesis from the given facts only',
+  '- "nextStep": one concrete action phrase (under 14 words, e.g. "Ask Priya if she is open to meeting Sam")',
+  '- "talkingPoints": optional array of up to 3 short bullets (under 14 words each) for meetings, warm paths, or events',
+  '- "opener": one sentence the person could send as the first line of a message (warm, no flattery, no exclamation marks, no links, never ask about facts not given)',
+  "Never invent a fact, a shared interest, a mutual contact, a job history, a person or a date.",
+  'Reply as {"items": [{"id": string, "adjust": integer, "playType"?: string, "why": string, "nextStep"?: string, "talkingPoints"?: string[], "opener": string}]}.',
 ].join(" ");
 
 /** Reasons that argue against a card; the model is told what the card is for, not against. */
@@ -102,7 +116,11 @@ function ordered(candidates: readonly EditorCandidate[]): EditorCandidate[] {
   );
 }
 
-export function buildEditorPrompt(candidates: readonly EditorCandidate[], goals: readonly string[]): EditorPrompt {
+export function buildEditorPrompt(
+  candidates: readonly EditorCandidate[],
+  goals: readonly string[],
+  opts?: { projects?: readonly string[]; steering?: RadarSteering | null }
+): EditorPrompt {
   const idToKey = new Map<string, string>();
   const allFacts: string[] = [];
   const list = ordered(candidates).map((c, i) => {
@@ -130,28 +148,44 @@ export function buildEditorPrompt(candidates: readonly EditorCandidate[], goals:
     .slice(0, GOALS_MAX)
     .map((g) => cleanSingleLine(g, 160))
     .filter((g): g is string => Boolean(g));
-  allFacts.push(...goalLines);
-  const user = [
+  const projectLines = (opts?.projects ?? [])
+    .slice(0, 5)
+    .map((p) => cleanSingleLine(p, 200))
+    .filter((p): p is string => Boolean(p));
+  const steeringParts = [
+    opts?.steering?.topics?.length ? `Focus topics: ${opts.steering.topics.slice(0, 6).join(", ")}` : null,
+    opts?.steering?.targetRoles?.length ? `Target roles: ${opts.steering.targetRoles.slice(0, 6).join(", ")}` : null,
+    opts?.steering?.targetOrgs?.length ? `Target orgs: ${opts.steering.targetOrgs.slice(0, 6).join(", ")}` : null,
+  ]
+    .map((s) => cleanSingleLine(s, 200))
+    .filter((s): s is string => Boolean(s));
+  allFacts.push(...goalLines, ...projectLines, ...steeringParts);
+  const userSections = [
     "The person's current goals:",
     fenceUntrusted("GOALS", goalLines.length ? goalLines.join("\n") : "(none stated)"),
-    "",
-    "Candidates:",
-    fenceUntrusted("CANDIDATES", JSON.stringify(list)),
-  ].join("\n");
-  return { system: RADAR_EDITOR_SYSTEM, user, idToKey, factText: allFacts.join("\n") };
+  ];
+  if (projectLines.length) {
+    userSections.push("", "Active projects:", fenceUntrusted("PROJECTS", projectLines.join("\n")));
+  }
+  if (steeringParts.length) {
+    userSections.push("", "Radar steering focus:", fenceUntrusted("STEERING", steeringParts.join("\n")));
+  }
+  userSections.push("", "Candidates:", fenceUntrusted("CANDIDATES", JSON.stringify(list)));
+  return { system: RADAR_EDITOR_SYSTEM, user: userSections.join("\n"), idToKey, factText: allFacts.join("\n") };
 }
 
 /**
- * What the editor is cached under: who is on the shortlist and the facts behind each card
- * (`inputsHash`, built from codes and dates, not from labels that say "9 days ago"), the brief
- * each card was shown with, and the goals. An unchanged shortlist reuses last week's answer
- * without a call. `v: 2`: the editor's answer carries words the rerank's never did, so a cached
- * rerank answer is never replayed as one.
+ * What the editor is cached under: who is on the shortlist, the facts behind each card,
+ * the brief, goals, active projects, and steering. `v: 3`: v2 Opportunity Analyst fields.
  */
-export function editorCacheKey(candidates: readonly EditorCandidate[], goals: readonly string[]) {
+export function editorCacheKey(
+  candidates: readonly EditorCandidate[],
+  goals: readonly string[],
+  opts?: { projects?: readonly string[]; steering?: RadarSteering | null }
+) {
   const hash = (s: string | null) => (s ? createHash("sha256").update(s).digest("hex").slice(0, 16) : null);
   return {
-    v: 2,
+    v: 3,
     shortlist: ordered(candidates).map((c) => [
       recommendationKey(c.contactId, c.kind),
       c.inputsHash,
@@ -159,17 +193,29 @@ export function editorCacheKey(candidates: readonly EditorCandidate[], goals: re
       ...(c.relationship ? [hash(c.relationship)] : []),
     ]),
     goals: goals.slice(0, GOALS_MAX).map((g) => g.trim()),
+    projects: (opts?.projects ?? []).slice(0, 5).map((p) => p.trim()),
+    steering: opts?.steering ?? null,
   };
 }
 
-export type EditorItem = { adjust: number; why: string | null; opener: string | null };
+export type EditorItem = {
+  adjust: number;
+  why: string | null;
+  opener: string | null;
+  nextStep?: string | null;
+  talkingPoints?: string[];
+  playType?: RadarPlayType | null;
+};
 
 const replySchema = z.object({
   items: z.array(
     z.object({
       id: z.string(),
       adjust: z.number(),
+      playType: z.string().optional().nullable(),
       why: z.string().optional().nullable(),
+      nextStep: z.string().optional().nullable(),
+      talkingPoints: z.array(z.string()).optional().nullable(),
       opener: z.string().optional().nullable(),
     })
   ),
@@ -194,9 +240,20 @@ export function parseEditorReply(raw: string, prompt: Pick<EditorPrompt, "idToKe
     const key = prompt.idToKey.get(item.id.trim());
     if (!key || out.has(key) || !Number.isFinite(item.adjust)) continue;
     const adjust = Math.max(-RADAR_EDITOR_MAX_ADJUST, Math.min(RADAR_EDITOR_MAX_ADJUST, Math.round(item.adjust)));
+    const playType = item.playType && PLAY_TYPE_SET.has(item.playType) ? (item.playType as RadarPlayType) : null;
+    const nextStep = checkedLine(item.nextStep ?? null, NEXT_STEP_MAX, prompt);
+    const talkingPoints = Array.isArray(item.talkingPoints)
+      ? item.talkingPoints
+          .slice(0, 3)
+          .map((tp) => checkedLine(tp, TALKING_POINT_MAX, prompt))
+          .filter((tp): tp is string => Boolean(tp))
+      : undefined;
     out.set(key, {
       adjust,
+      playType,
       why: checkedLine(item.why ?? null, WHY_MAX, prompt),
+      nextStep,
+      ...(talkingPoints?.length ? { talkingPoints } : {}),
       // A line the user sends, so the house bans apply (`@/lib/message-format`).
       opener: scrubLine(checkedLine(item.opener ?? null, OPENER_MAX, prompt)),
     });
@@ -241,10 +298,25 @@ export function applyEditor<T extends RadarPick & { inputsHash: string }>(
     if (adjust < 0 && isImminentPrep(pick, now)) adjust = 0;
     const score = Math.max(RADAR_BUCKETS.later, Math.min(100, pick.score + adjust));
     const aiNote: RadarAiNote | null =
-      item.why || item.opener
-        ? { why: item.why ?? "", opener: item.opener ?? "", inputsHash: pick.inputsHash, generatedAt: now.toISOString() }
+      item.why || item.opener || item.nextStep || item.talkingPoints?.length
+        ? {
+            why: item.why ?? "",
+            opener: item.opener ?? "",
+            inputsHash: pick.inputsHash,
+            generatedAt: now.toISOString(),
+            ...(item.nextStep ? { nextStep: item.nextStep } : {}),
+            ...(item.talkingPoints?.length ? { talkingPoints: item.talkingPoints } : {}),
+            ...(item.playType ? { playType: item.playType } : {}),
+          }
         : null;
-    return { ...pick, score, aiDelta: score - pick.score, aiAngle: item.why, aiNote };
+    return {
+      ...pick,
+      score,
+      aiDelta: score - pick.score,
+      aiAngle: item.why,
+      aiNote,
+      playType: item.playType ?? pick.playType ?? null,
+    };
   });
 }
 

@@ -72,20 +72,12 @@ export function momentPushText(card: Pick<MomentCard, "id" | "kind">): PushPaylo
   }
 }
 
-/** Today's cards for one person, best first. */
+/** Today's cards for one person (recommendations + urgent web opportunities), best first. */
 async function loadTodayCards(userId: string): Promise<MomentCard[]> {
   const db = await getDb();
-  const rows = rowsOf<{
-    id: string;
-    kind: RecommendationKind;
-    reasons: RadarReason[] | null;
-    why: string | null;
-    has_draft: boolean | null;
-    full_name: string;
-    preferred_name: string | null;
-  }>(
-    await db.execute(sql`
-      SELECT r.id, r.kind, r.reasons,
+  const [recRows, oppRows] = await Promise.all([
+    db.execute(sql`
+      SELECT r.id, r.kind, r.reasons, r.score,
              CASE WHEN r.ai_note ->> 'inputsHash' = r.inputs_hash THEN r.ai_note ->> 'why' END AS why,
              (r.draft ->> 'inputsHash' = r.inputs_hash) AS has_draft,
              c.full_name, c.preferred_name
@@ -94,16 +86,49 @@ async function loadTodayCards(userId: string): Promise<MomentCard[]> {
        WHERE r.user_id = ${userId} AND r.status = 'pending' AND r.bucket = 'today' AND r.expires_at > now()
        ORDER BY r.score DESC, r.id
        LIMIT ${TODAY_READ}
-    `)
-  );
-  return rows.map((r) => ({
+    `),
+    db.execute(sql`
+      SELECT id, title, why, score
+        FROM radar_opportunities
+       WHERE user_id = ${userId}
+         AND status IN ('found', 'pending')
+         AND bucket = 'today'
+         AND coalesce(expires_at, starts_at) > now()
+       ORDER BY score DESC, id
+       LIMIT 2
+    `),
+  ]);
+  const cards = rowsOf<{
+    id: string;
+    kind: RecommendationKind;
+    reasons: RadarReason[] | null;
+    score: number;
+    why: string | null;
+    has_draft: boolean | null;
+    full_name: string;
+    preferred_name: string | null;
+  }>(recRows).map((r) => ({
     id: r.id,
     kind: r.kind,
     name: (r.preferred_name ?? "").trim() || r.full_name,
     // The same withholding as the Monday email: a card built from mail never quotes it.
     line: digestLineFor(r.why, r.reasons ?? []),
     hasDraft: r.has_draft === true,
+    score: Number(r.score ?? 0),
   }));
+  const oppKind: RecommendationKind = "opportunity";
+  const opps = rowsOf<{ id: string; title: string; why: string | null; score: number }>(oppRows).map((o) => ({
+    id: o.id,
+    kind: oppKind,
+    name: o.title,
+    line: o.why || "Time-sensitive opportunity on Radar",
+    hasDraft: false,
+    score: Number(o.score ?? 0),
+  }));
+  return [...cards, ...opps]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, TODAY_READ)
+    .map(({ score: _score, ...rest }) => rest);
 }
 
 type Candidate = { user_id: string; email: string | null; tz: string; email_on: number; last_day: string | null };

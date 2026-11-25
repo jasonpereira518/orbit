@@ -358,7 +358,7 @@ export const FEATURE_TOOLS: OrbitTool[] = [
     surfaces: BOTH,
     scope: "read",
     resultLabel: "suggestions",
-    fields: { mcp: ["id", "contactId", "name", "company", "kind", "lane", "priority", "why", "proof"] },
+    fields: { mcp: ["id", "contactId", "name", "company", "kind", "lane", "playType", "priority", "why", "nextStep", "proof"] },
     releasedSurface: "page.radar",
     async run(userId, args: { limit: number }) {
       const cards = await listPendingRecommendations(userId, args.limit);
@@ -370,9 +370,11 @@ export const FEATURE_TOOLS: OrbitTool[] = [
         company: c.company,
         kind: c.kind,
         lane: LANE_TITLES[LANE_OF_KIND[c.kind]],
+        playType: c.playType ?? c.aiNote?.playType ?? null,
         // "today" = a moment that won't keep; the rest is this week's plan.
         priority: c.bucket,
-        why: c.aiAngle ?? leadReason(c.reasons)?.label ?? null,
+        why: c.aiNote?.why ?? c.aiAngle ?? leadReason(c.reasons)?.label ?? null,
+        nextStep: c.aiNote?.nextStep ?? null,
         // What the card rests on, so an answer can cite it: the quote, or the record or link's label.
         proof: c.evidence.slice(0, 2).map((e) => (e.proof?.type === "quote" ? `“${e.proof.quote}”` : e.label)),
       }));
@@ -451,7 +453,7 @@ export const FEATURE_TOOLS: OrbitTool[] = [
     surfaces: BOTH,
     scope: "read",
     resultLabel: "briefing",
-    fields: { mcp: ["hasRun", "paused", "today", "total", "drafts", "top"] },
+    fields: { mcp: ["hasRun", "paused", "today", "total", "drafts", "top", "topFinds"] },
     releasedSurface: "page.radar",
     async run(userId) {
       const briefing = await loadRadarBriefing(userId);
@@ -467,6 +469,14 @@ export const FEATURE_TOOLS: OrbitTool[] = [
           name: c.contactName,
           company: c.company,
           why: c.aiAngle ?? leadReason(c.reasons)?.label ?? null,
+        })),
+        topFinds: (briefing.topFinds ?? []).slice(0, 3).map((f) => ({
+          id: f.id,
+          kind: f.kind,
+          title: f.title,
+          why: f.why,
+          url: f.url,
+          score: f.score,
         })),
       };
     },

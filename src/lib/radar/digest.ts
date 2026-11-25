@@ -273,17 +273,36 @@ export async function loadDigestContent(userId: string): Promise<DigestContent |
        LIMIT ${RADAR_DIGEST_TOP}
     `)
   );
-  if (rows.length === 0) return null;
-  // The Opportunities lane's finds, counted. A failure here costs the email its one line, never the email.
-  // Loaded here, not at the top: the app layout imports this file (`captureRadarTimeZone`), and a
-  // static import would pull contact resolution, search and the AI module into every page's
-  // server graph (`smoke-server-graph`).
   const { listOpenOpportunities } = await import("@/lib/radar/opportunity-actions");
   const finds = await listOpenOpportunities(userId, new Date(), 20).catch(() => []);
   const events = finds.filter((f) => f.kind === "event");
+  const recPeople = rows.map((r) => ({
+    id: r.id,
+    name: (r.preferred_name ?? "").trim() || r.full_name,
+    kind: r.kind,
+    company: r.company?.trim() || null,
+    line: digestLineFor(r.why, r.reasons ?? []),
+    hasDraft: r.has_draft === true,
+    today: r.bucket === "today",
+  }));
+  const findRoom = Math.max(0, RADAR_DIGEST_TOP - recPeople.length);
+  const findRows = finds
+    .filter((f) => f.bucket === "today" || findRoom > 0)
+    .slice(0, Math.max(findRoom, 1))
+    .map((f) => ({
+      id: f.id,
+      name: f.title,
+      kind: "opportunity" as const,
+      company: f.introducer ? `via ${f.introducer.name}` : null,
+      line: f.aiNote?.why || f.why || "Opportunity found on Radar",
+      hasDraft: Boolean(f.draft),
+      today: f.bucket === "today",
+    }));
+  const combinedPeople = [...recPeople, ...findRows].slice(0, RADAR_DIGEST_TOP);
+  if (combinedPeople.length === 0) return null;
   return {
-    total: Number(rows[0].total),
-    drafts: Number(rows[0].drafts),
+    total: Number(rows[0]?.total ?? 0) + finds.length,
+    drafts: Number(rows[0]?.drafts ?? 0),
     finds: finds.length
       ? {
           events: events.length,
@@ -292,15 +311,7 @@ export async function loadDigestContent(userId: string): Promise<DigestContent |
           nextEvent: events[0]?.startsAt ? { title: events[0].title, startsAt: events[0].startsAt } : null,
         }
       : null,
-    people: rows.map((r) => ({
-      id: r.id,
-      name: (r.preferred_name ?? "").trim() || r.full_name,
-      kind: r.kind,
-      company: r.company?.trim() || null,
-      line: digestLineFor(r.why, r.reasons ?? []),
-      hasDraft: r.has_draft === true,
-      today: r.bucket === "today",
-    })),
+    people: combinedPeople,
   };
 }
 
@@ -349,16 +360,23 @@ async function eligibleBatch(
          AND s.radar_digest_last_week IS DISTINCT FROM ${week}
          AND s.last_active_at > ${activeSince}::timestamptz
          AND s.user_id > ${after}
-         AND EXISTS (
-           SELECT 1 FROM recommendations r
-            WHERE r.user_id = s.user_id AND r.status = 'pending'
-              AND r.bucket IN ('today', 'soon') AND r.expires_at > now()
+         AND (
+           EXISTS (
+             SELECT 1 FROM recommendations r
+              WHERE r.user_id = s.user_id AND r.status = 'pending'
+                AND r.bucket IN ('today', 'soon') AND r.expires_at > now()
+           )
+           OR EXISTS (
+             SELECT 1 FROM radar_opportunities o
+              WHERE o.user_id = s.user_id AND o.status = 'new'
+                AND o.bucket = 'today' AND coalesce(o.expires_at, o.starts_at) > now()
+           )
          )
-         -- The week's plan exists: the email is about it, so it waits for the Monday build
-         -- (the pass reaches accounts 25 at a time; a plan from last week is not this week's).
+         -- The week's plan exists: the email is about it, so it waits for a recent Radar build.
          AND EXISTS (
            SELECT 1 FROM radar_runs rr
-            WHERE rr.user_id = s.user_id AND rr.status = 'ok' AND rr.stats ->> 'mode' = 'weekly'
+            WHERE rr.user_id = s.user_id AND rr.status = 'ok'
+              AND rr.stats ->> 'mode' IN ('weekly', 'reactive')
               AND rr.started_at > now() - interval '6 days'
          )
        ORDER BY s.user_id

@@ -18,14 +18,25 @@ import { guardModelOutput } from "@/lib/ai-security";
 import { generateContactFollowUpDraft } from "@/lib/follow-up-drafts";
 import { reportUnlessQuiet } from "@/lib/report-error";
 import { draftIntent, type RadarDraft, type RadarReason, type RecommendationKind } from "@/lib/radar/types";
+import { runSettledPool } from "@/lib/sync-scheduler";
 import { deadlineReached } from "@/lib/time-budget";
 import { listActiveGoalTextsForUser } from "@/lib/user-goals";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
 
-/** Kinds a message is the answer to. Prep is a meeting to get ready for; an opportunity, a role. */
-export const RADAR_DRAFT_KINDS: readonly RecommendationKind[] = ["reach_out", "reconnect", "follow_up", "heads_up"];
-/** The most drafts one weekly build writes; the plan's own `draftsPerWeek` is usually lower. */
-export const RADAR_DRAFTS_PER_RUN = 5;
+/** Kinds a message answers (including Radar v2 warm paths, event leverage, and Connect plays). */
+export const RADAR_DRAFT_KINDS: readonly RecommendationKind[] = [
+  "reach_out",
+  "reconnect",
+  "follow_up",
+  "heads_up",
+  "warm_path",
+  "event_leverage",
+  "introduce",
+  "ask",
+  "share",
+];
+/** The most drafts one build writes; the plan's own `draftsPerWeek` caps this per tier. */
+export const RADAR_DRAFTS_PER_RUN = 8;
 /** A draft is not started with less than this left, so a slow provider costs drafts, not the run. */
 const DRAFT_MIN_REMAINING_MS = 6_000;
 const DRAFT_MAX = 2_000;
@@ -101,10 +112,10 @@ export async function draftTodayForRun(
   const db = await getDb();
   let written = 0;
   let done = 0;
-  for (const target of targets) {
-    await opts.onItem?.(done++, targets.length);
+  await runSettledPool(targets, 2, async (target) => {
+    await opts.onItem?.(++done, targets.length);
     const left = opts.deadline - Date.now();
-    if (deadlineReached(opts.deadline) || left < DRAFT_MIN_REMAINING_MS) break;
+    if (deadlineReached(opts.deadline) || left < DRAFT_MIN_REMAINING_MS) return;
     const channel = draftChannel(target);
     try {
       const result = await generateContactFollowUpDraft(userId, target.contactId, goals, {
@@ -117,7 +128,7 @@ export async function draftTodayForRun(
         signal: AbortSignal.timeout(left),
       });
       const body = guardModelOutput((result.body ?? "").trim()).text.slice(0, DRAFT_MAX).trim();
-      if (!body) continue;
+      if (!body) return;
       const draft: RadarDraft = { body, channel, inputsHash: target.inputsHash, generatedAt: new Date().toISOString() };
       // Only onto the card as it was when the draft was asked for, as with the AI note.
       await db
@@ -133,8 +144,7 @@ export async function draftTodayForRun(
       written++;
     } catch (err) {
       reportUnlessQuiet(err, { where: "job.radar.draft", userId, level: "warning" });
-      if (deadlineReached(opts.deadline)) break;
     }
-  }
+  });
   return written;
 }

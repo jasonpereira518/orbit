@@ -207,7 +207,7 @@ async function main() {
     });
     check("an empty window has no rates, not zero rates",
       empty.totals.acceptRate === null && empty.totals.convertRate === null && empty.totals.ignoreRate === null);
-    check("and lists every kind", empty.kinds.length === RECOMMENDATION_KINDS.length && RECOMMENDATION_KINDS.length === 9);
+    check("and lists every kind", empty.kinds.length === RECOMMENDATION_KINDS.length && RECOMMENDATION_KINDS.length === 11);
   }
 
   console.log("\nthe admin page");

@@ -7,7 +7,7 @@
  */
 import { and, desc, eq, gte, inArray, lt, lte, or, sql } from "drizzle-orm";
 import { getDb, rowsOf, runAtomicWrite, type AtomicStatement } from "@/db";
-import { radarRuns, recommendationFeedback, recommendations } from "@/db/schema";
+import { radarOpportunities, radarRuns, recommendationFeedback, recommendations } from "@/db/schema";
 import { clientAvatarUrlSql } from "@/lib/contact-avatar-sql";
 import { AI_DERIVED_SOURCE } from "@/lib/interaction-provenance";
 import { RADAR_WINDOWS, type RadarPick, type RadarSuppression } from "@/lib/radar/score";
@@ -18,6 +18,8 @@ import type {
   RadarAiNote,
   RadarEvidence,
   RadarFeedbackAction,
+  RadarPlayState,
+  RadarPlayType,
   RadarReason,
   RecommendationBucket,
   RecommendationKind,
@@ -42,6 +44,7 @@ export type LiveRecommendation = {
   bucket: RecommendationBucket | null;
   status: RecommendationStatus;
   snoozedUntil: Date | null;
+  pinnedUntil: Date | null;
   inputsHash: string;
   aiNote: RadarAiNote | null;
 };
@@ -58,6 +61,7 @@ export async function loadLiveRecommendations(userId: string): Promise<LiveRecom
       bucket: recommendations.bucket,
       status: recommendations.status,
       snoozedUntil: recommendations.snoozedUntil,
+      pinnedUntil: recommendations.pinnedUntil,
       inputsHash: recommendations.inputsHash,
       aiNote: recommendations.aiNote,
     })
@@ -123,7 +127,7 @@ export async function loadSuppressions(
   return out;
 }
 
-export type NewRecommendation = RadarPick & { inputsHash: string };
+export type NewRecommendation = RadarPick & { inputsHash: string; pinnedUntil?: Date | null };
 
 export type WriteCounts = { inserted: number; updated: number; expired: number };
 
@@ -293,6 +297,10 @@ export async function writeRunResult(
               inputsHash: r.inputsHash,
               aiNote: r.aiNote ?? null,
               suggestedCalendarInvite: r.suggestedCalendarInvite ?? null,
+              secondaryContactId: r.secondaryContactId ?? null,
+              playType: r.aiNote?.playType ?? r.playType ?? null,
+              playState: r.playState ?? null,
+              pinnedUntil: r.pinnedUntil ?? null,
               createdAt: now,
               updatedAt: now,
             }))
@@ -317,6 +325,10 @@ export async function writeRunResult(
               expiresAt: sql`excluded.expires_at`,
               runId: sql`excluded.run_id`,
               suggestedCalendarInvite: sql`coalesce(excluded.suggested_calendar_invite, ${recommendations.suggestedCalendarInvite})`,
+              secondaryContactId: sql`coalesce(excluded.secondary_contact_id, ${recommendations.secondaryContactId})`,
+              playType: sql`coalesce(excluded.play_type, ${recommendations.playType})`,
+              playState: sql`coalesce(${recommendations.playState}, excluded.play_state)`,
+              pinnedUntil: sql`coalesce(${recommendations.pinnedUntil}, excluded.pinned_until)`,
               // The editor's fresh note wins. Otherwise every SET expression reads the OLD row,
               // so this compares the stored hash with the new one before the new one is written,
               // and keeps the old note only while the facts it was written from are unchanged.
@@ -395,6 +407,11 @@ export type RecommendationRow = {
   draft: RadarDraft | null;
   /** Suggested calendar invite for 1-click execution */
   suggestedCalendarInvite?: RadarCalendarInvite | null;
+  secondaryContactId?: string | null;
+  secondaryContactName?: string | null;
+  playType?: RadarPlayType | null;
+  playState?: RadarPlayState | null;
+  pinnedUntil?: Date | null;
   contactName: string;
   title: string | null;
   company: string | null;
@@ -425,6 +442,11 @@ export async function listPendingRecommendations(userId: string, limit: number):
     ai_angle: string | null;
     draft: RadarDraft | null;
     suggested_calendar_invite: RadarCalendarInvite | null;
+    secondary_contact_id: string | null;
+    secondary_contact_name: string | null;
+    play_type: RadarPlayType | null;
+    play_state: RadarPlayState | null;
+    pinned_until: string | Date | null;
     full_name: string;
     preferred_name: string | null;
     title: string | null;
@@ -439,6 +461,8 @@ export async function listPendingRecommendations(userId: string, limit: number):
     await db.execute(sql`
       SELECT r.id, r.contact_id, r.kind, r.score, r.bucket, r.reasons, r.evidence, r.ai_note, r.ai_angle, r.updated_at,
              r.created_at, r.first_seen_at, r.suggested_calendar_invite,
+             r.secondary_contact_id, coalesce(nullif(btrim(c2.preferred_name), ''), c2.full_name) AS secondary_contact_name,
+             r.play_type, r.play_state, r.pinned_until,
              CASE WHEN r.draft ->> 'inputsHash' = r.inputs_hash THEN r.draft END AS draft,
              contacts.full_name, contacts.preferred_name, contacts.title, contacts.company,
              contacts.closeness_tier, contacts.last_interaction_at,
@@ -446,6 +470,7 @@ export async function listPendingRecommendations(userId: string, limit: number):
         FROM recommendations r
         -- Not aliased: clientAvatarUrlSql names the contacts table in full.
         JOIN contacts ON contacts.id = r.contact_id AND contacts.user_id = r.user_id
+        LEFT JOIN contacts c2 ON c2.id = r.secondary_contact_id AND c2.user_id = r.user_id
        WHERE r.user_id = ${userId} AND r.status = 'pending' AND r.expires_at > now()
        ORDER BY r.score DESC, r.id
        LIMIT ${limit}
@@ -463,6 +488,11 @@ export async function listPendingRecommendations(userId: string, limit: number):
     aiAngle: r.ai_angle,
     draft: r.draft,
     suggestedCalendarInvite: r.suggested_calendar_invite,
+    secondaryContactId: r.secondary_contact_id,
+    secondaryContactName: r.secondary_contact_name,
+    playType: r.play_type,
+    playState: r.play_state,
+    pinnedUntil: r.pinned_until ? new Date(r.pinned_until) : null,
     contactName: (r.preferred_name ?? "").trim() || r.full_name,
     title: r.title,
     company: r.company,
@@ -562,7 +592,21 @@ export async function loadModelTallies(userId: string, now: Date): Promise<Radar
            AND status IN ('accepted', 'auto_applied', 'dismissed', 'expired')
       )
       SELECT 'kind' AS scope, kind AS key, sum(a) AS a, sum(d) AS d
-        FROM votes
+        FROM (
+          SELECT kind, a, d FROM votes
+          UNION ALL
+          SELECT 'opportunity' AS kind,
+                 CASE WHEN status = 'saved' THEN ${V.accepted}::numeric ELSE 0 END AS a,
+                 CASE
+                   WHEN status = 'dismissed' AND coalesce(dismiss_reason, '') NOT IN ('wrong_person', 'already_handled') THEN ${V.dismissed}::numeric
+                   WHEN status = 'expired' AND acted_at IS NULL AND seen_count >= ${RADAR_IGNORED_MIN_SEEN} THEN ${V.ignored}::numeric
+                   ELSE 0
+                 END AS d
+            FROM radar_opportunities
+           WHERE user_id = ${userId}
+             AND updated_at >= ${since}::timestamptz
+             AND status IN ('saved', 'dismissed', 'expired')
+        ) all_votes
        GROUP BY kind
       UNION ALL
       SELECT 'reason' AS scope, e ->> 'code' AS key, sum(v.a) AS a, sum(v.d) AS d
@@ -583,10 +627,13 @@ export const RADAR_SEEN_DEBOUNCE_MS = 6 * 60 * 60 * 1000;
  * metrics means seen at least three times and then expired untouched, which is only
  * meaningful because a burst of reloads counts once.
  */
+export const RADAR_PIN_DAYS = 5;
+
 export async function markRecommendationsSeen(userId: string, ids: readonly string[], now: Date = new Date()): Promise<void> {
   if (ids.length === 0) return;
   const db = await getDb();
   const at = now.toISOString();
+  const pinUntil = new Date(now.getTime() + RADAR_PIN_DAYS * DAY_MS).toISOString();
   const debounceCutoff = new Date(now.getTime() - RADAR_SEEN_DEBOUNCE_MS);
   await db
     .update(recommendations)
@@ -594,12 +641,35 @@ export async function markRecommendationsSeen(userId: string, ids: readonly stri
       seenCount: sql`${recommendations.seenCount} + 1`,
       lastSeenAt: now,
       firstSeenAt: sql`coalesce(${recommendations.firstSeenAt}, ${at}::timestamptz)`,
+      pinnedUntil: sql`coalesce(${recommendations.pinnedUntil}, ${pinUntil}::timestamptz)`,
     })
     .where(
       and(
         eq(recommendations.userId, userId),
         inArray(recommendations.id, [...ids]),
         or(sql`${recommendations.lastSeenAt} is null`, lt(recommendations.lastSeenAt, debounceCutoff))
+      )
+    );
+}
+
+/** Stamps impressions on `radar_opportunities` rows shown on /radar or in the briefing. */
+export async function markOpportunitiesSeen(userId: string, ids: readonly string[], now: Date = new Date()): Promise<void> {
+  if (ids.length === 0) return;
+  const db = await getDb();
+  const at = now.toISOString();
+  const debounceCutoff = new Date(now.getTime() - RADAR_SEEN_DEBOUNCE_MS);
+  await db
+    .update(radarOpportunities)
+    .set({
+      seenCount: sql`${radarOpportunities.seenCount} + 1`,
+      lastSeenAt: now,
+      firstSeenAt: sql`coalesce(${radarOpportunities.firstSeenAt}, ${at}::timestamptz)`,
+    })
+    .where(
+      and(
+        eq(radarOpportunities.userId, userId),
+        inArray(radarOpportunities.id, [...ids]),
+        or(sql`${radarOpportunities.lastSeenAt} is null`, lt(radarOpportunities.lastSeenAt, debounceCutoff))
       )
     );
 }

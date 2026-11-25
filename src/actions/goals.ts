@@ -1,9 +1,11 @@
 "use server";
 
 import { desc, eq } from "drizzle-orm";
+import { after } from "next/server";
 import { getDb } from "@/db";
 import { userGoals } from "@/db/schema";
 import { requireUserId } from "@/lib/auth";
+import { triggerReactiveRadarRefresh } from "@/lib/radar/run";
 import {
   addGoalForUser,
   deleteGoalForUser,
@@ -48,7 +50,9 @@ export async function addGoal(
   return asActionResult(async () => {
     const parsed = parseInput(addGoalOptionsSchema, options, "goals.add");
     if (!parsed.ok) throw new UserFacingError(parsed.error);
-    const row = await addGoalForUser(await requireUserId(), text, parsed.value);
+    const userId = await requireUserId();
+    const row = await addGoalForUser(userId, text, parsed.value);
+    after(() => triggerReactiveRadarRefresh(userId, { ai: false }).catch(() => undefined));
     revalidateGoalPaths();
     return row;
   });
@@ -56,14 +60,16 @@ export async function addGoal(
 
 export async function updateGoalProgress(id: string, progress: string | null) {
   return asActionResult(async () => {
-    const row = await updateGoalProgressForUser(await requireUserId(), id, progress);
+    const userId = await requireUserId();
+    const row = await updateGoalProgressForUser(userId, id, progress);
+    after(() => triggerReactiveRadarRefresh(userId, { ai: false }).catch(() => undefined));
     revalidateGoalPaths();
     return row;
   });
 }
 
 function revalidateGoalPaths() {
-  for (const path of ["/settings", "/graph", "/contacts", "/dashboard"]) {
+  for (const path of ["/settings", "/graph", "/contacts", "/dashboard", "/radar"]) {
     revalidatePathIfRequestScoped(path);
   }
 }
@@ -78,7 +84,9 @@ function revalidateGoalPaths() {
  * `createdAt` is an exact restore that asks nothing of any reader.
  */
 export async function deleteGoal(id: string) {
-  const snapshot = await deleteGoalForUser(await requireUserId(), id);
+  const userId = await requireUserId();
+  const snapshot = await deleteGoalForUser(userId, id);
+  after(() => triggerReactiveRadarRefresh(userId, { ai: false }).catch(() => undefined));
   revalidateGoalPaths();
   return snapshot;
 }
@@ -90,7 +98,9 @@ export async function deleteGoal(id: string) {
  * that already exists is left alone rather than overwritten.
  */
 export async function restoreGoal(snapshot: GoalSnapshot) {
-  const result = await restoreGoalForUser(await requireUserId(), snapshot);
+  const userId = await requireUserId();
+  const result = await restoreGoalForUser(userId, snapshot);
+  after(() => triggerReactiveRadarRefresh(userId, { ai: false }).catch(() => undefined));
   revalidateGoalPaths();
   return result;
 }

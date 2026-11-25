@@ -14,7 +14,7 @@ import { isoWeekOf, localClock } from "@/lib/radar/digest";
 import { rankPicks, type RadarPick } from "@/lib/radar/score";
 import { leadReason, recommendationKey, type RecommendationBucket, type RecommendationKind } from "@/lib/radar/types";
 
-export type RadarRunMode = "weekly" | "daily";
+export type RadarRunMode = "weekly" | "daily" | "reactive";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -54,9 +54,9 @@ export function nextRadarRunAt(now: Date, tz: string, dailyEnabled: boolean): Da
 }
 
 /** Due within two days: a meeting or event, a due date. */
-const DATED_MOMENTS: ReadonlySet<string> = new Set(["upcoming_meeting", "event_upcoming", "email_prep", "opportunity_due"]);
+const DATED_MOMENTS: ReadonlySet<string> = new Set(["upcoming_meeting", "event_upcoming", "event_leverage", "email_prep", "opportunity_due"]);
 /** Fresh for two days after Orbit learns it: news about them that goes stale. */
-const FRESH_MOMENTS: ReadonlySet<string> = new Set(["job_change", "job_change_left", "social_post", "public_mention", "email_followup", "email_job", "email_process", "email_news", "email_event"]);
+const FRESH_MOMENTS: ReadonlySet<string> = new Set(["job_change", "job_change_left", "warm_path", "social_post", "public_mention", "email_followup", "email_job", "email_process", "email_news", "email_event"]);
 /** A moment for as long as it lasts: someone is waiting on the person. */
 const OWED_MOMENTS: ReadonlySet<string> = new Set(["inbound_unanswered", "open_thread", "opportunity_overdue"]);
 const MOMENT_WINDOW_MS = 2 * DAY_MS;
@@ -97,7 +97,58 @@ export function composeWeek<T extends RadarPick>(ranked: readonly T[], limits: L
   return [...plan, ...extra];
 }
 
-export type LiveCard = { contactId: string; kind: RecommendationKind; bucket: RecommendationBucket | null; status: string; inputsHash: string };
+export type LiveCard = { contactId: string; kind: RecommendationKind; bucket: RecommendationBucket | null; status: string; inputsHash: string; pinnedUntil?: Date | null };
+
+/**
+ * Radar v2 reactive cadence: cards the user has already seen or started acting on stay pinned
+ * until `pinnedUntil` (as long as their underlying facts still exist in `ranked`), while newly
+ * unlocked opportunities, Connect plays, and moments fill remaining plan slots immediately—no
+ * Monday-only freeze blocking mid-week goal updates or fresh captures.
+ */
+export function composeReactive<T extends RadarPick & { inputsHash: string; pinnedUntil?: Date | null }>(
+  ranked: readonly T[],
+  live: readonly LiveCard[],
+  limits: Limits,
+  now: Date
+): T[] {
+  const rankedByKey = new Map(ranked.map((p) => [recommendationKey(p.contactId, p.kind), p]));
+  const pinnedKeys = new Set<string>();
+  const pinned: T[] = [];
+
+  for (const card of live) {
+    if (card.status !== "pending") continue;
+    const isPinned = card.pinnedUntil != null && card.pinnedUntil > now;
+    if (!isPinned) continue;
+    const key = recommendationKey(card.contactId, card.kind);
+    const current = rankedByKey.get(key);
+    if (!current) continue;
+    pinnedKeys.add(key);
+    pinned.push({
+      ...current,
+      bucket: isMoment(current, now) ? "today" : (card.bucket ?? bucketOf(current, now)),
+      pinnedUntil: card.pinnedUntil,
+    });
+  }
+
+  const perKindCap = Math.max(2, Math.ceil(limits.planSize / 2));
+  const tagged = ranked
+    .filter((p) => !pinnedKeys.has(recommendationKey(p.contactId, p.kind)))
+    .map((p) => ({ ...p, bucket: bucketOf(p, now) }));
+
+  const remainingRoom = Math.max(0, limits.planSize - pinned.length);
+  const additions = rankPicks(tagged, { pending: remainingRoom, perKind: perKindCap });
+  const combined = [...pinned, ...additions];
+  const inCombined = new Set(combined.map((p) => recommendationKey(p.contactId, p.kind)));
+
+  const todayCount = combined.filter((p) => p.bucket === "today").length;
+  const todayRoom = Math.max(0, limits.todayMax - todayCount);
+  const extraToday = rankPicks(
+    tagged.filter((p) => p.bucket === "today" && !inCombined.has(recommendationKey(p.contactId, p.kind))),
+    { pending: todayRoom, perKind: todayRoom }
+  );
+
+  return [...combined, ...extraToday];
+}
 
 export type DayResult<T> = {
   /**
