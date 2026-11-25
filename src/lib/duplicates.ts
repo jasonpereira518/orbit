@@ -22,10 +22,11 @@ export type DuplicateSubject = Pick<
  *
  * At or above it a match is folded automatically; below it the two contacts are both kept
  * and the pair becomes a `duplicate_suggestions` row for the review page. The tiers that
- * clear it are every identifier match plus name+company (0.90), name+title (0.85) and the
- * fuzzy variants (0.87/0.85). The only tier that does not is a bare full-name match at
- * 0.60 — two people genuinely can share a name and nothing else, so that one is a question,
- * not an answer.
+ * clear it are every identifier match plus exact name+company (0.90) and exact name+title
+ * (0.85). The tiers that do not are a bare full-name match at 0.60 — two people genuinely
+ * can share a name and nothing else — and the fuzzy-name variants (0.80/0.75): edit distance
+ * over a whole name cannot tell a typo from a different person ("Rob Martinez" / "Bob
+ * Martinez" score 0.92, "Anna Lopez" / "Ana Lopez" 0.89), so those are questions, not answers.
  *
  * Merging on this threshold is safe in a way it was not before: `contact_merges` archives
  * the losing contact whole, so a wrong automatic merge is visible in the recent-merges list
@@ -35,12 +36,19 @@ export type DuplicateSubject = Pick<
  */
 export const DUPLICATE_MERGE_CONFIDENCE = 0.85;
 
+/** Where a match is worth putting in front of a person, though never acting on unattended. */
+export const DUPLICATE_REVIEW_CONFIDENCE = 0.7;
+
 /**
  * The most a name match can score against someone with a different LinkedIn profile, unless
  * it looks like one person who changed their profile URL (see `findDuplicateCandidatesIndexed`).
  * The bare-name tier: a question for the review page, never an automatic merge.
  */
 export const DIFFERENT_PROFILE_CONFIDENCE = 0.6;
+
+/** Fuzzy-name tiers: below DUPLICATE_MERGE_CONFIDENCE on purpose (see its note), above REVIEW. */
+const FUZZY_NAME_COMPANY_CONFIDENCE = 0.8;
+const FUZZY_NAME_TITLE_CONFIDENCE = 0.75;
 
 function normalize(s: string | null | undefined) {
   return (s || "").trim().toLowerCase();
@@ -415,10 +423,10 @@ export function findDuplicateCandidatesIndexed(
       if (fuzzy < 0.88) continue;
       if (sameCompany) {
         matched.add(contact);
-        matches.push(nameMatch(contact, "Similar name + company", 0.87));
+        matches.push(nameMatch(contact, "Similar name + company", FUZZY_NAME_COMPANY_CONFIDENCE));
       } else if (sameTitle) {
         matched.add(contact);
-        matches.push(nameMatch(contact, "Similar name + title", 0.85));
+        matches.push(nameMatch(contact, "Similar name + title", FUZZY_NAME_TITLE_CONFIDENCE));
       }
     }
   }
