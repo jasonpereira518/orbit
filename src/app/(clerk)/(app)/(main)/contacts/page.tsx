@@ -16,6 +16,7 @@ import { ContactQuotaNotice } from "@/components/contacts/contact-quota-notice";
 import { ContactsFilters } from "@/components/contacts/contacts-filters";
 import { ContactsList } from "@/components/contacts/contacts-list";
 import { PeopleListShell } from "@/components/contacts/people-list-shell";
+import { AiFillContactsButton } from "@/components/contacts/ai-fill-contacts-button";
 import { RefreshContactsButton } from "@/components/contacts/refresh-contacts-button";
 import { cn } from "@/lib/utils";
 import { RenderStamp } from "@/components/layout/render-stamp";
@@ -110,6 +111,7 @@ export default async function ContactsPage({
           <Suspense fallback={null}>
             <DuplicatesButton />
           </Suspense>
+          <AiFillContactsButton />
           <RefreshContactsButton />
           <Link
             {...tourAnchor("contacts.add")}
