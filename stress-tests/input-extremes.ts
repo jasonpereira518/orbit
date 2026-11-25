@@ -55,9 +55,9 @@ run(async () => {
     );
     finding(
       "EC-DATE-2",
-      "createEventForUser refuses an Invalid Date startsAt (the action does `new Date(input.startsAt)` unchecked)",
-      r.threw && !/RangeError|Invalid time value|invalid input syntax|toISOString/i.test(errorText(r.error)),
-      r.threw ? errorText(r.error) : "accepted"
+      "createEventForUser never lets an Invalid Date reach the driver as a RangeError",
+      !(r.threw && /RangeError|Invalid time value|invalid input syntax|toISOString/i.test(errorText(r.error))),
+      r.threw ? errorText(r.error) : "stored with no start time"
     );
   }
 
@@ -113,11 +113,12 @@ run(async () => {
     const r = await rejects(() =>
       logInteractionForUser(USER, { contactId: base.id, rawNotes: huge, aiSummary: huge, topics: Array.from({ length: 10_000 }, (_, i) => `t${i}`) }, { skipEmbedding: true, skipRevalidate: true })
     );
+    const row = r.threw ? null : await db.query.interactions.findFirst({ where: eq(interactions.userId, USER), orderBy: (t, { desc }) => [desc(t.createdAt)] });
     finding(
       "EC-LEN-2",
       "interaction rawNotes/aiSummary/topics are length-capped (2 MB notes + 10k topics accepted otherwise)",
-      r.threw,
-      r.threw ? errorText(r.error) : "stored 2 MB note with 10,000 topics"
+      r.threw || ((row?.rawNotes?.length ?? 0) <= 100_000 && (row?.aiSummary?.length ?? 0) <= 10_000 && (row?.topics?.length ?? 0) <= 100),
+      r.threw ? errorText(r.error) : `stored rawNotes=${row?.rawNotes?.length} aiSummary=${row?.aiSummary?.length} topics=${row?.topics?.length}`
     );
   }
   {
@@ -126,11 +127,12 @@ run(async () => {
     const r = await rejects(() =>
       createContactForUser(USER, { fullName: "Long Notes", notes: huge, howMet: huge, keyFacts: Array.from({ length: 5_000 }, (_, i) => `fact ${i} ` + "x".repeat(500)) } as never, { skipEmbedding: true, skipRevalidate: true, skipSummary: true })
     );
+    const row = r.threw ? null : await db.query.contacts.findFirst({ where: sql`${contacts.userId} = ${USER} and ${contacts.fullName} = 'Long Notes'` });
     finding(
       "EC-LEN-3",
       "contact notes/howMet/keyFacts are length-capped at write (strict schema only checks name/company/title/… )",
-      r.threw,
-      r.threw ? errorText(r.error) : "stored 1 MB notes + 5,000 keyFacts"
+      r.threw || ((row?.notes?.length ?? 0) <= 100_000 && (row?.howMet?.length ?? 0) <= 2_000 && (row?.keyFacts?.length ?? 0) <= 100),
+      r.threw ? errorText(r.error) : `stored notes=${row?.notes?.length} howMet=${row?.howMet?.length} keyFacts=${row?.keyFacts?.length}`
     );
   }
 

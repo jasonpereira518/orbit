@@ -28,6 +28,7 @@ export async function GET() {
   try {
     const upstream = await fetch(`${issuer}/.well-known/openid-configuration`, {
       next: { revalidate: 3600 },
+      signal: AbortSignal.timeout(10_000),
     });
     if (!upstream.ok) {
       return new Response(

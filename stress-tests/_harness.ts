@@ -54,5 +54,12 @@ export function summary(): void {
   console.log("");
   console.log(`${outcomes.length} checks: ${outcomes.filter((o) => o.ok).length} held, ${bugs.length} findings confirmed, ${failed.length} harness failures`);
   for (const b of bugs) console.log(`  BUG  ${b.label}`);
-  if (failed.length) process.exitCode = 1;
+  // Under STRESS_STRICT (how the smoke suite runs these, see scripts/smoke-stress-*.ts) a
+  // confirmed finding is a regression of a fix that already landed, so it fails the run too.
+  // Thrown rather than `process.exitCode = 1`: `run()` ends with `process.exit(0)`, which
+  // overwrote the exit code, so a harness failure used to exit 0.
+  const strictBugs = process.env.STRESS_STRICT === "1" ? bugs.length : 0;
+  if (failed.length || strictBugs) {
+    throw new Error(`${failed.length} harness failure(s), ${strictBugs} confirmed finding(s) under STRESS_STRICT`);
+  }
 }

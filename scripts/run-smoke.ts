@@ -713,6 +713,13 @@ const MANIFEST: Record<string, Tier> = {
   "smoke-radar-email-text": "pglite",
   "smoke-radar-metrics": "pglite",
   "smoke-radar-digest": "pglite",
+  // The audit's stress proofs (stress-tests/) under STRESS_STRICT, where a confirmed BUG fails.
+  "smoke-stress-input-extremes": "pglite",
+  "smoke-stress-concurrency-races": "pglite",
+  "smoke-stress-resilience-repros": "pglite",
+  "smoke-stress-recurrence-edge": "pure",
+  "smoke-stress-net-guard-edge": "pure",
+  "smoke-security-lint": "pure",
   "smoke-unsubscribe-guard": "pglite",
   "smoke-contact-job-matches": "pglite",
   "smoke-opportunity-extract": "pure",
