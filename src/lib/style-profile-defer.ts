@@ -1,4 +1,5 @@
 import { after } from "next/server";
+import { learnFromEdits } from "@/lib/draft-edits";
 import { maybeBuildStyleProfile } from "@/lib/writing-style-profile";
 
 /**
@@ -15,5 +16,18 @@ export function deferStyleProfileBuild(userId: string): void {
     after(() => maybeBuildStyleProfile(userId));
   } catch {
     // No request: a script or a job. Nothing to learn for.
+  }
+}
+
+/**
+ * Re-learn the changes the user keeps making (`@/lib/draft-edits`) after the response, once
+ * enough edited drafts have piled up. Same `after()` guard as above: outside a request it runs
+ * nothing, and the next recorded edit starts it again.
+ */
+export function deferEditLearning(userId: string): void {
+  try {
+    after(() => learnFromEdits(userId).catch(() => null));
+  } catch {
+    // No request: a script or a job.
   }
 }

@@ -23,6 +23,7 @@
       "dueFollowUps": 5,
       "strongConnections": 19,
       "pendingReminders": 8,
+      "dueReminders": 3,
       "topCompany": null
     },
     "recentContacts": [
@@ -2946,6 +2947,10 @@
       }
     ],
     "dueCount": 8,
+    "dueBreakdown": {
+      "reminders": 3,
+      "followUps": 5
+    },
     "totalCount": 23,
     "canUseExtension": true,
     "alerts": [],
@@ -4139,7 +4144,7 @@
                   "maxLength": 500
                 },
                 "notes": {
-                  "description": "Replaces the existing notes.",
+                  "description": "Added to the end of their notes, dated; existing notes are kept.",
                   "type": "string",
                   "maxLength": 5000
                 },
@@ -4744,6 +4749,45 @@
             }
           },
           {
+            "name": "list_radar_cards",
+            "title": "Radar suggestions",
+            "description": "Who Orbit's radar currently suggests reaching out to, and why — job changes, news, events, going quiet, goals — the same cards the radar page shows.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "default": 5,
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10
+                }
+              }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "list_radar_finds",
+            "title": "Radar finds",
+            "description": "What radar's weekly web search found for the user that is not in their network yet: events near them, people to meet (each with someone they know who can introduce them), and programs with deadlines. Every find has a link the search returned. Nothing here is a contact until the user saves it on the radar page.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {}
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
             "name": "what_needs_attention",
             "title": "What needs attention",
             "description": "What's waiting for the user right now: reminders and follow-ups due, notes to review, replies to their feedback, and account problems (a disconnected mailbox, a missing AI key). The same list as the notification bell.",
@@ -4758,6 +4802,22 @@
                   "maximum": 15
                 }
               }
+            },
+            "annotations": {
+              "readOnlyHint": true
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "radar_briefing",
+            "title": "Radar briefing",
+            "description": "Radar's briefing in one call: how many people it suggests today and this week, the top few with why, and how many drafts are ready.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {}
             },
             "annotations": {
               "readOnlyHint": true
@@ -5192,6 +5252,75 @@
               "required": [
                 "opportunityId",
                 "status"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "schedule_recommendation",
+            "title": "Act on a radar card",
+            "description": "Act on one of radar's suggestions (id from list_radar_cards) by scheduling a follow-up reminder with that person in 3, 7 or 14 days.",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "recommendationId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "days": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "const": 3
+                    },
+                    {
+                      "type": "number",
+                      "const": 7
+                    },
+                    {
+                      "type": "number",
+                      "const": 14
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "recommendationId",
+                "days"
+              ]
+            },
+            "execution": {
+              "taskSupport": "forbidden"
+            }
+          },
+          {
+            "name": "snooze_recommendation",
+            "title": "Snooze a radar card",
+            "description": "Snooze one of radar's suggestions (id from list_radar_cards) for a week (1w) or a month (1m).",
+            "inputSchema": {
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "type": "object",
+              "properties": {
+                "recommendationId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|<uuid>|<uuid>)$"
+                },
+                "length": {
+                  "type": "string",
+                  "enum": [
+                    "1w",
+                    "1m"
+                  ]
+                }
+              },
+              "required": [
+                "recommendationId",
+                "length"
               ]
             },
             "execution": {
@@ -6439,6 +6568,7 @@
       "dueFollowUps": 4,
       "strongConnections": 20,
       "pendingReminders": 11,
+      "dueReminders": 2,
       "topCompany": null
     },
     "recentContacts": [

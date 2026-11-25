@@ -20,6 +20,9 @@ import {
   interactions,
   tags,
 } from "../src/db/schema";
+import { appSurfaceFlags, relationshipDigests } from "../src/db/schema";
+import { invalidateHiddenSurfaceKeys } from "../src/lib/surface-visibility";
+import { LINKEDIN_DEEP_READ_SURFACE_KEY } from "../src/lib/surfaces";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import { FEATURE_TOOLS } from "../src/lib/tools/definitions-features";
 import { isToolError, runTool } from "../src/lib/tools/registry";
@@ -243,14 +246,37 @@ async function main() {
     const dossier = await run<{ contact?: { fullName: string } }>("get_dossier", { contactId: stripe0.id });
     check("get_dossier: one relationship's brief", dossier.contact?.fullName === "Stripe 0", JSON.stringify(dossier).slice(0, 200));
     check("…not someone else's contact", isToolError(await runToolAs("get_dossier", { contactId: stripe0.id }, OTHER)));
-    // Deep read: the relationship block reaches chat (and Cosmo), never an outside MCP client.
+    // Deep read off: no surface gets a relationship key.
     check("deep read off: get_dossier on chat is today's shape (no relationship key)", !("relationship" in (dossier as object)), Object.keys(dossier as object).join());
     const dossierTool = ORBIT_TOOLS.find((t) => t.name === "get_dossier")!;
     const dossierMcp = (await runTool(dossierTool, USER, { contactId: stripe0.id }, { surface: "mcp", scopes: ["read"] })) as object;
-    check("get_dossier over MCP has no relationship key", !("relationship" in dossierMcp), Object.keys(dossierMcp).join());
+    check("deep read off: get_dossier over MCP has no relationship key", !("relationship" in dossierMcp), Object.keys(dossierMcp).join());
     const contactMcp = (await runTool(ORBIT_TOOLS.find((t) => t.name === "get_contact")!, USER, { contactId: stripe0.id }, { surface: "mcp", scopes: ["read"] })) as object;
     const contactChat = await run<object>("get_contact", { contactId: stripe0.id });
     check("deep read off: get_contact has no relationship key on either surface", !("relationship" in contactChat) && !("relationship" in contactMcp));
+
+    // Deep read on (released): a connected assistant gets the same short block as chat.
+    await db.insert(relationshipDigests).values({
+      contactId: stripe0.id, userId: USER,
+      origin: { text: "Met at HackNC", date: "2022-09-01", precision: "month", context: "event", excerpt: "Great meeting you at HackNC!", interactionId: stripe0.id, runId: stripe0.id, replaced: null },
+    });
+    await db.update(contacts).set({ notes: "n".repeat(5000) }).where(eq(contacts.id, stripe0.id));
+    await db.insert(appSurfaceFlags).values({ surfaceKey: `live:${LINKEDIN_DEEP_READ_SURFACE_KEY}`, hiddenBy: USER }).onConflictDoNothing();
+    invalidateHiddenSurfaceKeys();
+    try {
+      const mcp = { surface: "mcp" as const, scopes: ["read" as const] };
+      const line = "How you met: Met at HackNC (Sep 2022)";
+      const onDossier = (await runTool(dossierTool, USER, { contactId: stripe0.id }, mcp)) as { relationship?: string };
+      check("deep read on: get_dossier over MCP carries how you met", Boolean(onDossier.relationship?.includes(line)), JSON.stringify(onDossier).slice(0, 300));
+      const onContact = (await runTool(ORBIT_TOOLS.find((t) => t.name === "get_contact")!, USER, { contactId: stripe0.id }, mcp)) as { relationship?: string; notes?: string };
+      check("deep read on: get_contact over MCP carries how you met", Boolean(onContact.relationship?.includes(line)), JSON.stringify(onContact).slice(0, 300));
+      check("…and its notes are still capped for MCP", (onContact.notes?.length ?? 0) > 0 && onContact.notes!.length <= 2000, String(onContact.notes?.length));
+    } finally {
+      await db.delete(appSurfaceFlags).where(eq(appSurfaceFlags.surfaceKey, `live:${LINKEDIN_DEEP_READ_SURFACE_KEY}`));
+      invalidateHiddenSurfaceKeys();
+      await db.delete(relationshipDigests).where(eq(relationshipDigests.userId, USER));
+      await db.update(contacts).set({ notes: null }).where(eq(contacts.id, stripe0.id));
+    }
   }
 
   console.log("\nRead-only, and shaped for MCP by its own allowlist");

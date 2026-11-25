@@ -14,6 +14,7 @@ import type { PgTable } from "drizzle-orm/pg-core";
 import { INBOX_IGNORED_CONTEXT } from "@/lib/email-intel/types";
 import { getDb, rowsOf } from "@/db";
 import {
+  draftEdits,
   actionItems,
   aiSuggestions,
   apiIdempotencyKeys,
@@ -97,6 +98,7 @@ import {
   contactSignals,
   emailEvents,
   emailThreads,
+  recruitingOverrides,
   recommendationFeedback,
   recommendations,
   recruiterContactUnlocks,
@@ -260,8 +262,8 @@ type CategoryStep = {
 
 const STEPS: Record<DataCategory, CategoryStep> = {
   insights: {
-    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(radarOpportunities), own(userProjects), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns), own(emailThreads), own(emailEvents)],
-    counts: [aiSuggestions, recommendations, radarOpportunities, userProjects, contactEmbeddings, memoryChunks, closenessCohorts, emailThreads, emailEvents],
+    exports: [own(aiSuggestions), own(recommendations), own(recommendationFeedback), own(radarRuns), own(radarOpportunities), own(userProjects), own(contactSignals), own(contactEmbeddings), own(memoryChunks), own(closenessCohorts, "user_id"), own(aiResultCache), own(aiBatchJobs), own(relationshipRuns), own(emailThreads), own(emailEvents), own(recruitingOverrides, "company_key")],
+    counts: [aiSuggestions, recommendations, radarOpportunities, userProjects, contactEmbeddings, memoryChunks, closenessCohorts, emailThreads, emailEvents, recruitingOverrides],
     run: async (db, userId) => {
       // Background AI still in flight at a provider. Cancelled there first — the provider is
       // holding this person's prompts, and deleting our row would only lose the handle to
@@ -277,6 +279,8 @@ const STEPS: Record<DataCategory, CategoryStep> = {
       // insights-only delete says so explicitly.
       await db.delete(emailEvents).where(eq(emailEvents.userId, userId));
       await db.delete(emailThreads).where(eq(emailThreads.userId, userId));
+      // The Recruiting board's corrections are about those events — a company named in mail.
+      await db.delete(recruitingOverrides).where(eq(recruitingOverrides.userId, userId));
       // The names dismissed from Radar's "From your inbox" strip came from that mail too.
       await db
         .delete(ignoredPeople)
@@ -774,7 +778,7 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   preferences: {
-    exports: [own(userSettings)],
+    exports: [own(userSettings), own(draftEdits)],
     counts: [],
     run: async () => {
       // Handled by `purgeUserSettings` at the end of `purgeUserData`, not here: what survives
@@ -910,6 +914,9 @@ const PRESERVED_SETTINGS_COLUMNS = {
 } as const;
 
 async function purgeUserSettings(db: Db, userId: string, keepSettings: boolean) {
+  // Orbit's drafts next to what was sent (`@/lib/draft-edits`): learned writing preferences, and
+  // messages to other people, so they always go with the preferences, kept settings or not.
+  await db.delete(draftEdits).where(eq(draftEdits.userId, userId));
   const preserved = keepSettings
     ? await db.query.userSettings.findFirst({
         where: eq(userSettings.userId, userId),

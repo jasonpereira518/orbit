@@ -5,6 +5,8 @@ import { Search } from "lucide-react";
 import { getActiveCaptureJobs } from "@/actions/capture-jobs";
 import { getPlanOverview, getSettings } from "@/actions/settings";
 import { CaptureFlowLazy } from "@/components/capture/capture-flow-lazy";
+import { StaleDraftNotice } from "@/components/capture/capture-resume-notice";
+import { shouldAutoOpenJob } from "@/lib/capture/job-staleness";
 import { MeetingsList } from "@/components/meetings/meetings-list";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { Button } from "@/components/ui/button";
@@ -39,12 +41,12 @@ function listHref(q: string, source: MeetingSourceFilter): string {
 export default async function MeetingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; source?: string; candidate?: string }>;
+  searchParams: Promise<{ q?: string; source?: string; candidate?: string; job?: string }>;
 }) {
   const gate = await pageVisibilityGate("page.meetings");
   if (gate) return gate;
 
-  const { q: rawQ, source: rawSource, candidate: rawCandidate } = await searchParams;
+  const { q: rawQ, source: rawSource, candidate: rawCandidate, job: jobParam } = await searchParams;
   const q = (rawQ ?? "").trim().slice(0, 100);
   const source: MeetingSourceFilter = rawSource === "orbit" || rawSource === "granola" ? rawSource : "all";
   const candidateKey = (rawCandidate ?? "").trim() || null;
@@ -61,7 +63,17 @@ export default async function MeetingsPage({
     getActiveCaptureJobs().catch(() => []),
   ]);
   // The recorder only resumes a meeting's own review; a notes capture stays Capture's.
-  const meetingJob = jobs.find((j) => j.sourceKind === "meeting") ?? null;
+  const found = jobs.find((j) => j.sourceKind === "meeting") ?? null;
+  // A days-old unsaved draft is offered as a notice instead of taking the page over.
+  const stale =
+    found &&
+    !shouldAutoOpenJob(
+      { status: found.status, updatedAt: new Date(found.updatedAt), itemCount: found.result?.items?.length ?? 0 },
+      { explicitJobParam: Boolean(jobParam), now: new Date() },
+    )
+      ? found
+      : null;
+  const meetingJob = stale ? null : found;
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -74,7 +86,11 @@ export default async function MeetingsPage({
         </p>
       </div>
 
+      {stale && <StaleDraftNotice jobId={stale.id} kind="meeting" updatedAt={stale.updatedAt} itemCount={stale.result?.items?.length ?? 0} path="/meetings" />}
+
       <CaptureFlowLazy
+        // Resume (`?job=`) remounts the flow so it opens that draft, as on /capture.
+        key={jobParam ? `job-${jobParam}` : "meetings"}
         variant="meetings"
         candidateKey={candidateKey}
         initialJob={meetingJob}

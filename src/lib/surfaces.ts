@@ -71,16 +71,17 @@ const PAGES: Surface[] = [
     reason: "Onboarding and the app shell both redirect here.",
   },
   {
-    // Ships dark again: released in #380, put back the same day. The page, the nightly
-    // pass's spend, the Monday email and the dashboard briefing all follow the effective
-    // coming-soon set. An admin previews it from /admin/product, where a `live:page.radar`
-    // override releases it without a deploy; releasing in code is deleting the line below.
+    // Released for Google's verification review: Email insights (a gmail.readonly feature) only
+    // shows in Settings → Google once Radar is live, so reviewers could not reach it. Radar is
+    // still off for each account until its owner presses "Turn on", and the nightly pass's
+    // spend, the Monday email and the dashboard briefing all follow that per-account switch
+    // and the effective coming-soon set. An admin can put it back from /admin/product with a
+    // `soon:page.radar` override, or by restoring `comingSoon: true` below.
     key: "page.radar",
     kind: "page",
     label: "Radar",
     description: "Who to reach out to this week, and why, rebuilt every night.",
     href: "/radar",
-    comingSoon: true,
   },
   {
     key: "page.events",
@@ -336,8 +337,6 @@ const FEATURES: Surface[] = [
     kind: "feature",
     label: "LinkedIn deep read",
     description: "Reads more of a LinkedIn export: your full history, how you met people, and who you are closest to.",
-    // Until /privacy describes it (deep read PR 5).
-    comingSoon: true,
   },
 ];
 

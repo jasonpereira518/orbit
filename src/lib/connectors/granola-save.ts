@@ -81,6 +81,9 @@ export async function saveGranolaDirect(
   // A backfilled note's generic follow-up can already be overdue — same rule as Drive.
   input.participants = input.participants.map((p) => ({
     ...p,
+    // Nobody reviewed this save: like Drive, it only fills blanks ("unattended_capture" in
+    // the field rule), never replacing a company or role Orbit or the user already has.
+    fillOnly: true,
     createReminder:
       p.createReminder &&
       followUpStillAhead(input.anchorIso, p.followUpDays || p.parsed.follow_up_days || DEFAULT_FOLLOW_UP_WINDOW_DAYS, now),

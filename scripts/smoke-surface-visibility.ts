@@ -189,13 +189,8 @@ async function deepReadChecks() {
   process.env.ADMIN_USER_IDS = ADMIN;
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||= "pk_test_smoke";
   try {
-    check("deep read is off for an ordinary user while the surface is coming soon", (await deepReadOn(USER)) === false);
+    check("deep read is on for an ordinary user now the surface is released", (await deepReadOn(USER)) === true);
     check("deep read is on for an admin with no request or cookie", (await deepReadOn(ADMIN)) === true);
-    // A feature is released in code, not from /admin/product; a live: row is what that release reads.
-    const db = await getDb();
-    await db.insert(appSurfaceFlags).values({ surfaceKey: `live:${LINKEDIN_DEEP_READ_SURFACE_KEY}`, hiddenBy: ADMIN }).onConflictDoNothing();
-    invalidateHiddenSurfaceKeys();
-    check("releasing the surface turns deep read on for everyone", (await deepReadOn(USER)) === true);
   } finally {
     const db = await getDb();
     await db.delete(appSurfaceFlags).where(eq(appSurfaceFlags.surfaceKey, `live:${LINKEDIN_DEEP_READ_SURFACE_KEY}`));
@@ -489,10 +484,10 @@ async function main() {
           DEFAULT_COMING_SOON_KEYS.has(CHAT_IMPORTS_SURFACE_KEY)
       );
       check(
-        "feature.linkedin-deep-read is a feature-kind coming-soon surface",
+        "feature.linkedin-deep-read is a released feature-kind surface",
         getSurface(LINKEDIN_DEEP_READ_SURFACE_KEY)?.kind === "feature" &&
-          getSurface(LINKEDIN_DEEP_READ_SURFACE_KEY)?.comingSoon === true &&
-          DEFAULT_COMING_SOON_KEYS.has(LINKEDIN_DEEP_READ_SURFACE_KEY)
+          getSurface(LINKEDIN_DEEP_READ_SURFACE_KEY)?.comingSoon !== true &&
+          !DEFAULT_COMING_SOON_KEYS.has(LINKEDIN_DEEP_READ_SURFACE_KEY)
       );
       check(
         "chat imports are closed for an ordinary user",

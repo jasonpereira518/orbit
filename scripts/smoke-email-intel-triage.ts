@@ -87,7 +87,25 @@ const greenhouse = assessThread(
   ),
   ME
 );
-check("an ATS platform is not named as the company", greenhouse.event?.company === null);
+check("an ATS platform is not named as the company — its display name is", greenhouse.event?.company === "Acme", String(greenhouse.event?.company));
+
+const anonymousAts = assessThread(
+  thread(msg({ from: "no-reply@us.greenhouse.io", subject: "Thanks for applying", snippet: "We have received your application." })),
+  ME
+);
+check("with nothing naming the company, there is none rather than \"Greenhouse\"", anonymousAts.event?.company === null, String(anonymousAts.event?.company));
+
+const workday = assessThread(
+  thread(msg({ from: "Workday <mastercard@myworkday.com>", subject: "Thank you for applying!", snippet: "We have received your application." })),
+  ME
+);
+check("a Workday tenant names the company, never \"Myworkday\"", workday.event?.company === "Mastercard", String(workday.event?.company));
+
+const card = assessThread(
+  thread(msg({ from: "Chase <no-reply@chase.com>", subject: "Your application has been received", snippet: "Your application for the Sapphire card has been received." })),
+  ME
+);
+check("a bank's application is no hiring event", card.event === null, JSON.stringify(card.event));
 
 const unmatched = assessThread(
   thread(msg({ from: "Careers <no-reply@stripe.com>", subject: "Hello", snippet: "Welcome to our newsletter." })),

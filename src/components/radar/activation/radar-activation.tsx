@@ -92,6 +92,10 @@ export function RadarActivation({ faces }: { faces: SceneFace[] }) {
           out to and why.
           {small && " Radar gets sharper as you add people."}
         </p>
+        <p className="mx-auto max-w-md text-xs text-muted-foreground">
+          It works from your notes and contacts in Orbit, and uses email only if you’ve opted in. You can turn it off any
+          time.
+        </p>
         <Button
           type="button"
           size="lg"

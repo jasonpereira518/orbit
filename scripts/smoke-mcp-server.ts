@@ -13,7 +13,7 @@ import "./smoke/_env";
 import { run } from "./smoke/_env";
 import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { productEvents } from "../src/db/schema";
+import { contacts, productEvents } from "../src/db/schema";
 import { eventSchemas } from "../src/lib/product-event-schemas";
 import { ORBIT_TOOLS } from "../src/lib/tools/definitions";
 import { mcpClientFrom, resetMcpClientCache } from "../src/lib/mcp/client";
@@ -238,22 +238,27 @@ run(async () => {
     (t) => t.name
   );
   check("tools/list returns the read tools", ["search_contacts", "get_contact", "who_do_i_know_at", "due_followups"].every((t) => tools.includes(t)), tools.join(","));
-  // Page-gated feature reads follow the page: radar and outreach ship as coming soon, so an
-  // outside agent is not offered their tools; a released page's reads (events) and an ungated
-  // feature read are.
+  // Page-gated feature reads follow the page: outreach ships as coming soon, so an outside agent
+  // is not offered its tools; a released page's reads (events, radar) and an ungated feature read
+  // are.
   check(
     "a tool behind a page not yet released to the user is not offered",
-    !tools.includes("list_radar_cards") && !tools.includes("list_campaigns") && tools.includes("query_contacts"),
+    !tools.includes("list_campaigns") && tools.includes("query_contacts"),
     tools.join(",")
   );
   check("a released page's tools are offered", tools.includes("list_events") && tools.includes("get_event_roster"), tools.join(","));
+  check("radar is released, so its reads are offered too", tools.includes("list_radar_cards") && tools.includes("list_radar_finds"), tools.join(","));
   check("a write key sees the write tools", tools.includes("log_interaction") && tools.includes("create_contact"), tools.join(","));
-  // So do the page-gated writes: radar and outreach ship as coming soon, so their writes are not
-  // offered either, while an ungated catalog write is.
+  // So do the page-gated writes: outreach ships as coming soon, so its writes are not offered,
+  // while a released page's writes (radar) and an ungated catalog write are.
   check(
     "a write behind a page not yet released to the user is not offered",
-    !tools.includes("snooze_recommendation") && !tools.includes("schedule_recommendation") && !tools.includes("update_campaign") &&
-      tools.includes("create_opportunity") && tools.includes("add_goal"),
+    !tools.includes("update_campaign") && tools.includes("create_opportunity") && tools.includes("add_goal"),
+    tools.join(",")
+  );
+  check(
+    "radar's writes are offered now that it is released",
+    tools.includes("snooze_recommendation") && tools.includes("schedule_recommendation"),
     tools.join(",")
   );
 
@@ -350,6 +355,15 @@ run(async () => {
     notes: "Wrote the first compiler.",
   });
   check("update_contact writes the allowlisted fields", updated.updated === true, JSON.stringify(updated));
+  await call(writeKey, "update_contact", { contactId, notes: "Prefers email." });
+  {
+    const [row] = await (await getDb()).select({ notes: contacts.notes }).from(contacts).where(eq(contacts.id, contactId));
+    check(
+      "update_contact adds notes after what is there, never replacing it",
+      Boolean(row?.notes?.includes("Wrote the first compiler.") && row.notes.includes("Prefers email.")),
+      JSON.stringify(row?.notes)
+    );
+  }
 
   const noted = await call(writeKey, "add_note", {
     contactId,

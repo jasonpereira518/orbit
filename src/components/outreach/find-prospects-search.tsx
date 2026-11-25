@@ -14,6 +14,7 @@ import {
   Search,
   Sparkles,
   TrendingUp,
+  UserCheck,
   UserPlus,
 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -37,6 +38,7 @@ import { createContact } from "@/actions/contacts";
 import type { BrightDataCandidate, PeopleSearchCriteria } from "@/lib/brightdata";
 import type { OutreachSuggestion } from "@/lib/outreach-suggestions";
 import { BrightDataIntegrationGuide } from "@/components/outreach/brightdata-integration-guide";
+import { IntroRequestDialog } from "@/components/outreach/intro-request-dialog";
 import { cn } from "@/lib/utils";
 
 type SearchMode = "description" | "company" | "fields";
@@ -126,6 +128,8 @@ export function FindProspectsSearch({
   }));
   const [hasSearched, setHasSearched] = useState(false);
   const [savingContactId, setSavingContactId] = useState<string | null>(null);
+  const [introCandidate, setIntroCandidate] = useState<BrightDataCandidate | null>(null);
+  const [introDialogOpen, setIntroDialogOpen] = useState(false);
 
   // Load flow suggestions on mount
   useEffect(() => {
@@ -680,9 +684,25 @@ export function FindProspectsSearch({
 
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
-                        <h4 className="font-semibold text-ink text-sm truncate">
-                          {candidate.fullName}
-                        </h4>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <h4 className="font-semibold text-ink text-sm truncate">
+                            {candidate.fullName}
+                          </h4>
+                          {candidate.score != null && candidate.score > 0 && (
+                            <span
+                              className={cn(
+                                "shrink-0 rounded-full px-2 py-0.5 text-3xs font-semibold border",
+                                candidate.tier === "must_meet"
+                                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/25"
+                                  : candidate.tier === "strong_fit"
+                                  ? "bg-primary/10 text-primary border-primary/25"
+                                  : "bg-muted/80 text-muted-foreground border-border/70"
+                              )}
+                            >
+                              {candidate.score}% Match
+                            </span>
+                          )}
+                        </div>
                         <input
                           type="checkbox"
                           checked={isSelected}
@@ -701,6 +721,37 @@ export function FindProspectsSearch({
                     </div>
                   </div>
 
+                  {/* Warm Intro Callout Banner (if mutual contact exists) */}
+                  {candidate.introPath && (
+                    <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-2.5 flex items-center justify-between gap-2">
+                      <div className="min-w-0 flex items-center gap-2 text-xs">
+                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                          <UserCheck className="h-3.5 w-3.5" />
+                        </span>
+                        <div className="truncate">
+                          <span className="font-medium text-emerald-950 dark:text-emerald-200 block truncate text-xs">
+                            Warm intro via {candidate.introPath.introducerName}
+                          </span>
+                          <span className="text-2xs text-muted-foreground block truncate">
+                            {candidate.introPath.relationshipContext}
+                          </span>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIntroCandidate(candidate);
+                          setIntroDialogOpen(true);
+                        }}
+                        className="h-7 text-xs border-emerald-500/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/10 shrink-0 rounded-lg px-2.5"
+                      >
+                        Request Intro
+                      </Button>
+                    </div>
+                  )}
+
                   {/* Summary & News context */}
                   <div className="space-y-2 text-xs">
                     <p className="text-muted-foreground line-clamp-2 leading-relaxed text-[12px]">
@@ -711,6 +762,22 @@ export function FindProspectsSearch({
                       <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-3xs font-medium text-primary">
                         {candidate.matchReason}
                       </span>
+                      {Boolean(candidate.matchedProjects && candidate.matchedProjects.length > 0) && (
+                        <span className="rounded-full border border-purple-500/25 bg-purple-500/10 px-2 py-0.5 text-3xs font-medium text-purple-700 dark:text-purple-300 inline-flex items-center gap-1">
+                          <Sparkles className="h-2.5 w-2.5 shrink-0" />
+                          <span className="truncate">
+                            Project: {candidate.matchedProjects![0].projectTitle}
+                          </span>
+                        </span>
+                      )}
+                      {Boolean(candidate.eventOverlap && candidate.eventOverlap.coAttendedCount > 0) && (
+                        <span className="rounded-full border border-amber-500/25 bg-amber-500/10 px-2 py-0.5 text-3xs font-medium text-amber-700 dark:text-amber-300 inline-flex items-center gap-1">
+                          <span className="truncate">
+                            {candidate.eventOverlap!.coAttendedCount} shared event
+                            {candidate.eventOverlap!.coAttendedCount > 1 ? "s" : ""}
+                          </span>
+                        </span>
+                      )}
                       {Boolean(candidate.education || candidate.almaMater) && (
                         <span className="rounded-full border border-indigo-500/25 bg-indigo-500/10 px-2 py-0.5 text-3xs font-medium text-indigo-700 dark:text-indigo-300 inline-flex items-center gap-1">
                           <GraduationCap className="h-2.5 w-2.5 shrink-0" />
@@ -774,6 +841,13 @@ export function FindProspectsSearch({
           </div>
         </div>
       )}
+
+      {/* Warm Introduction Request Dialog */}
+      <IntroRequestDialog
+        open={introDialogOpen}
+        onOpenChange={setIntroDialogOpen}
+        candidate={introCandidate}
+      />
     </div>
   );
 }

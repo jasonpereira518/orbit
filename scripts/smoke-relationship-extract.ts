@@ -33,6 +33,10 @@ check("op registered as fast background", (() => {
   return op?.tier === "fast" && op.background === true;
 })());
 
+check("the one-time origin pass is its own fast background operation", (() => {
+  const op = (AI_OPERATIONS as Record<string, { tier: string; background?: boolean }>)["relationship.origin"];
+  return op?.tier === "fast" && op.background === true;
+})());
 check("trivial: thanks for connecting", isTrivialWindow(w(["Thanks for connecting!", "Likewise!"])));
 check("trivial: two short lines", isTrivialWindow(w(["hey", "hi"])));
 check(

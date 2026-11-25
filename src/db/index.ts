@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
   writing_instructions text,
   writing_style_profile text,
   writing_style_profile_updated_at timestamptz,
+  writing_edit_lessons text,
+  writing_edit_lessons_updated_at timestamptz,
   email_signature_text text,
   email_signature_html text,
   default_send_provider text,
@@ -901,6 +903,7 @@ CREATE TABLE IF NOT EXISTS outreach_messages (
   delivery_id text,
   rfc_message_id text,
   provider_thread_id text,
+  ai_body text,
   delivered_at timestamptz,
   opened_at timestamptz,
   clicked_at timestamptz,
@@ -2079,6 +2082,17 @@ CREATE TABLE IF NOT EXISTS contact_merges (
   confidence real,
   merged_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS draft_edits (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  surface text NOT NULL,
+  kind text NOT NULL,
+  ai_text text NOT NULL,
+  final_text text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  learned_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS draft_edits_user_idx ON draft_edits(user_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS contact_changes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -2240,6 +2254,15 @@ CREATE TABLE IF NOT EXISTS email_events (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS email_events_rule_uidx ON email_events(thread_row_id, kind) WHERE source = 'rule';
 CREATE INDEX IF NOT EXISTS email_events_user_idx ON email_events(user_id, occurred_at);
+CREATE TABLE IF NOT EXISTS recruiting_overrides (
+  user_id text NOT NULL,
+  company_key text NOT NULL,
+  hidden_at timestamptz,
+  stage text,
+  stage_at timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, company_key)
+);
 CREATE TABLE IF NOT EXISTS ignored_people (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3171,9 +3194,18 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 247 = LinkedIn deep read PR 2 (reader upgrade): relationship_digests.origin and .relationship
 // (jsonb, nullable), the quoted "how you met" and relationship kind. Scanned every remote ref on
 // Nov 16 2026: main and five branches hold 246, none higher.
-// 248 = smart opportunities table for cross-contact note synthesis aligned with personal goals & progress.
-// Scanned remote refs on Nov 17 2026: main holds 247, none higher.
-export const SCHEMA_VERSION = 248;
+// 248 = learned edits (draft-edit learning, PR 2 of the channel/edits plan): draft_edits (AI draft
+// vs what was sent, newest 30 per user), user_settings.writing_edit_lessons(+_updated_at) and
+// outreach_messages.ai_body. Scanned every remote ref on Nov 18 2026: main and all branches <= 247.
+// 249 = contacts.sort_key ignores parenthesised text, so "Briana (Simmons) Medley" sorts under M
+// (UX walkthrough Task 19). Scanned every remote ref on Nov 18 2026: main (merged draft_edits, 248)
+// is the highest, so this takes 249.
+// 250 = the Recruiting board: recruiting_overrides (a company hidden as "Not a job", or a stage set
+// by hand), keyed by user and company. Built as 241; renumbered to 250 on Nov 23 2026 when main
+// reached 249. Scanned every remote ref that day: none above 249.
+// 251 = smart opportunities table for cross-contact note synthesis aligned with personal goals & progress.
+// Scanned remote refs on Nov 25 2026: main holds 250, none higher.
+export const SCHEMA_VERSION = 251;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -3204,15 +3236,18 @@ export function linkedinSlugNeedsRewrite(stored: string | null): boolean {
   return normalizeGeneratedExpression(stored) !== normalizeGeneratedExpression(LINKEDIN_SLUG_EXPRESSION);
 }
 
+/** `contacts.sort_key` strips "(maiden)" text before taking the last word; the DROP below runs only until it does. */
+export const DROP_SORT_KEY_STATEMENT = "ALTER TABLE contacts DROP COLUMN IF EXISTS sort_key";
+
 /** The stored expression, null when there is no such column, undefined when unreadable. */
-async function storedLinkedinSlugExpression(run: StatementRunner): Promise<string | null | undefined> {
+async function storedLinkedinSlugExpression(run: StatementRunner, column = "linkedin_slug"): Promise<string | null | undefined> {
   try {
     const result = await run(
       `SELECT pg_get_expr(d.adbin, d.adrelid) AS expr
          FROM pg_attribute a
          JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
         WHERE a.attrelid = to_regclass(\'public.contacts\')
-          AND a.attname = \'linkedin_slug\'
+          AND a.attname = \'${column}\'
           AND NOT a.attisdropped`
     );
     return rowsOf<{ expr: string | null }>(result)[0]?.expr ?? null;
@@ -3457,9 +3492,17 @@ export const SCALE_DDL: string[] = [
   // `src/actions/contacts.ts` and `lastNameOf` in `contacts-list.tsx` both derived this in
   // JavaScript, and a page boundary that disagrees with the sort silently drops or repeats
   // contacts. Both of those are deleted in favour of this column.
+  // Text in parentheses is dropped first: "Briana (Simmons) Medley" files under M, not "(simmons)".
+  // A drop-and-add (the old expression is baked into the column), run only while the stored
+  // expression lacks the strip — see `applyScaleSchema`. The index below is rebuilt after it.
+  DROP_SORT_KEY_STATEMENT,
   `ALTER TABLE contacts ADD COLUMN IF NOT EXISTS sort_key text
      GENERATED ALWAYS AS (
-       lower(coalesce(nullif(trim(last_name), ''), split_part(trim(full_name), ' ', -1)))
+       lower(coalesce(
+         nullif(trim(last_name), ''),
+         nullif(split_part(trim(regexp_replace(full_name, '\\([^)]*\\)', '', 'g')), ' ', -1), ''),
+         split_part(trim(full_name), ' ', -1)
+       ))
      ) STORED`,
 
   // Normalized LinkedIn slug — the identity two accounts are matched on, so mutual-contact
@@ -3947,6 +3990,12 @@ export type SchemaFailure = { statement: string; message: string };
  * is recorded for the caller to act on (the build-time migration refuses to deploy on any);
  * without one it is logged, which is all a runtime cold start can do.
  */
+/** A Postgres error carries a five-character SQLSTATE; transport and quota failures do not. */
+export function isSqlError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === "string" && /^[0-9A-Z]{5}$/.test(code);
+}
+
 async function runStatements(
   run: StatementRunner,
   statements: string[],
@@ -3959,6 +4008,10 @@ async function runStatements(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (BENIGN_DDL_FAILURE.test(message)) continue;
+      // No SQLSTATE means the database itself is unreachable (a Neon 402 quota, a fetch
+      // failure), so no later statement can succeed either. Stop instead of pushing hundreds of
+      // statements at a refusing DB on every cold start; the caller retries the whole pass.
+      if (!isSqlError(err)) throw err;
       const head = statement.trim().split("\n")[0].slice(0, 140);
       if (failed) failed.push({ statement: head, message });
       else console.error(`[db] ${label} failed: ${head}\n`, message);
@@ -3979,7 +4032,11 @@ export async function applyScaleSchema(run: StatementRunner, failed?: SchemaFail
   // old unconditional behaviour is the safe default).
   const stored = await storedLinkedinSlugExpression(run);
   const rewriteSlug = stored === undefined || linkedinSlugNeedsRewrite(stored);
-  const statements = rewriteSlug ? SCALE_DDL : SCALE_DDL.filter((s) => s !== DROP_LINKEDIN_SLUG_STATEMENT);
+  const storedSort = await storedLinkedinSlugExpression(run, "sort_key");
+  const rewriteSort = storedSort === undefined || (storedSort !== null && !storedSort.includes("regexp_replace"));
+  const statements = SCALE_DDL.filter(
+    (s) => (rewriteSlug || s !== DROP_LINKEDIN_SLUG_STATEMENT) && (rewriteSort || s !== DROP_SORT_KEY_STATEMENT)
+  );
   await runStatements(run, statements, "scale DDL", failed);
 
   // Fuzzy name matching. Available on Neon as an extension and bundled with PGlite (see
@@ -4663,6 +4720,10 @@ async function migratePglite(client: PGlite): Promise<SchemaFailure[]> {
   // v245: a sequence's follow-ups reply in the first email's thread.
   await ensureColumn(client, "outreach_messages", "rfc_message_id", "text");
   await ensureColumn(client, "outreach_messages", "provider_thread_id", "text");
+  // v248: learning the edits a user keeps making (draft_edits is in the DDL above).
+  await ensureColumn(client, "outreach_messages", "ai_body", "text");
+  await ensureColumn(client, "user_settings", "writing_edit_lessons", "text");
+  await ensureColumn(client, "user_settings", "writing_edit_lessons_updated_at", "timestamptz");
   await ensureColumn(client, "recommendations", "base_score", "integer");
   await ensureColumn(client, "recommendations", "ai_delta", "integer");
   await ensureColumn(client, "recommendations", "ai_angle", "text");
@@ -5591,6 +5652,10 @@ const alters = [
   // Schema v245: a sequence's follow-ups reply in the first email's thread.
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS rfc_message_id text`,
   `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS provider_thread_id text`,
+  // Schema v248: learning the edits a user keeps making (draft_edits is in the DDL template).
+  `ALTER TABLE outreach_messages ADD COLUMN IF NOT EXISTS ai_body text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_edit_lessons text`,
+  `ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS writing_edit_lessons_updated_at timestamptz`,
   `CREATE INDEX IF NOT EXISTS outreach_messages_delivery_idx ON outreach_messages(delivery_id) WHERE delivery_id IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS metrics_daily (day date NOT NULL, metric text NOT NULL, dim text NOT NULL DEFAULT '', value bigint NOT NULL, computed_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (day, metric, dim))`,
   `ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS base_score integer`,

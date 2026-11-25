@@ -12,6 +12,8 @@ import {
 } from "@/actions/contacts";
 import { ContactBriefCard } from "@/components/contacts/contact-brief-card";
 import { ContactExperienceSection } from "@/components/contacts/contact-experience-section";
+import { ContactChangesList } from "@/components/contacts/contact-changes-list";
+import { listContactChangesForUser } from "@/lib/contact-changes";
 import { ContactFollowUpSection } from "@/components/contacts/contact-follow-up-section";
 import { ContactMentionsSection } from "@/components/contacts/contact-mentions-section";
 import { ContactProfileHero } from "@/components/contacts/contact-profile-hero";
@@ -50,6 +52,7 @@ import { getSettings } from "@/actions/settings";
 import { isLoggedTouch, latestLoggedTouch } from "@/lib/interaction-provenance";
 import { notFound, redirect } from "next/navigation";
 import { resolveContactId } from "@/lib/contact-merge";
+import { avatarRouteUrl } from "@/lib/contact-avatar-url";
 import type { AiAccessDenial } from "@/lib/managed-ai-policy";
 import { RenderStamp } from "@/components/layout/render-stamp";
 import { loadRelationshipContexts, type RelationshipContext } from "@/lib/relationship-context";
@@ -146,6 +149,10 @@ export default async function ContactDetailPage({
   const healthPromise = userIdPromise
     .then((u) => getRelationshipHealth(u, id))
     .catch(() => null);
+  // LinkedIn deep read, started with the other reads. An empty map when it is off or fails.
+  const relationshipPromise = userIdPromise
+    .then((u) => loadRelationshipContexts(u, [id]))
+    .catch(() => new Map<string, RelationshipContext>());
 
   // notFound() must fire BEFORE any Suspense boundary renders so the route
   // still returns a real 404 status.
@@ -268,8 +275,7 @@ export default async function ContactDetailPage({
     howMet: contact.howMet,
   });
   // LinkedIn deep read: how you met (quoted), the kind, where you overlapped. Null when it is off.
-  const relationship =
-    (await loadRelationshipContexts(await userIdPromise, [id]).catch(() => new Map<string, RelationshipContext>())).get(id) ?? null;
+  const relationship = (await relationshipPromise).get(id) ?? null;
 
   const displayName = contact.preferredName || contact.fullName;
   // The rows are the newest first, so a logged touch among them is the newest one overall;
@@ -349,7 +355,7 @@ export default async function ContactDetailPage({
             // this page's payload. The hero only needs to know a stored photo exists.
             contact.sharedAvatarUrl ??
             (contact.profileImageUrl?.trim().startsWith("data:image/")
-              ? `/api/avatars/${contact.id}`
+              ? avatarRouteUrl(contact.id, null)
               : contact.profileImageUrl)
           }
           linkedinUrl={contact.linkedinUrl}
@@ -431,6 +437,12 @@ export default async function ContactDetailPage({
           relationship={relationship}
         />
       </div>
+
+      {/* Newer details Orbit found for what you typed (contact-info accuracy): answered here
+          or on the Duplicates page. Renders nothing when none are waiting. */}
+      <Suspense fallback={null}>
+        <StreamedContactUpdates userId={userIdPromise} contactId={contact.id} />
+      </Suspense>
 
       {/* No fallback: the section renders its own empty state, and a skeleton that
           resolves into an empty state reads as a glitch. */}
@@ -557,6 +569,11 @@ async function StreamedFollowUp({
       <ContactFollowUpSection {...rest} sendOptions={resolved} />
     </div>
   );
+}
+
+async function StreamedContactUpdates({ userId, contactId }: { userId: Promise<string>; contactId: string }) {
+  const { suggestions } = await listContactChangesForUser(await userId, 20, contactId);
+  return <ContactChangesList suggestions={suggestions} applied={[]} />;
 }
 
 async function StreamedPendingSends({

@@ -76,6 +76,25 @@ month): two bursts an hour let the compute sleep in between. The Better Stack he
 pinged by each completed sweep, so set its period to 30 min with at least 15 min grace; a
 quiet heartbeat means the tick stopped arriving, the call fails, or production is down.
 
+What runs when (UTC; `src/lib/schedules.ts` is the source, `scripts/smoke-schedules.ts` pins it).
+Each job is its own function invocation, so only what a person or an alert waits on runs every
+tick; the Vercel Hobby plan caps Fluid Active CPU.
+
+| Cadence | Jobs |
+| --- | --- |
+| Every tick (:00, :30) | `ops-sweep`, `sync-run`, `email-drain` (queued and scheduled sends) |
+| Hourly :00 | `work-history`, `name-sweep`, `radar-web`, `webhooks-drain`, `cloud-notes` |
+| Hourly :30 | `process-stalled`, `radar-run`, `jobs-feed`, `connectors-outbox`, `email-intel` |
+| :30 of every even hour | `credit-notices` |
+| Sun and Mon, hourly :00 | `radar-digest` |
+| Daily / weekly / monthly | `ops-rollup` 00:30, `speech-usage` 05:30, `billing-reconcile` 06:30, `weekly-digest` Mon 14:00, `contacts-upkeep` the 1st 03:30 |
+
+`email-drain`, `webhooks-drain`, `connectors-outbox`, `credit-notices` and `cloud-notes` answer
+`{"idle": true}` and write no `cron_runs` row when nothing is due, so a quiet ledger for them is
+normal. `email-intel` always writes one (its "stopped running" alert reads it). The email
+attachment sweep inside `process-stalled` lists Blob storage only at 03:30 UTC (it is metered);
+the rest of it runs hourly.
+
 1. `/admin/health` → "Ops sweep" tile. Quiet for over 75 min: Upstash console → QStash →
    Logs, filter on `orbit-tick`. A 401 means `CRON_SECRET` in Vercel no longer matches the
    one the schedule forwards — re-run the script with the current value. No calls at all:

@@ -1028,7 +1028,7 @@
             "maxLength": 500
           },
           "notes": {
-            "description": "Replaces the existing notes.",
+            "description": "Added to the end of their notes, dated; existing notes are kept.",
             "type": "string",
             "maxLength": 5000
           },
@@ -2102,7 +2102,8 @@
           "contact",
           "brief",
           "goals",
-          "stale"
+          "stale",
+          "relationship"
         ]
       },
       "surfaceKey": null,

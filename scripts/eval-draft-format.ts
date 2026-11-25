@@ -23,7 +23,8 @@ import { readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { eq, inArray } from "drizzle-orm";
 import { getDb } from "../src/db";
-import { calendarEvents, calendarSources, contacts, interactions, rateLimitBuckets, userSettings } from "../src/db/schema";
+import { calendarEvents, calendarSources, contacts, draftEdits, interactions, rateLimitBuckets, userSettings } from "../src/db/schema";
+import { learnFromEdits } from "../src/lib/draft-edits";
 import { freeWindows } from "../src/lib/calendar-free-windows";
 import { encrypt } from "../src/lib/crypto";
 import { bootstrapAuthenticatedUser } from "../src/lib/auth";
@@ -37,6 +38,8 @@ import { LINKEDIN_DM_MAX, LINKEDIN_NOTE_MAX, charLength, claimsAttachment, hypeH
 const USER = "eval-draft-format-user";
 /** The two real free times the seeded calendar gives; any weekday an email names must be one. */
 let WINDOW_DAYS: string[] = [];
+/** `--edits`: the user always changes "Hi" to "Hey"; every email draft must then open with Hey. */
+const EDITS = process.argv.includes("--edits");
 const WEEKDAYS = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi;
 /** What drafts are told about the user's voice, read the way the actions read it. */
 let VOICE: string | null = null;
@@ -49,7 +52,8 @@ type Draft = { subject?: string | null; body: string };
  * IF the resume was sent, and Dana only asked for one: a draft saying it was sent (or is being
  * sent, or is attached) invented it.
  */
-type Case = { name: string; kind: MessageKind; run: () => Promise<Draft>; previousSubject?: string; forbid?: RegExp };
+/** `channel`: what Orbit must pick on its own (no channel passed in), checked as a hard rule. */
+type Case = { name: string; kind: MessageKind; run: () => Promise<Draft & { channel?: string | null }>; previousSubject?: string; forbid?: RegExp; channel?: "email" | "linkedin" };
 // "…if I sent my resume" restates the offer, which is right; only a claim is a miss.
 const SENT_RESUME = /(?<!\bif )\b(i(['’]ve| have)? (sent|attached|forwarded)|i['’]m (sending|attaching)|sending (along|over)|(here['’]?s|here is|attached is) my|i['’]ve included)\b/i;
 type Check = { rule: string; ok: boolean; hard: boolean };
@@ -66,9 +70,10 @@ function core(body: string): string {
     .trim();
 }
 
-function checks(c: Case, d: Draft): Check[] {
+function checks(c: Case, d: Draft & { channel?: string | null }): Check[] {
   const body = d.body.trim();
   const out: Check[] = [
+    ...(c.channel ? [{ rule: `picks ${c.channel} on its own`, ok: d.channel === c.channel, hard: true }] : []),
     { rule: "no em/en dash", ok: !/[–—]/.test(`${d.subject ?? ""}${body}`), hard: true },
     { rule: "no exclamation mark", ok: !/!/.test(`${d.subject ?? ""}${body}`), hard: true },
     { rule: "no hype words", ok: hypeHits(body).length === 0, hard: true },
@@ -89,7 +94,9 @@ function checks(c: Case, d: Draft): Check[] {
     const named = [...new Set((body.match(WEEKDAYS) ?? []).map((d) => d.toLowerCase()))];
     out.push(
       { rule: "offers only the calendar's free days", ok: named.every((d) => WINDOW_DAYS.includes(d)), hard: true },
-      { rule: 'opens "Hi <name>,"', ok: /^hi [^,\n]+,/i.test(body), hard: true },
+      EDITS
+        ? { rule: 'learned edit: opens "Hey <name>,"', ok: /^hey [^,\n]+,/i.test(body), hard: true }
+        : { rule: 'opens "Hi <name>,"', ok: /^hi [^,\n]+,/i.test(body), hard: true },
       { rule: "signs off with the full name", ok: new RegExp(`\\n${SENDER}\\s*$`).test(body), hard: true },
       { rule: "sign-off word is Best/Thanks", ok: /\n(best|thanks),\s*\n/i.test(body), hard: false }
     );
@@ -181,6 +188,7 @@ async function seed(key: string, model: string): Promise<{ ada: string; grace: s
   const db = await getDb();
   const settings = {
     writingStyleProfile: null,
+    writingEditLessons: null,
     aiProvider: "openai",
     aiModel: model,
     openaiApiKeyEncrypted: encrypt(key),
@@ -200,6 +208,8 @@ async function seed(key: string, model: string): Promise<{ ada: string; grace: s
   await db.insert(interactions).values([
     { userId: USER, contactId: ada!.id, interactionType: "coffee", interactionDate: new Date("2026-10-20T15:00:00Z"), rawNotes: "Talked about her seed round, the London office, and that she is hiring a founding engineer in January." },
     { userId: USER, contactId: grace!.id, interactionType: "meeting", interactionDate: new Date("2026-10-04T18:00:00Z"), rawNotes: "Judged our HackNC project. Offered to introduce me to the payments infra team lead if I sent her my resume." },
+    // Her newest written exchange was on LinkedIn: with no channel asked for, a draft is a DM.
+    { userId: USER, contactId: grace!.id, interactionType: "linkedin_message", interactionDate: new Date("2026-10-10T18:00:00Z"), rawNotes: "Messaged on LinkedIn to say thanks for judging; she replied she'd keep an eye out for my resume." },
   ]);
   // A connected calendar with the first eligible morning booked, so the windows are real ones
   // the model could not have guessed.
@@ -239,6 +249,23 @@ async function main() {
     if (/marco|dana|priya|sam\b|liu|orbit|hackathon|midterm/i.test(profile)) console.log("   MISS the profile names a person or a topic");
     await db.update(userSettings).set({ writingStyleProfile: profile }).where(eq(userSettings.userId, USER));
   }
+  if (EDITS) {
+    // Four drafts where the user swapped "Hi" for "Hey" (and trimmed a line), plus one edit that
+    // only fixes a fact: the fact must not become a rule.
+    await db.delete(draftEdits).where(eq(draftEdits.userId, USER));
+    const pairs = [
+      ["Hi Marco,\n\nThanks for the coffee yesterday. Could I send you the new onboarding flow next week?\n\nThanks,\nJason Pereira", "Hey Marco,\n\nThanks for the coffee yesterday. Could I send you the new onboarding flow next week?\n\nThanks,\nJason Pereira"],
+      ["Hi Dana,\n\nI finished the backend project we discussed. Would it change which roles you'd suggest?\n\nBest,\nJason Pereira", "Hey Dana,\n\nI finished the backend project we discussed. Would it change which roles you'd suggest?\n\nBest,\nJason Pereira"],
+      ["Hi Priya,\n\nGood meeting you at the mixer. Would you be open to 15 minutes of feedback on the app?\n\nThanks,\nJason Pereira", "Hey Priya,\n\nGood meeting you at the mixer. Would you be open to 15 minutes of feedback?\n\nThanks,\nJason Pereira"],
+      ["Hi Sam,\n\nCount me in for the Saturday hackathon. I can bring the API starter so we save the first hour.\n\nBest,\nJason Pereira", "Hey Sam,\n\nCount me in for the Saturday hackathon. I can bring the API starter so we save the first hour.\n\nBest,\nJason Pereira"],
+      ["Hi Liu,\n\nCould we meet Thursday at 3 to go over section 2?\n\nThanks,\nJason Pereira", "Hi Liu,\n\nCould we meet Friday at 3 to go over section 2?\n\nThanks,\nJason Pereira"],
+    ];
+    await db.insert(draftEdits).values(pairs.map(([aiText, finalText]) => ({ userId: USER, surface: "chat", kind: "email", aiText: aiText!, finalText: finalText! })));
+    const rules = await learnFromEdits(USER);
+    console.log(`Learned from edits:\n${rules ?? "(nothing)"}\n`);
+    if (!rules || !/hey/i.test(rules)) console.log("   MISS the Hi -> Hey change was not learned");
+    if (rules && /thursday|friday/i.test(rules)) console.log("   MISS a one-off fact edit became a rule");
+  }
   VOICE = await loadWritingInstructions(USER);
   const windows = await freeWindows(USER);
   WINDOW_DAYS = (windows ?? []).map((w) => w.split(" ")[0]!.toLowerCase());
@@ -261,6 +288,8 @@ async function main() {
     { name: "warm email: Grace", kind: "email_warm", forbid: SENT_RESUME, run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "email", writingInstructions: VOICE }) },
     { name: "LinkedIn DM: Ada", kind: "linkedin_dm", run: () => generateContactFollowUpDraft(USER, ada, [], { channel: "linkedin", writingInstructions: VOICE }) },
     { name: "LinkedIn DM: Grace", kind: "linkedin_dm", forbid: SENT_RESUME, run: () => generateContactFollowUpDraft(USER, grace, [], { channel: "linkedin", writingInstructions: VOICE }) },
+    { name: "picked from words: 'email Ada'", kind: "email_warm", channel: "email", run: () => generateContactFollowUpDraft(USER, ada, [], { intent: "Email Ada to ask about the founding engineer role", writingInstructions: VOICE }) },
+    { name: "picked from history: Grace (last wrote on LinkedIn)", kind: "linkedin_dm", channel: "linkedin", forbid: SENT_RESUME, run: () => generateContactFollowUpDraft(USER, grace, [], { writingInstructions: VOICE }) },
     {
       name: "recruiter email: Dana Kim",
       kind: "email_warm",

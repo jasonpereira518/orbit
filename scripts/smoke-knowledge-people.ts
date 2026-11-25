@@ -91,6 +91,11 @@ async function main() {
   check("another account's brief never leaks in", !JSON.stringify(out).includes("Must never leak"));
   check("a row is small", JSON.stringify(out.rows[1]).length < 600, String(JSON.stringify(out.rows[1]).length));
 
+  const [oldWithSummary] = await db.insert(contacts).values({ userId: USER, fullName: "Zed Old", aiSummary: "Zed is an old friend.", lastInteractionAt: new Date(2019, 1, 1) }).returning();
+  out = await loadKnowledgePeople(USER);
+  check("people with a summary come first, even if touched longest ago", out.rows.map((r) => r.fullName).join(",") === "Sam Ortiz,Priya Raman,Zed Old,Lee Park", out.rows.map((r) => r.fullName).join(","));
+  await db.delete(contacts).where(eq(contacts.id, oldWithSummary.id));
+
   console.log("\nGoals change without any brief regenerating");
   await db.delete(userGoals).where(eq(userGoals.id, gGone.id));
   out = await loadKnowledgePeople(USER);

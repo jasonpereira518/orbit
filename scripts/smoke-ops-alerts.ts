@@ -281,8 +281,10 @@ function main() {
     ...HEALTHY,
     cron: { ...HEALTHY.cron, emailIntel: over },
   });
-  check("an email-insights sweep silent for 3h → emailintel.schedule_missed",
-    Boolean(find(emailIntel({ lastStartedAt: hoursAgo(3), lastState: "ok" }), "emailintel.schedule_missed")));
+  check("an email-insights sweep silent for 4h → emailintel.schedule_missed",
+    Boolean(find(emailIntel({ lastStartedAt: hoursAgo(4), lastState: "ok" }), "emailintel.schedule_missed")));
+  check("  an hourly sweep running two hours late is not silent yet",
+    !find(emailIntel({ lastStartedAt: hoursAgo(2), lastState: "ok" }), "emailintel.schedule_missed"));
   check("  never having run is not an alert (the feature is opt-in)",
     !find(emailIntel({ lastStartedAt: null, lastState: null }), "emailintel.schedule_missed"));
   check("  a failed run → emailintel.run_failed",

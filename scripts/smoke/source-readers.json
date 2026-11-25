@@ -367,6 +367,11 @@
   "smoke-origin-checks.ts": [
     "src/app/api"
   ],
+  "smoke-page-shell.ts": [
+    "scripts/smoke-page-shell.baseline.json",
+    "src/app/(clerk)/(app)",
+    "src/components"
+  ],
   "smoke-pcm-worklet.ts": [
     "public/orbit-pcm-worklet.js"
   ],
@@ -424,6 +429,9 @@
     "src/lib/recruiter-drafts.ts",
     "src/lib/reminder-writes.ts"
   ],
+  "smoke-relationship-apply.ts": [
+    "src/actions/contacts.ts"
+  ],
   "smoke-report-error.ts": [
     "src/app/global-error.tsx",
     "src/components/error-fallback.tsx",
@@ -435,7 +443,12 @@
   "smoke-schedules.ts": [
     "docs/RUNBOOK.md",
     "scripts/qstash-schedules.ts",
+    "src/app/api/cloud-notes/run/route.ts",
+    "src/app/api/connectors/outbox/drain/route.ts",
+    "src/app/api/credits/notices/route.ts",
+    "src/app/api/email/drain/route.ts",
     "src/app/api/imports/process-stalled/route.ts",
+    "src/app/api/webhooks/outbound/drain/route.ts",
     "src/lib/public-routes.ts",
     "src/lib/schedules.ts"
   ],
@@ -523,6 +536,12 @@
     "src/app/api/interest-list/unsubscribe/route.ts",
     "src/app/api/radar/digest/unsubscribe/route.ts",
     "src/lib/unsubscribe-guard.ts"
+  ],
+  "smoke-ux-copy.ts": [
+    "src/components/contacts/contact-form.tsx",
+    "src/components/contacts/contacts-list.tsx",
+    "src/components/recruiters/gmail-import-panel.tsx",
+    "src/components/recruiters/outlook-import-panel.tsx"
   ],
   "smoke-vercel-ignore-build.ts": [
     "docs/RUNBOOK.md",

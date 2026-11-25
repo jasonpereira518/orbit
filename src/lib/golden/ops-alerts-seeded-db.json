@@ -35,7 +35,7 @@
     {
       "detail": "No run has ever been recorded; mailboxes and calendars are not being synced.",
       "id": "sync.schedule_missed",
-      "severity": "warning",
+      "severity": "critical",
       "title": "Connector sync has stopped running"
     },
     {

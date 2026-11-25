@@ -215,6 +215,8 @@ async function seed() {
     summary: "Applied",
     evidenceQuote: "We have received your application.",
   });
+  // The person's corrections to the Recruiting board: a company named in that mail.
+  await db.insert(schema.recruitingOverrides).values({ userId: USER, companyKey: "stripe", hiddenAt: now });
 
   const [interaction] = await db
     .insert(schema.interactions)
@@ -614,6 +616,13 @@ async function seed() {
     contactBId: contact.id < otherContact.id ? otherContact.id : contact.id,
     reason: "Same full name",
     confidence: 0.6,
+  });
+  await db.insert(schema.draftEdits).values({
+    userId: USER,
+    surface: "chat",
+    kind: "email",
+    aiText: "Hi Ada, good to see you.",
+    finalText: "Hey Ada, good to see you.",
   });
   await db.insert(schema.contactChanges).values({
     userId: USER,

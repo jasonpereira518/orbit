@@ -105,6 +105,8 @@ const nextConfig: NextConfig = {
       { source: "/imports", destination: "/capture?mode=imports", permanent: false },
       // The setup wizard folded into /onboarding; old bookmarks still land there.
       { source: "/onboarding/wizard", destination: "/onboarding", permanent: false },
+      // The page is /graph; people type the product's name for it.
+      { source: "/constellation", destination: "/graph", permanent: false },
     ];
   },
   async rewrites() {

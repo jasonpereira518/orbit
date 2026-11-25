@@ -36,6 +36,7 @@ import {
   awaitingReplyDescription,
   type LastTouch,
 } from "../src/lib/awaiting-reply";
+import { withDeepReadOff } from "./smoke/deep-read";
 
 let failures = 0;
 function check(label: string, ok: boolean, detail?: string) {
@@ -312,7 +313,7 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((err) => {
+withDeepReadOff(main).catch((err) => {
   console.error(err);
   process.exit(1);
 });

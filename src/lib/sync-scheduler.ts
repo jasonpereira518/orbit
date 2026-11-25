@@ -35,6 +35,7 @@ import { getDb } from "@/db";
 import { gmailConnections, outlookConnections, userSettings } from "@/db/schema";
 import {
   emailActivitySince,
+  markEmailActivitySynced,
   syncEmailActivity,
 } from "@/lib/email-activity-server";
 import {
@@ -1170,13 +1171,28 @@ async function syncMailboxActivity(
     return;
   }
 
-  const result = await syncEmailActivity(conn.userId, {
-    selfEmail: connection.emailAddress,
-    since: await emailActivitySince(conn.userId),
-  });
+  // Taken BEFORE the reads: mail that lands while the pass runs is then picked up next time.
+  const startedAt = new Date();
+  const since = await emailActivitySince(conn.userId);
+  let pageToken: string | null = null;
+  // A first sync reaches back 90 days, which is more than one page of ids; the cap keeps one
+  // account from using the whole function budget (the rest is picked up by the next pass).
+  for (let page = 0; page < MAILBOX_MAX_PAGES; page++) {
+    const result = await syncEmailActivity(conn.userId, {
+      selfEmail: connection.emailAddress,
+      since,
+      pageToken,
+    });
+    stats.emailInteractionsLogged += result.interactionsLogged;
+    pageToken = result.nextPageToken;
+    if (!pageToken) break;
+  }
+  await markEmailActivitySynced(conn.userId, startedAt);
   stats.mailboxesSynced++;
-  stats.emailInteractionsLogged += result.interactionsLogged;
 }
+
+/** Pages of 100 message ids one mailbox pass reads before leaving the rest to the next tick. */
+const MAILBOX_MAX_PAGES = 5;
 
 /** One claimed Google connection, start to finish: the cron pool and Sync now both run this. */
 async function runGoogleClaimed(conn: ClaimedConnection, stats: SyncRunStats, now: Date, deps: SyncDeps): Promise<void> {
@@ -1211,8 +1227,10 @@ async function runGoogleClaimed(conn: ClaimedConnection, stats: SyncRunStats, no
     stats.synced++;
     // Best-effort and deliberately after the calendar: a mailbox pass that throws must not
     // cost the connection its calendar sync, and the two answer different questions.
-    await syncMailboxActivity(conn, stats).catch(() => {
+    await syncMailboxActivity(conn, stats).catch((err) => {
       stats.mailboxesSkipped++;
+      // Was swallowed whole, which is how a dead mailbox pass looked like a working one.
+      reportError(err, { where: "job.sync.mailbox-activity", userId: conn.userId, level: "warning", extra: { connectionId: conn.id } });
     });
   } catch (err) {
     stats.failed++;

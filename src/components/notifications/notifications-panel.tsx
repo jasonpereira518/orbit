@@ -96,10 +96,11 @@ export function NotificationsPanelButton({
   const dueCount = useMemo(
     () =>
       data
-        ? data.items.filter(
-            (i) =>
-              i.urgency === "due" &&
-              !(i.kind === "feedback_reply" && panelDismissals.isDismissed(panelItemKey(i)))
+        ? // `data.dueCount` is the one count (reminders + follow-ups + feedback replies); a
+          // reply cleared from this device's list stops counting.
+          data.dueCount -
+          data.items.filter(
+            (i) => i.kind === "feedback_reply" && panelDismissals.isDismissed(panelItemKey(i))
           ).length
         : 0,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `dismissedVersion` is the signal that the device's list changed
@@ -205,6 +206,16 @@ export function NotificationsPanelButton({
             <SheetDescription>
               What needs your attention right now.
             </SheetDescription>
+            {data && data.dueBreakdown.reminders + data.dueBreakdown.followUps > 0 && (
+              <p className="text-sm text-muted-foreground" data-testid="due-breakdown">
+                <span className="font-medium text-ink">
+                  {data.dueBreakdown.reminders + data.dueBreakdown.followUps} due
+                </span>
+                {" · "}
+                {data.dueBreakdown.reminders} {data.dueBreakdown.reminders === 1 ? "reminder" : "reminders"} ·{" "}
+                {data.dueBreakdown.followUps} {data.dueBreakdown.followUps === 1 ? "follow-up" : "follow-ups"}
+              </p>
+            )}
           </SheetHeader>
 
           <NotificationsPanelBody onClose={() => setOpen(false)} />

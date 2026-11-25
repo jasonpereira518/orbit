@@ -25,11 +25,17 @@ const MAX_ROLE_KEYWORDS = 10;
 
 export type ExportExtrasOutcome = { rows: number; targetsAdded: number; backgroundAdded: number };
 
+/** The per-person notes, staged as the import's rows for the engine. Returns rows staged. */
+export async function stageExportSignals(userId: string, importId: string, texts: Map<string, string>): Promise<number> {
+  const signals = parseExportSignals(texts);
+  await stageImportRows(signals.map((payload, rowIndex) => ({ importId, userId, rowIndex, payload })));
+  return signals.length;
+}
+
 export async function applyExportExtras(userId: string, importId: string): Promise<ExportExtrasOutcome> {
   const texts = await readExportTexts(userId, importId);
 
-  const signals = parseExportSignals(texts);
-  await stageImportRows(signals.map((payload, rowIndex) => ({ importId, userId, rowIndex, payload })));
+  const rows = await stageExportSignals(userId, importId, texts);
 
   // ponytail: one resolveCompany round trip per target (≤ 50). Batch it if exports grow.
   let targetsAdded = 0;
@@ -74,5 +80,5 @@ export async function applyExportExtras(userId: string, importId: string): Promi
     });
   }
 
-  return { rows: signals.length, targetsAdded, backgroundAdded: background.length };
+  return { rows, targetsAdded, backgroundAdded: background.length };
 }

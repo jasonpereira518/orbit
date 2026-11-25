@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { Lock, Mail, ExternalLink, Search } from "lucide-react";
 import type { PublicRecruiter } from "@/lib/recruiters";
+import { CompanyChip } from "@/components/recruiters/company-chip";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -80,12 +81,10 @@ export function RecruiterList({
           >
             <div className="min-w-0">
               <p className="font-medium text-ink">{r.fullName}</p>
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                {r.firm || "Unknown firm"}
-                {r.role ? ` · ${r.role}` : ""}
-                {r.specialty.length && !r.role
-                  ? ` · ${r.specialty.slice(0, 3).join(", ")}`
-                  : ""}
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-sm text-muted-foreground">
+                {r.firm ? <CompanyChip name={r.firm} size="sm" className="font-medium" /> : "Unknown firm"}
+                {r.role ? <span>· {r.role}</span> : null}
+                {r.specialty.length && !r.role ? <span>· {r.specialty.slice(0, 3).join(", ")}</span> : null}
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 {r.myLink && (

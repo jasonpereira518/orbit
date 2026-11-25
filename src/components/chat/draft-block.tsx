@@ -20,6 +20,7 @@ import {
 } from "@/lib/chat-draft-block";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import { recordDraftOutcome } from "@/actions/settings";
 
 /** Quiet this long after the last keystroke, then the edit is saved. */
 const SAVE_AFTER_MS = 700;
@@ -119,6 +120,8 @@ function DraftEditorBlock({
   const [confirmCopy, setConfirmCopy] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [sent, setSent] = useState<{ at: string; maybe: boolean } | null>(null);
+  // The block as the answer wrote it, compared with what is copied or sent (`recordDraftOutcome`).
+  const aiBody = useRef(draft.body);
 
   // What was last written and what is waiting to be, read by the timer and the blur handler.
   const latest = useRef({ subject, body });
@@ -197,6 +200,7 @@ function DraftEditorBlock({
       await navigator.clipboard.writeText(email && subject.trim() ? `Subject: ${subject.trim()}\n\n${body.trim()}` : body.trim());
       setConfirmCopy(false);
       setCopied(true);
+      void recordDraftOutcome({ surface: "chat", kind: email ? "email" : "linkedin", aiText: aiBody.current, finalText: body }).catch(() => {});
       setTimeout(() => setCopied(false), 1600);
     } catch {
       toast.error("Couldn’t copy that — try selecting the text instead");
@@ -330,7 +334,10 @@ function DraftEditorBlock({
           name={name ?? "them"}
           body={body}
           subject={subject}
-          onSent={(at, maybe) => setSent({ at, maybe })}
+          onSent={(at, maybe) => {
+            setSent({ at, maybe });
+            void recordDraftOutcome({ surface: "chat", kind: "email", aiText: aiBody.current, finalText: body }).catch(() => {});
+          }}
           onUndone={() => setSent(null)}
         />
       )}

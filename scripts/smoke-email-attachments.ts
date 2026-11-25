@@ -36,6 +36,7 @@ function putFake(pathname: string, size: number, contentType = "application/pdf"
 }
 let outage = false;
 const deleted: string[] = [];
+let listCalls = 0;
 let listed: { pathname: string; url: string; uploadedAt: Date }[] = [];
 /** Objects uploaded around the composer, with `access: "public"`. */
 const publicPaths = new Set<string>();
@@ -56,6 +57,7 @@ setAttachmentBlobClientForTests({
     deleted.push(...(Array.isArray(p) ? p : [p]));
   },
   async list({ prefix }: { prefix: string }) {
+    listCalls++;
     return { blobs: listed.filter((b) => b.pathname.startsWith(prefix)), hasMore: false, cursor: undefined };
   },
 });
@@ -165,6 +167,14 @@ async function main() {
     check("a fresh upload is kept", !deleted.includes(`${p}fresh/f.pdf`));
     check("a public object goes at once, however fresh", deleted.includes(`${p}hosted/f.pdf`));
     check("counts add up", swept.settled === 1 && swept.orphans === 2, JSON.stringify(swept));
+
+    // The daily-only Blob listing: with it off, the DB half still runs and Blob `list` is never called.
+    await row("sent", `${p}old2/f.pdf`, ago(8 * day));
+    listCalls = 0;
+    deleted.length = 0;
+    const dbOnly = await sweepEmailAttachments(new Date(), 200, { listOrphans: false });
+    check("listOrphans:false never lists Blob", listCalls === 0 && dbOnly.orphans === 0, JSON.stringify({ listCalls, dbOnly }));
+    check("listOrphans:false still settles old sends", dbOnly.settled === 1 && deleted.includes(`${p}old2/f.pdf`), JSON.stringify(dbOnly));
 
     deleted.length = 0;
     await purgeEmailAttachmentsForUser(SWEEP);

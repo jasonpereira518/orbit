@@ -48,6 +48,7 @@ import type {
   EmailThreadStatus,
   ThreadDecision,
 } from "@/lib/email-intel/types";
+import type { RecruiterStage } from "@/lib/recruiter-stages";
 import type { MemorySourceKind } from "@/lib/memory-chunks";
 import type { FeedbackTriage } from "@/lib/feedback-report";
 
@@ -171,6 +172,14 @@ export const userSettings = pgTable("user_settings", {
    */
   writingStyleProfile: text("writing_style_profile"),
   writingStyleProfileUpdatedAt: timestamp("writing_style_profile_updated_at", { withTimezone: true }),
+  /**
+   * Changes the user keeps making to Orbit's drafts, as short rules ("cuts the closing
+   * pleasantry"), distilled from `draft_edits` (`@/lib/draft-edits`). Same states as the style
+   * profile: NULL = none learned yet, "" = turned off (never relearned on its own), text = rules.
+   * Content: a preferences purge clears it.
+   */
+  writingEditLessons: text("writing_edit_lessons"),
+  writingEditLessonsUpdatedAt: timestamp("writing_edit_lessons_updated_at", { withTimezone: true }),
   /** Appended to email sent from Orbit (direct email). Plain text, and a sanitized HTML twin. */
   emailSignatureText: text("email_signature_text"),
   emailSignatureHtml: text("email_signature_html"),
@@ -949,7 +958,7 @@ export const contacts = pgTable(
      * the weight classes and why the config is 'simple'.
      */
     sortKey: text("sort_key").generatedAlwaysAs(
-      sql`lower(coalesce(nullif(trim(last_name), ''), split_part(trim(full_name), ' ', -1)))`
+      sql`lower(coalesce(nullif(trim(last_name), ''), nullif(split_part(trim(regexp_replace(full_name, '\\([^)]*\\)', '', 'g')), ' ', -1), ''), split_part(trim(full_name), ' ', -1)))`
     ),
     linkedinSlug: text("linkedin_slug").generatedAlwaysAs(
       sql`lower(nullif(split_part(split_part(split_part(split_part(coalesce(linkedin_url, ''), '/in/', 2), '?', 1), '#', 1), '/', 1), ''))`
@@ -1145,6 +1154,29 @@ export const duplicateSuggestions = pgTable(
  * "field" here; the names plan adds "rename" / "remove". Blank fills from imports and address
  * books are not logged (import revert covers them).
  */
+/**
+ * What Orbit drafted next to what the user actually sent or copied, so the changes they keep
+ * making can be learned (`@/lib/draft-edits`). Only pairs that differ are kept, and only the
+ * newest 30 per user: these are messages to other people. A preferences purge deletes them.
+ */
+export const draftEdits = pgTable(
+  "draft_edits",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    /** Where the draft was edited: chat | compose | follow_up | outreach. */
+    surface: text("surface").notNull(),
+    /** email | linkedin | other. */
+    kind: text("kind").notNull(),
+    aiText: text("ai_text").notNull(),
+    finalText: text("final_text").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    /** Set once a learning pass has read it; unread pairs are what triggers the next pass. */
+    learnedAt: timestamp("learned_at", { withTimezone: true }),
+  },
+  (t) => [index("draft_edits_user_idx").on(t.userId, t.createdAt.desc())]
+);
+
 export const contactChanges = pgTable(
   "contact_changes",
   {
@@ -2271,6 +2303,8 @@ export type CareerProfile = {
   /** Every school in Education.csv with degree and years. Deep read only. */
   education?: CareerEducation[];
   importedAt?: string;
+  /** The deep read's launch catch-up looked at this person's kept export for their history (deep-read-catch-up.ts). Kept by "Remove imported details", so the catch-up never writes it back. */
+  historyCheckedAt?: string;
 };
 
 /** A LinkedIn date cell: "May 2026" or "2020". `month` is 1–12. */
@@ -3299,6 +3333,8 @@ export const outreachMessages = pgTable(
      * A Resend send keeps neither here; the follow-up asks Resend for it by `deliveryId`.
      */
     rfcMessageId: text("rfc_message_id"),
+    /** The body as Orbit drafted it, before any edit: a send compares against it (`draft_edits`). */
+    aiBody: text("ai_body"),
     providerThreadId: text("provider_thread_id"),
     /**
      * Resend engagement for an email sent on Orbit's Resend account, from the webhook
@@ -3744,6 +3780,12 @@ export type ProviderSyncCursor = {
   } | null;
   /** Google: when the contacts lane last finished a pass, for the Google page's "synced X ago". */
   contactsSyncedAt?: string | null;
+  /**
+   * Google: when the Email activity pass last STARTED and finished cleanly. Its own key because
+   * `last_synced_at` is stamped by the calendar/contacts lane before the mailbox pass runs, so
+   * reading it there made every pass search for mail newer than "right now" and find none.
+   */
+  mailboxSyncedAt?: string | null;
   /** Same nullability rule as `calendar` above — a cleared cursor is a real state. */
   luma?: EventProviderSyncCursor | null;
   eventbrite?: EventProviderSyncCursor | null;
@@ -7245,6 +7287,30 @@ export const emailEvents = pgTable(
     uniqueIndex("email_events_rule_uidx").on(t.threadRowId, t.kind).where(sql`source = 'rule'`),
     index("email_events_user_idx").on(t.userId, t.occurredAt),
   ]
+);
+
+/**
+ * The person's corrections to the Recruiting board, which is a view over `email_events`: one
+ * row per company they have hidden ("Not a job") or whose stage they set by hand.
+ *
+ * Kept apart from the events on purpose. Events are rewritten by every sweep (a thread's rule
+ * event is replaced as the thread moves), and a correction written onto one would be lost the
+ * next time mail arrives on that thread — or, for a company's NEXT thread, never applied at
+ * all. Keyed by `companyKey()` (`src/lib/recruiting-board.ts`), so it follows the company.
+ */
+export const recruitingOverrides = pgTable(
+  "recruiting_overrides",
+  {
+    userId: text("user_id").notNull(),
+    companyKey: text("company_key").notNull(),
+    /** "Not a job". New mail never clears it; only "Put it back" does. */
+    hiddenAt: timestamp("hidden_at", { withTimezone: true }),
+    /** A stage set by hand. It holds until mail dated after `stageAt` says otherwise. */
+    stage: text("stage").$type<RecruiterStage>(),
+    stageAt: timestamp("stage_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.companyKey] })]
 );
 
 /**

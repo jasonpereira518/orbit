@@ -839,6 +839,7 @@
   ],
   "stats": {
     "dueFollowUps": 5,
+    "dueReminders": 1,
     "pendingReminders": 3,
     "strongConnections": 6,
     "topCompany": null,
