@@ -21,8 +21,15 @@ import {
   type AutopilotActionRow,
   type RecommendationRow,
 } from "@/lib/radar/store";
-import { LANE_OF_KIND, type RadarAutopilot } from "@/lib/radar/types";
+import { LANE_OF_KIND, type RadarAutopilot, type RadarSteering } from "@/lib/radar/types";
 import { listOpenOpportunities, type OpportunityView } from "@/lib/radar/opportunity-actions";
+
+export type RadarMomentumStats = {
+  conversationsSparked: number;
+  introsMade: number;
+  opportunitiesSaved: number;
+  loopsClosed: number;
+};
 
 export type RadarSettingsView = {
   paused: boolean;
@@ -31,6 +38,7 @@ export type RadarSettingsView = {
   /** The same-day email when something on Today won't keep. */
   momentEmailEnabled: boolean;
   captureLinkedinActivity: boolean;
+  steering: RadarSteering;
 };
 
 export type RadarPageData = {
@@ -54,6 +62,15 @@ export type RadarPageData = {
   weekBuiltAt: Date | null;
   /** What Radar still needs from the person. Only when the week is thin, else null. */
   coldStart: RadarColdStart | null;
+  /** 30-day outcomes & ROI metrics for the user. */
+  momentum: RadarMomentumStats;
+  /** Active context summaries shown in the Radar steering bar. */
+  steeringContext: {
+    goals: string[];
+    projects: string[];
+    city: string | null;
+    targetOrgs: string[];
+  };
 };
 
 /** The help panel's checklist: each item is done or not. */
@@ -66,6 +83,8 @@ type PageState = {
   next_at: string | Date | null;
   paused: number | null;
   autopilot: RadarAutopilot | null;
+  steering: RadarSteering | null;
+  city: string | null;
   digest_enabled: number | null;
   moment_email: number | null;
   capture_linkedin: number | null;
@@ -76,7 +95,13 @@ type PageState = {
   close_people: number | string;
   has_city: boolean;
   goals: number | string;
+  goal_texts: string[] | null;
+  project_titles: string[] | null;
   recent_notes: boolean;
+  convs_30d: number | string;
+  intros_30d: number | string;
+  loops_30d: number | string;
+  opps_saved_30d: number | string;
 };
 
 async function loadPageState(userId: string): Promise<PageState | null> {
@@ -86,7 +111,9 @@ async function loadPageState(userId: string): Promise<PageState | null> {
   const [row] = rowsOf<PageState>(
     await db.execute(sql`
       SELECT s.radar_last_run_at AS last_run_at, s.radar_next_at AS next_at, s.radar_paused AS paused,
-             s.radar_autopilot AS autopilot, s.radar_digest_enabled AS digest_enabled, s.radar_moment_email_enabled AS moment_email,
+             s.radar_autopilot AS autopilot, s.radar_steering AS steering,
+             coalesce(nullif(s.career_profile ->> 'city', ''), nullif(s.career_profile -> 'profile' ->> 'location', '')) AS city,
+             s.radar_digest_enabled AS digest_enabled, s.radar_moment_email_enabled AS moment_email,
              s.radar_capture_linkedin_activity AS capture_linkedin, s.email_intel_enabled AS email_intel,
              EXISTS (SELECT 1 FROM contacts WHERE user_id = ${userId}) AS has_contacts,
              (SELECT count(*) FROM contact_signals WHERE user_id = ${userId} AND created_at > ${since}::timestamptz)
@@ -98,7 +125,13 @@ async function loadPageState(userId: string): Promise<PageState | null> {
              (SELECT count(*) FROM contacts WHERE user_id = ${userId} AND stated_closeness >= 4) AS close_people,
              coalesce(nullif(s.career_profile ->> 'city', ''), nullif(s.career_profile -> 'profile' ->> 'location', '')) IS NOT NULL AS has_city,
              (SELECT count(*) FROM user_goals WHERE user_id = ${userId} AND active = 1) AS goals,
-             EXISTS (SELECT 1 FROM interactions WHERE user_id = ${userId} AND interaction_date > ${notesSince}::timestamptz) AS recent_notes
+             COALESCE(ARRAY(SELECT text FROM user_goals WHERE user_id = ${userId} AND active = 1 ORDER BY created_at DESC LIMIT 6), ARRAY[]::text[]) AS goal_texts,
+             COALESCE(ARRAY(SELECT title FROM user_projects WHERE user_id = ${userId} AND status = 'active' ORDER BY last_activity_at DESC LIMIT 5), ARRAY[]::text[]) AS project_titles,
+             EXISTS (SELECT 1 FROM interactions WHERE user_id = ${userId} AND interaction_date > ${notesSince}::timestamptz) AS recent_notes,
+             (SELECT count(*) FROM recommendations WHERE user_id = ${userId} AND outcome_at >= ${notesSince}::timestamptz) AS convs_30d,
+             (SELECT count(*) FROM recommendations WHERE user_id = ${userId} AND kind = 'introduce' AND status = 'accepted' AND acted_at >= ${notesSince}::timestamptz) AS intros_30d,
+             (SELECT count(*) FROM recommendations WHERE user_id = ${userId} AND kind IN ('follow_up', 'reach_out') AND status = 'accepted' AND acted_at >= ${notesSince}::timestamptz) AS loops_30d,
+             (SELECT count(*) FROM radar_opportunities WHERE user_id = ${userId} AND status = 'saved' AND updated_at >= ${notesSince}::timestamptz) AS opps_saved_30d
         FROM (SELECT 1) one
         LEFT JOIN user_settings s ON s.user_id = ${userId}
     `)
@@ -119,6 +152,7 @@ export async function loadRadarPage(userId: string): Promise<RadarPageData> {
   const paused = state?.paused === 1;
   const now = new Date();
   const nextAt = toDate(state?.next_at);
+  const steering = state?.steering ?? {};
   // Read only for an account that opted in, so everyone else pays nothing for it. A failure
   // here must never cost the page its cards.
   const inboxPeople = state?.email_intel === 1 ? await loadInboxPeople(userId, now).catch(() => []) : [];
@@ -135,6 +169,7 @@ export async function loadRadarPage(userId: string): Promise<RadarPageData> {
       digestEnabled: (state?.digest_enabled ?? 1) !== 0,
       momentEmailEnabled: (state?.moment_email ?? 1) !== 0,
       captureLinkedinActivity: state?.capture_linkedin === 1,
+      steering,
     },
     autopilotActions,
     changes: whatChanged(recommendations, now),
@@ -151,6 +186,18 @@ export async function loadRadarPage(userId: string): Promise<RadarPageData> {
             recentNotes: Boolean(state.recent_notes),
           }
         : null,
+    momentum: {
+      conversationsSparked: Number(state?.convs_30d ?? 0),
+      introsMade: Number(state?.intros_30d ?? 0),
+      opportunitiesSaved: Number(state?.opps_saved_30d ?? 0),
+      loopsClosed: Number(state?.loops_30d ?? 0),
+    },
+    steeringContext: {
+      goals: state?.goal_texts ?? [],
+      projects: state?.project_titles ?? [],
+      city: state?.city ?? null,
+      targetOrgs: steering.targetOrgs ?? [],
+    },
   };
 }
 
@@ -162,6 +209,8 @@ export type RadarBriefing = {
   paused: boolean;
   /** The first few of Today, best first. */
   top: RecommendationRow[];
+  /** Top external/web opportunities (warm-path people, events, programs). */
+  topFinds?: OpportunityView[];
   /** Everyone on the list. */
   total: number;
   /** Today's moments (`bucket = 'today'`): the things that won't keep. */
@@ -182,7 +231,7 @@ export async function loadRadarBriefing(userId: string): Promise<RadarBriefing> 
   // `state.paused` means "not on" (never turned on, or switched off): the dashboard hides
   // Radar then, however much it ran before, and shows its legacy suggestions card instead.
   if (!state?.lastRunAt || state.paused) {
-    return { hasRun: false, paused: state?.paused ?? false, top: [], total: 0, today: 0, lanes: { followUp: 0, connect: 0, opportunities: 0 }, drafts: 0, changes: [] };
+    return { hasRun: false, paused: state?.paused ?? false, top: [], topFinds: [], total: 0, today: 0, lanes: { followUp: 0, connect: 0, opportunities: 0 }, drafts: 0, changes: [] };
   }
   const { listActiveProjectsForUser } = await import("@/lib/projects/store");
   const [pending, projects, finds] = await Promise.all([
@@ -191,14 +240,16 @@ export async function loadRadarBriefing(userId: string): Promise<RadarBriefing> 
     listOpenOpportunities(userId).catch(() => []),
   ]);
   // Today's moments lead when there are any; otherwise the week's best few.
-  const today = pending.filter((r) => r.bucket === "today");
+  const todayRecs = pending.filter((r) => r.bucket === "today");
+  const todayFinds = finds.filter((f) => f.bucket === "today");
   const lane = (l: string) => pending.filter((r) => LANE_OF_KIND[r.kind] === l).length;
   return {
     hasRun: true,
     paused: state.paused,
-    top: (today.length > 0 ? today : pending).slice(0, BRIEFING_TOP),
+    top: (todayRecs.length > 0 ? todayRecs : pending).slice(0, BRIEFING_TOP),
+    topFinds: (todayFinds.length > 0 ? todayFinds : finds).slice(0, 2),
     total: pending.length + finds.length,
-    today: today.length,
+    today: todayRecs.length + todayFinds.length,
     lanes: { followUp: lane("follow_up"), connect: lane("connect"), opportunities: lane("opportunities") + finds.length },
     drafts: draftsReady(pending),
     changes: whatChanged(pending, new Date()),

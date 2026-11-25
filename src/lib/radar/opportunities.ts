@@ -18,16 +18,18 @@
  * Openings are not searched here: the job feed already pairs a role with the person to ask
  * (`job_posting` cards from `src/lib/radar/signals/internal.ts`).
  */
+import { createHash } from "node:crypto";
 import { eventsListReplySchema, programsListReplySchema } from "@/lib/ai-reply-schemas";
-import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb } from "@/db";
-import { radarOpportunities, userSettings } from "@/db/schema";
+import { companies, contactExperiences, contacts, radarOpportunities, targetCompanies, userSettings } from "@/db/schema";
 import { parseAiJson, userCanUseAi, webSearchJson, type WebSource } from "@/lib/ai";
 import { cleanSingleLine, fenceUntrusted } from "@/lib/ai-security";
 import { resolvePlan } from "@/lib/entitlements";
 import { fetchEventPage, isLumaPage } from "@/lib/events/fetch-page";
 import type { EventPageDetails } from "@/lib/events/parse-page";
 import { getRadarLimitsForPlan, type RadarPlanLimits } from "@/lib/plans/plan-config";
+import { listActiveProjectsForUser, type UserProject } from "@/lib/projects/store";
 import { consumeBucket, isRateLimitedError } from "@/lib/rate-limit";
 import { reportError } from "@/lib/report-error";
 import { safeHttpUrl } from "@/lib/safe-links";
@@ -36,7 +38,7 @@ import { orgKeysFor } from "@/lib/warm-paths";
 import { findWarmPaths } from "@/lib/warm-paths-server";
 import { DISCOVER_SYSTEM, toDiscoveryResult } from "@/lib/web-research";
 import { backgroundSearchRoom } from "@/lib/web-search-budget";
-import type { RadarEvidence } from "@/lib/radar/types";
+import type { RadarEvidence, RadarOpportunityKind, RadarPlayType, RadarSteering, RecommendationBucket } from "@/lib/radar/types";
 import { personTitle } from "@/lib/radar/person-title";
 import { loadContactNetworkNodes, scoreMutualIntroPath } from "@/lib/discovery";
 
@@ -128,6 +130,106 @@ function topicsBlock(topics: readonly string[]): string {
   return topics.length ? `\n\nTopics they post about:\n${fenceUntrusted("topics", topics.join(", "))}` : "";
 }
 
+function steeringBlock(projects: readonly UserProject[], steering: RadarSteering | null | undefined, avoid: readonly string[]): string {
+  const parts: string[] = [];
+  if (projects.length) {
+    parts.push(`Active projects:\n${fenceUntrusted("projects", projects.slice(0, 4).map((p) => `${p.title}${p.topics.length ? ` (${p.topics.slice(0, 4).join(", ")})` : ""}`).join("\n"))}`);
+  }
+  if (steering?.topics?.length) {
+    parts.push(`Focus topics:\n${fenceUntrusted("focus_topics", steering.topics.slice(0, 8).join(", "))}`);
+  }
+  if (steering?.targetRoles?.length) {
+    parts.push(`Target roles:\n${fenceUntrusted("target_roles", steering.targetRoles.slice(0, 6).join(", "))}`);
+  }
+  const allAvoid = [...(steering?.avoidTopics ?? []), ...avoid].slice(0, 8);
+  if (allAvoid.length) {
+    parts.push(`Avoid:\n${fenceUntrusted("avoid", allAvoid.join(", "))}`);
+  }
+  return parts.length ? `\n\n${parts.join("\n\n")}` : "";
+}
+
+/**
+ * Deterministic scoring on the same 0-100 scale as contact recommendations so external
+ * opportunities rank cleanly inside the unified feed, Morning Briefing, and Digest.
+ */
+export function scoreOpportunityFind(opts: {
+  kind: RadarOpportunityKind;
+  startsAt?: Date | null;
+  expiresAt?: Date | null;
+  introducerTier?: "inner" | "mid" | "outer" | null;
+  hasProjectsOrSteering?: boolean;
+  now: Date;
+}): { score: number; baseScore: number; bucket: RecommendationBucket; playType: RadarPlayType; inputsHash: string } {
+  let base = 32;
+  let playType: RadarPlayType = "program_apply";
+  if (opts.kind === "event") {
+    playType = "event_rsvp";
+    const daysOut = opts.startsAt ? Math.max(0, Math.round((opts.startsAt.getTime() - opts.now.getTime()) / DAY_MS)) : 30;
+    base = daysOut <= 3 ? 62 : daysOut <= 7 ? 52 : daysOut <= 21 ? 40 : 32;
+  } else if (opts.kind === "person") {
+    playType = "warm_intro";
+    const tierBonus = opts.introducerTier === "inner" ? 20 : opts.introducerTier === "mid" ? 12 : 4;
+    base = 38 + tierBonus;
+  } else if (opts.kind === "program") {
+    playType = "program_apply";
+    const daysLeft = opts.expiresAt ? Math.max(0, Math.round((opts.expiresAt.getTime() - opts.now.getTime()) / DAY_MS)) : 30;
+    base = daysLeft <= 7 ? 60 : daysLeft <= 14 ? 48 : 34;
+  } else {
+    playType = "referral_ask";
+    base = 42;
+  }
+  if (opts.hasProjectsOrSteering) base += 8;
+  const score = Math.max(0, Math.min(100, base));
+  const bucket: RecommendationBucket = score >= 52 ? "today" : score >= 34 ? "soon" : "later";
+  const inputsHash = createHash("sha256")
+    .update(JSON.stringify({ kind: opts.kind, startsAt: opts.startsAt?.toISOString() ?? null, expiresAt: opts.expiresAt?.toISOString() ?? null, tier: opts.introducerTier ?? null }))
+    .digest("hex")
+    .slice(0, 16);
+  return { score, baseScore: score, bucket, playType, inputsHash };
+}
+
+/**
+ * Top organizations where the user already has warm introducers (target companies + inner/mid
+ * contacts' current companies). Anonymized org names only—never contact names.
+ */
+async function loadWarmLeverageOrgs(userId: string, steering?: RadarSteering | null): Promise<string[]> {
+  const db = await getDb();
+  const [targetRows, expRows] = await Promise.all([
+    db
+      .select({ name: companies.name })
+      .from(targetCompanies)
+      .innerJoin(companies, and(eq(companies.id, targetCompanies.companyId), eq(companies.userId, targetCompanies.userId)))
+      .where(eq(targetCompanies.userId, userId))
+      .limit(8),
+    db
+      .select({ org: contactExperiences.organization })
+      .from(contactExperiences)
+      .innerJoin(contacts, and(eq(contacts.id, contactExperiences.contactId), eq(contacts.userId, contactExperiences.userId)))
+      .where(
+        and(
+          eq(contactExperiences.userId, userId),
+          eq(contactExperiences.isCurrent, true),
+          inArray(contacts.closenessTier, ["inner", "mid"])
+        )
+      )
+      .limit(12),
+  ]);
+  const orgs = new Set<string>();
+  for (const o of steering?.targetOrgs ?? []) {
+    const clean = text(o, 80);
+    if (clean) orgs.add(clean);
+  }
+  for (const r of targetRows) {
+    const clean = text(r.name, 80);
+    if (clean) orgs.add(clean);
+  }
+  for (const r of expRows) {
+    const clean = text(r.org, 80);
+    if (clean) orgs.add(clean);
+  }
+  return [...orgs].slice(0, 10);
+}
+
 async function findEvents(
   userId: string,
   city: string,
@@ -135,9 +237,12 @@ async function findEvents(
   now: Date,
   search: RadarWebSearch,
   fetchPage: (url: string) => Promise<EventPageDetails>,
-  topics: string[] = []
+  topics: string[] = [],
+  projects: readonly UserProject[] = [],
+  steering: RadarSteering | null = null,
+  avoid: readonly string[] = []
 ): Promise<NewOpportunity[]> {
-  const user = `Today is ${now.toISOString().slice(0, 10)}.\n\nCity:\n${fenceUntrusted("city", city)}${goals.length ? `\n\nTheir goals:\n${fenceUntrusted("goals", goals.join("\n"))}` : ""}${topicsBlock(topics)}`;
+  const user = `Today is ${now.toISOString().slice(0, 10)}.\n\nCity:\n${fenceUntrusted("city", city)}${goals.length ? `\n\nTheir goals:\n${fenceUntrusted("goals", goals.join("\n"))}` : ""}${topicsBlock(topics)}${steeringBlock(projects, steering, avoid)}`;
   const { json, sources } = await search(userId, { kind: "event", system: EVENT_SYSTEM, user });
   const cited = citedSet(sources);
   const horizon = now.getTime() + EVENT_HORIZON_DAYS * DAY_MS;
@@ -157,6 +262,12 @@ async function findEvents(
       if (page?.venue) venue = text(page.venue, 200);
     }
     if (startsAt.getTime() <= now.getTime() || startsAt.getTime() > horizon) continue;
+    const scored = scoreOpportunityFind({
+      kind: "event",
+      startsAt,
+      hasProjectsOrSteering: projects.length > 0 || Boolean(steering?.topics?.length),
+      now,
+    });
     out.push({
       userId,
       kind: "event",
@@ -165,6 +276,7 @@ async function findEvents(
       why: text(e.why, 280),
       startsAt,
       expiresAt: startsAt,
+      ...scored,
       evidence: [proofOf(url, venue ? `At ${venue}` : "Event page", "event_near_you")],
       dedupeKey: `event:${url}`,
     });
@@ -172,8 +284,21 @@ async function findEvents(
   return out;
 }
 
-async function findPeople(userId: string, city: string | null, goals: string[], now: Date, search: RadarWebSearch, topics: string[] = []): Promise<NewOpportunity[]> {
-  const description = `People who could help with: ${goals.join("; ")}${city ? `. Ideally in or near ${city}.` : ""}${topics.length ? ` Topics they post about: ${topics.join(", ")}.` : ""}`;
+async function findPeople(
+  userId: string,
+  city: string | null,
+  goals: string[],
+  now: Date,
+  search: RadarWebSearch,
+  topics: string[] = [],
+  projects: readonly UserProject[] = [],
+  steering: RadarSteering | null = null,
+  warmOrgs: readonly string[] = []
+): Promise<NewOpportunity[]> {
+  const projectHint = projects.length ? ` Active projects: ${projects.slice(0, 3).map((p) => p.title).join(", ")}.` : "";
+  const orgHint = warmOrgs.length ? ` Prioritize people at or connected to: ${warmOrgs.join(", ")}.` : "";
+  const roleHint = steering?.targetRoles?.length ? ` Target roles: ${steering.targetRoles.join(", ")}.` : "";
+  const description = `People who could help with: ${goals.join("; ")}${projectHint}${roleHint}${orgHint}${city ? `. Ideally in or near ${city}.` : ""}${topics.length ? ` Topics they post about: ${topics.join(", ")}.` : ""}`;
   const user = `Find people who match this description:\n\n${fenceUntrusted("description", description)}`;
   const { json, sources } = await search(userId, { kind: "person", system: DISCOVER_SYSTEM, user });
   const cited = citedSet(sources);
@@ -216,6 +341,14 @@ async function findPeople(userId: string, city: string | null, goals: string[], 
     if (introducerName.toLowerCase() === c.fullName.toLowerCase()) continue;
 
     const url = safeHttpUrl(c.url)!;
+    const closeness = introducer?.closeness ?? 0;
+    const introTier = closeness >= 0.7 ? "inner" : closeness >= 0.4 ? "mid" : "outer";
+    const scored = scoreOpportunityFind({
+      kind: "person",
+      introducerTier: introTier,
+      hasProjectsOrSteering: projects.length > 0 || Boolean(steering?.targetRoles?.length),
+      now,
+    });
     out.push({
       userId,
       kind: "person",
@@ -223,6 +356,7 @@ async function findPeople(userId: string, city: string | null, goals: string[], 
       url,
       why: c.whyMatches,
       expiresAt: new Date(now.getTime() + PERSON_OFFER_DAYS * DAY_MS),
+      ...scored,
       relatedContactIds: [introducerContactId],
       evidence: [
         proofOf(url, "Their page", "person_to_meet"),
@@ -240,8 +374,16 @@ async function findPeople(userId: string, city: string | null, goals: string[], 
   return out;
 }
 
-async function findPrograms(userId: string, goals: string[], now: Date, search: RadarWebSearch): Promise<NewOpportunity[]> {
-  const user = `Today is ${now.toISOString().slice(0, 10)}.\n\nTheir goals:\n${fenceUntrusted("goals", goals.join("\n"))}`;
+async function findPrograms(
+  userId: string,
+  goals: string[],
+  now: Date,
+  search: RadarWebSearch,
+  projects: readonly UserProject[] = [],
+  steering: RadarSteering | null = null,
+  avoid: readonly string[] = []
+): Promise<NewOpportunity[]> {
+  const user = `Today is ${now.toISOString().slice(0, 10)}.\n\nTheir goals:\n${fenceUntrusted("goals", goals.join("\n"))}${steeringBlock(projects, steering, avoid)}`;
   const { json, sources } = await search(userId, { kind: "program", system: PROGRAM_SYSTEM, user });
   const cited = citedSet(sources);
   const out: NewOpportunity[] = [];
@@ -250,6 +392,12 @@ async function findPrograms(userId: string, goals: string[], now: Date, search: 
     const title = text(p.title, 200);
     const deadline = dateOf(p.deadline);
     if (!url || !title || !deadline || !cited.has(url) || deadline.getTime() <= now.getTime()) continue;
+    const scored = scoreOpportunityFind({
+      kind: "program",
+      expiresAt: deadline,
+      hasProjectsOrSteering: projects.length > 0 || Boolean(steering?.topics?.length),
+      now,
+    });
     out.push({
       userId,
       kind: "program",
@@ -257,6 +405,7 @@ async function findPrograms(userId: string, goals: string[], now: Date, search: 
       url,
       why: text(p.why, 280),
       expiresAt: deadline,
+      ...scored,
       evidence: [proofOf(url, "Program page", "program_deadline")],
       dedupeKey: `program:${url}`,
     });
@@ -276,8 +425,8 @@ async function spendKind(userId: string, kind: RadarWebKind, limit: number): Pro
   }
 }
 
-/** One account's weekly web pass. One kind failing never stops the others. */
-export async function runRadarWebForUser(userId: string, deps: RadarWebDeps = {}): Promise<RadarWebStats> {
+/** One account's weekly (or on-demand) web pass. One kind failing never stops the others. */
+export async function runRadarWebForUser(userId: string, deps: RadarWebDeps & { force?: boolean } = {}): Promise<RadarWebStats> {
   const now = deps.now ?? new Date();
   const search = deps.search ?? defaultSearch;
   const stats: RadarWebStats = { searched: 0, written: 0 };
@@ -288,6 +437,7 @@ export async function runRadarWebForUser(userId: string, deps: RadarWebDeps = {}
       paused: userSettings.radarPaused,
       nextAt: userSettings.radarWebNextAt,
       career: userSettings.careerProfile,
+      steering: userSettings.radarSteering,
       compedPlan: userSettings.compedPlan,
       lifetimePurchasedAt: userSettings.lifetimePurchasedAt,
       subscriptionPlan: userSettings.subscriptionPlan,
@@ -298,27 +448,53 @@ export async function runRadarWebForUser(userId: string, deps: RadarWebDeps = {}
     .where(eq(userSettings.userId, userId))
     .limit(1);
   if (!s?.enabledAt || s.paused) return { ...stats, skipped: "off" };
-  if (s.nextAt && s.nextAt.getTime() > now.getTime()) return { ...stats, skipped: "not_due" };
+  if (!deps.force && s.nextAt && s.nextAt.getTime() > now.getTime()) return { ...stats, skipped: "not_due" };
   if (!deps.search && !(await userCanUseAi(userId))) return { ...stats, skipped: "no_ai" };
   if (!(await backgroundSearchRoom(userId, now))) return { ...stats, skipped: "budget" };
 
   // Claim the week first, so two overlapping passes never both search.
-  const claimed = await db
-    .update(userSettings)
-    .set({ radarWebNextAt: new Date(now.getTime() + RADAR_WEB_PASS_DAYS * DAY_MS) })
-    .where(and(eq(userSettings.userId, userId), or(isNull(userSettings.radarWebNextAt), lte(userSettings.radarWebNextAt, now))))
-    .returning();
+  const nextClaimAt = new Date(now.getTime() + RADAR_WEB_PASS_DAYS * DAY_MS);
+  const claimed = deps.force
+    ? await db.update(userSettings).set({ radarWebNextAt: nextClaimAt }).where(eq(userSettings.userId, userId)).returning()
+    : await db
+        .update(userSettings)
+        .set({ radarWebNextAt: nextClaimAt })
+        .where(and(eq(userSettings.userId, userId), or(isNull(userSettings.radarWebNextAt), lte(userSettings.radarWebNextAt, now))))
+        .returning();
   if (claimed.length === 0) return { ...stats, skipped: "not_due" };
 
   const limits = getRadarLimitsForPlan(resolvePlan(s, now).plan);
-  const goals = await listActiveGoalTextsForUser(userId, { limit: 5 });
+  const [goals, projects, warmOrgs, dismissedRows] = await Promise.all([
+    listActiveGoalTextsForUser(userId, { limit: 5 }),
+    listActiveProjectsForUser(userId, { limit: 5 }).catch(() => [] as UserProject[]),
+    loadWarmLeverageOrgs(userId, s.steering).catch(() => [] as string[]),
+    db
+      .select({ kind: radarOpportunities.kind, dismissReason: radarOpportunities.dismissReason, title: radarOpportunities.title })
+      .from(radarOpportunities)
+      .where(
+        and(
+          eq(radarOpportunities.userId, userId),
+          eq(radarOpportunities.status, "dismissed"),
+          gte(radarOpportunities.updatedAt, new Date(now.getTime() - 45 * DAY_MS))
+        )
+      )
+      .orderBy(desc(radarOpportunities.updatedAt))
+      .limit(15)
+      .catch(() => []),
+  ]);
+  const avoidTitles = dismissedRows
+    .filter((d) => d.dismissReason === "wrong_reason")
+    .map((d) => text(d.title, 60))
+    .filter((t): t is string => Boolean(t))
+    .slice(0, 4);
+  const steering = s.steering ?? null;
   const city = text(s.career?.city ?? s.career?.profile?.location, 120);
   // The hashtags from their own LinkedIn posts (`linkedin-shares.ts`): extra context, never a search on their own.
   const topics = (s.career?.postTopics ?? []).map((t) => text(t, 40)).filter((t): t is string => Boolean(t)).slice(0, 8);
   const kinds: [RadarWebKind, boolean, () => Promise<NewOpportunity[]>][] = [
-    ["event", Boolean(city), () => findEvents(userId, city!, goals, now, search, deps.fetchPage ?? defaultFetchPage, topics)],
-    ["person", goals.length > 0, () => findPeople(userId, city, goals, now, search, topics)],
-    ["program", goals.length > 0, () => findPrograms(userId, goals, now, search)],
+    ["event", Boolean(city), () => findEvents(userId, city!, goals, now, search, deps.fetchPage ?? defaultFetchPage, topics, projects, steering, avoidTitles)],
+    ["person", goals.length > 0 || projects.length > 0 || Boolean(steering?.topics?.length), () => findPeople(userId, city, goals, now, search, topics, projects, steering, warmOrgs)],
+    ["program", goals.length > 0 || projects.length > 0 || Boolean(steering?.topics?.length), () => findPrograms(userId, goals, now, search, projects, steering, avoidTitles)],
   ];
   const found: NewOpportunity[] = [];
   for (const [kind, ready, find] of kinds) {

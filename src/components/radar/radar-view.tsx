@@ -15,11 +15,12 @@ import { useRadarRunProgress } from "@/components/radar/use-radar-run-progress";
 import { useRadarKeys } from "@/components/radar/use-radar-keys";
 import { addInboxPerson, dismissInboxPerson, refreshRadarNow, undoAutopilot } from "@/actions/radar";
 import { InboxPeople, type InboxPersonView } from "@/components/radar/inbox-people";
+import { RadarSteeringBar } from "@/components/radar/radar-steering-bar";
 import { friendlyError } from "@/lib/errors";
 import type { ChangeLine } from "@/lib/radar/briefing";
 import { RADAR_SHORTCUTS } from "@/lib/radar/focus-keys";
-import type { RadarColdStart, RadarSettingsView } from "@/lib/radar/page-data";
-import { LANE_OF_KIND, LANE_TITLES, RADAR_LANES } from "@/lib/radar/types";
+import type { RadarColdStart, RadarMomentumStats, RadarPageData, RadarSettingsView } from "@/lib/radar/page-data";
+import { LANE_OF_KIND, LANE_TITLES, RADAR_LANES, type RadarLane } from "@/lib/radar/types";
 import type { OpportunityView } from "@/lib/radar/opportunity-actions";
 import { OpportunityCard } from "@/components/radar/opportunity-card";
 import { toast } from "@/lib/toast";
@@ -55,7 +56,15 @@ export type RadarViewProps = {
   weekBuiltAt: string | null;
   /** What Radar still needs, shown only when the week is thin. */
   coldStart: RadarColdStart | null;
+  /** 30-day Radar momentum outcomes. */
+  momentum: RadarMomentumStats;
+  /** Context chips shown in the steering bar. */
+  steeringContext: RadarPageData["steeringContext"];
 };
+
+type DeckItem =
+  | { id: string; kind: "rec"; bucket: RecommendationCardData["bucket"]; rec: RecommendationCardData }
+  | { id: string; kind: "opp"; bucket: OpportunityView["bucket"]; find: OpportunityView };
 
 type Mode = "focus" | "list";
 const MODE_KEY = "orbit.radar.mode";
@@ -79,10 +88,32 @@ function arrivalMode(linked: boolean): Mode {
 }
 
 export function RadarView(props: RadarViewProps) {
-  const { lastRunAt, nextRunAt, aiAvailable, hasContacts, settings, autopilot, changes, signalsThisWeek, inboxPeople, focusId, opportunities, weekBuiltAt, coldStart } =
-    props;
+  const {
+    lastRunAt,
+    nextRunAt,
+    aiAvailable,
+    hasContacts,
+    settings,
+    autopilot,
+    changes,
+    signalsThisWeek,
+    inboxPeople,
+    focusId,
+    opportunities,
+    weekBuiltAt,
+    coldStart,
+    momentum,
+    steeringContext,
+  } = props;
   // Today first, then the three lanes: the order both layouts and the focus deck walk.
   const recommendations = useMemo(() => planOrder(props.recommendations), [props.recommendations]);
+  const deckItems = useMemo<DeckItem[]>(() => {
+    const todayRecs = recommendations.filter((r) => r.bucket === "today").map((rec) => ({ id: rec.id, kind: "rec" as const, bucket: rec.bucket, rec }));
+    const todayOpps = opportunities.filter((o) => o.bucket === "today").map((find) => ({ id: find.id, kind: "opp" as const, bucket: find.bucket, find }));
+    const laterRecs = recommendations.filter((r) => r.bucket !== "today").map((rec) => ({ id: rec.id, kind: "rec" as const, bucket: rec.bucket, rec }));
+    const laterOpps = opportunities.filter((o) => o.bucket !== "today").map((find) => ({ id: find.id, kind: "opp" as const, bucket: find.bucket, find }));
+    return [...todayRecs, ...todayOpps, ...laterRecs, ...laterOpps];
+  }, [recommendations, opportunities]);
   const { aiReason } = useViewerPlan();
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -96,7 +127,7 @@ export function RadarView(props: RadarViewProps) {
   const [landing, setLanding] = useState(false);
   const refreshing = pending || run.watching;
   const percent = landing ? 100 : (run.snap?.progress ?? 0);
-  const linked = focusId ? recommendations.findIndex((r) => r.id === focusId) : -1;
+  const linked = focusId ? deckItems.findIndex((item) => item.id === focusId) : -1;
   // The server always draws the list; the browser then opens in focus mode for a linked card,
   // a remembered choice, or a phone. A choice made here wins from then on.
   // Fixed at arrival: resolving the linked card removes it, and must not flip the layout.
@@ -121,13 +152,14 @@ export function RadarView(props: RadarViewProps) {
   };
 
   const jumpTo = (id: string) => {
-    const i = recommendations.findIndex((r) => r.id === id);
+    const i = deckItems.findIndex((item) => item.id === id);
     if (i < 0) return;
     if (mode === "focus") {
       setIndex(i);
       return;
     }
-    document.getElementById(`radar-card-${id}`)?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
+    const target = document.getElementById(`radar-card-${id}`) ?? document.getElementById(`radar-opp-${id}`);
+    target?.scrollIntoView({ behavior: prefersReducedMotion() ? "auto" : "smooth", block: "start" });
   };
 
   const refresh = () =>
@@ -174,7 +206,7 @@ export function RadarView(props: RadarViewProps) {
           )}
         </p>
         <div className="flex flex-wrap items-center gap-1.5">
-          {recommendations.length > 0 && (
+          {deckItems.length > 0 && (
             <div role="group" aria-label="Layout" className="mr-1 inline-flex rounded-lg border border-border/70 p-0.5">
               <ModeButton active={mode === "focus"} onClick={() => chooseMode("focus")} icon={Focus} label="Focus" />
               <ModeButton active={mode === "list"} onClick={() => chooseMode("list")} icon={LayoutList} label="List" />
@@ -184,6 +216,9 @@ export function RadarView(props: RadarViewProps) {
           <RadarSettingsSheet settings={settings} />
         </div>
       </div>
+
+      <RadarSteeringBar steering={settings.steering} context={steeringContext} paused={settings.paused} />
+      <MomentumStrip momentum={momentum} />
 
       {changes.length > 0 && <WhatChanged changes={changes} onJump={jumpTo} />}
       {autopilot.length > 0 && <AutopilotDid items={autopilot} />}
@@ -195,11 +230,8 @@ export function RadarView(props: RadarViewProps) {
         <BuildingFirstPlan />
       ) : recommendations.length === 0 && opportunities.length === 0 ? (
         <EmptyState hasContacts={hasContacts} ranOnce={lastRunAt !== null} nextRunAt={nextRunAt} />
-      ) : mode === "focus" && recommendations.length > 0 ? (
-        <>
-          <FocusDeck recommendations={recommendations} index={index} setIndex={setIndex} aiAvailable={aiAvailable} />
-          <Finds opportunities={opportunities} heading />
-        </>
+      ) : mode === "focus" && deckItems.length > 0 ? (
+        <FocusDeck items={deckItems} index={index} setIndex={setIndex} aiAvailable={aiAvailable} />
       ) : (
         <ListView recommendations={recommendations} opportunities={opportunities} aiAvailable={aiAvailable} />
       )}
@@ -310,23 +342,28 @@ function AutopilotDid({ items }: { items: RadarAutopilotItem[] }) {
   );
 }
 
-/** One card at a time. `j`/`k` move; the card itself answers `s`, `d`, `z` and `x`. */
+/** One card at a time across both people and opportunity finds. `j`/`k` move; the card answers `s`, `d`, `z`, `x`. */
 function FocusDeck({
-  recommendations,
+  items,
   index,
   setIndex,
   aiAvailable,
 }: {
-  recommendations: RecommendationCardData[];
+  items: DeckItem[];
   index: number;
   setIndex: (i: number) => void;
   aiAvailable: boolean;
 }) {
-  const count = recommendations.length;
+  const count = items.length;
   // A resolved card leaves the list, so the same index is already the next one.
   const at = Math.min(index, count - 1);
-  const current = recommendations[at];
+  const current = items[at];
   const inToday = current.bucket === "today";
+  const heading = inToday
+    ? "Today"
+    : current.kind === "rec"
+      ? LANE_TITLES[LANE_OF_KIND[current.rec.kind]]
+      : LANE_TITLES.opportunities;
   const move = (delta: number) => setIndex(Math.max(0, Math.min(count - 1, at + delta)));
 
   useRadarKeys(true, (command) => {
@@ -338,7 +375,7 @@ function FocusDeck({
     <section aria-labelledby="radar-focus" className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <h2 id="radar-focus" className="text-lg font-medium text-ink">
-          {inToday ? "Today" : LANE_TITLES[LANE_OF_KIND[current.kind]]}
+          {heading}
           <span className="ml-2 text-sm font-normal text-muted-foreground">
             {at + 1} of {count}
           </span>
@@ -352,22 +389,54 @@ function FocusDeck({
           </Button>
         </div>
       </div>
-      <RecommendationCard key={current.id} rec={current} aiAvailable={aiAvailable} showAiPrompt={inToday} shortcuts />
-      <p className="hidden text-xs text-muted-foreground pointer-fine:block">
-        {RADAR_SHORTCUTS.map((s, i) => (
-          <span key={s.label}>
-            {i > 0 ? " · " : ""}
-            {s.keys.map((k, j) => (
-              <span key={k}>
-                {j > 0 ? "/" : ""}
-                <kbd className="rounded border border-border/70 bg-muted px-1 font-sans text-2xs text-ink">{k}</kbd>
-              </span>
-            ))}{" "}
-            {s.label}
-          </span>
-        ))}
-      </p>
+      {current.kind === "rec" ? (
+        <RecommendationCard key={current.id} rec={current.rec} aiAvailable={aiAvailable} showAiPrompt={inToday} shortcuts />
+      ) : (
+        <OpportunityCard key={current.id} find={current.find} />
+      )}
+      {current.kind === "rec" && (
+        <p className="hidden text-xs text-muted-foreground pointer-fine:block">
+          {RADAR_SHORTCUTS.map((s, i) => (
+            <span key={s.label}>
+              {i > 0 ? " · " : ""}
+              {s.keys.map((k, j) => (
+                <span key={k}>
+                  {j > 0 ? "/" : ""}
+                  <kbd className="rounded border border-border/70 bg-muted px-1 font-sans text-2xs text-ink">{k}</kbd>
+                </span>
+              ))}{" "}
+              {s.label}
+            </span>
+          ))}
+        </p>
+      )}
     </section>
+  );
+}
+
+/** 30-day momentum strip showing outcomes produced by acting on Radar. */
+function MomentumStrip({ momentum }: { momentum: RadarMomentumStats }) {
+  const total =
+    momentum.conversationsSparked +
+    momentum.introsMade +
+    momentum.opportunitiesSaved +
+    momentum.loopsClosed;
+  if (total === 0) return null;
+  const cells = [
+    { label: "Conversations sparked", value: momentum.conversationsSparked },
+    { label: "Intros & asks", value: momentum.introsMade },
+    { label: "Opportunities saved", value: momentum.opportunitiesSaved },
+    { label: "Loops closed", value: momentum.loopsClosed },
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/50 bg-muted/25 px-3 py-2 sm:grid-cols-4">
+      {cells.map((cell) => (
+        <div key={cell.label} className="min-w-0">
+          <p className="truncate text-2xs font-medium text-muted-foreground uppercase">{cell.label}</p>
+          <p className="font-[family-name:var(--font-display)] text-base font-semibold text-ink">{cell.value}</p>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -383,6 +452,8 @@ function weekLine(builtAt: Date, open: number) {
   return `Week of ${format(monday, "MMM d")} · built ${format(builtAt, "EEEE h:mmaaa")} · ${open} open`;
 }
 
+type ListFilter = "all" | "today" | RadarLane;
+
 function ListView({
   recommendations,
   opportunities,
@@ -392,29 +463,77 @@ function ListView({
   opportunities: OpportunityView[];
   aiAvailable: boolean;
 }) {
-  const today = recommendations.filter((r) => r.bucket === "today");
-  const rest = recommendations.filter((r) => r.bucket !== "today");
+  const [filter, setFilter] = useState<ListFilter>("all");
+  const todayRecs = recommendations.filter((r) => r.bucket === "today");
+  const todayOpps = opportunities.filter((o) => o.bucket === "today");
+  const restRecs = recommendations.filter((r) => r.bucket !== "today");
+  const restOpps = opportunities.filter((o) => o.bucket !== "today");
+
+  const todayCount = todayRecs.length + todayOpps.length;
+  const counts: Record<ListFilter, number> = {
+    all: recommendations.length + opportunities.length,
+    today: todayCount,
+    opportunities: restRecs.filter((r) => LANE_OF_KIND[r.kind] === "opportunities").length + restOpps.length,
+    connect: restRecs.filter((r) => LANE_OF_KIND[r.kind] === "connect").length,
+    follow_up: restRecs.filter((r) => LANE_OF_KIND[r.kind] === "follow_up").length,
+  };
+
+  const tabs: Array<{ id: ListFilter; label: string }> = [
+    { id: "all", label: "All" },
+    ...(todayCount > 0 ? [{ id: "today" as const, label: "Act now" }] : []),
+    ...RADAR_LANES.map((lane): { id: ListFilter; label: string } => ({ id: lane, label: LANE_TITLES[lane] })).filter((t) => counts[t.id] > 0),
+  ];
+
+  const showToday = (filter === "all" || filter === "today") && todayCount > 0;
+  const visibleLanes =
+    filter === "today" ? [] : filter === "all" ? RADAR_LANES : RADAR_LANES.filter((l) => l === filter);
+
   return (
     <>
-      {today.length > 0 && (
+      {tabs.length > 2 && (
+        <div role="tablist" aria-label="Filter Radar list" className="flex flex-wrap items-center gap-1.5">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={filter === tab.id}
+              onClick={() => setFilter(tab.id)}
+              className={cn(
+                "tap-target inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                filter === tab.id
+                  ? "bg-ink text-background"
+                  : "border border-border/60 text-muted-foreground hover:bg-muted hover:text-ink"
+              )}
+            >
+              <span>{tab.label}</span>
+              <span className="opacity-70">{counts[tab.id]}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {showToday && (
         <section
           aria-labelledby="radar-today"
           className="space-y-3 rounded-2xl border border-amber-500/25 bg-amber-500/5 p-3 sm:p-4"
         >
           <h2 id="radar-today" className="flex items-center gap-1.5 text-sm font-medium text-amber-800 dark:text-amber-300">
             <Clock className="size-4" aria-hidden />
-            Today · {today.length} {today.length === 1 ? "thing that won’t keep" : "things that won’t keep"}
+            Today · {todayCount} {todayCount === 1 ? "thing that won’t keep" : "things that won’t keep"}
           </h2>
           <div className="space-y-3">
-            {today.map((rec) => (
+            {todayRecs.map((rec) => (
               <RecommendationCard key={rec.id} rec={rec} aiAvailable={aiAvailable} showAiPrompt />
+            ))}
+            {todayOpps.map((find) => (
+              <OpportunityCard key={find.id} find={find} />
             ))}
           </div>
         </section>
       )}
-      {RADAR_LANES.map((lane) => {
-        const items = rest.filter((r) => LANE_OF_KIND[r.kind] === lane);
-        const finds = lane === "opportunities" ? opportunities : [];
+      {visibleLanes.map((lane) => {
+        const items = restRecs.filter((r) => LANE_OF_KIND[r.kind] === lane);
+        const finds = lane === "opportunities" ? restOpps : [];
         if (items.length === 0 && finds.length === 0) return null;
         return (
           <section key={lane} aria-labelledby={`radar-lane-${lane}`} className="space-y-3">
@@ -435,19 +554,15 @@ function ListView({
   );
 }
 
-/** The web pass's finds. In focus mode they sit below the deck under their own heading. */
-function Finds({ opportunities, heading = false }: { opportunities: OpportunityView[]; heading?: boolean }) {
+/** Open web & graph opportunity finds. */
+function Finds({ opportunities }: { opportunities: OpportunityView[] }) {
   if (opportunities.length === 0) return null;
-  const cards = opportunities.map((find) => <OpportunityCard key={find.id} find={find} />);
-  if (!heading) return <>{cards}</>;
   return (
-    <section aria-labelledby="radar-finds" className="space-y-3">
-      <h2 id="radar-finds" className="text-lg font-medium text-ink">
-        {LANE_TITLES.opportunities}
-        <span className="ml-2 text-sm font-normal text-muted-foreground">{opportunities.length}</span>
-      </h2>
-      <div className="space-y-3">{cards}</div>
-    </section>
+    <>
+      {opportunities.map((find) => (
+        <OpportunityCard key={find.id} find={find} />
+      ))}
+    </>
   );
 }
 

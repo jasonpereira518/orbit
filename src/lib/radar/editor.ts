@@ -24,7 +24,7 @@ import {
   type EditorItem,
 } from "@/lib/radar/editor-prompt";
 import type { RadarPick } from "@/lib/radar/score";
-import { KIND_PRIORITY } from "@/lib/radar/types";
+import { KIND_PRIORITY, type RadarSteering } from "@/lib/radar/types";
 import { loadRelationshipContexts, relationshipFactLines, type RelationshipContext } from "@/lib/relationship-context";
 
 /** How long one edit may take before the run gives up on it and keeps the rules' order. */
@@ -82,7 +82,12 @@ export async function editPicks<T extends RadarPick & { inputsHash: string }>(
   userId: string,
   access: AiAccess,
   picks: readonly T[],
-  context: { goals: readonly string[]; profiles: ReadonlyMap<string, EditorProfile> },
+  context: {
+    goals: readonly string[];
+    profiles: ReadonlyMap<string, EditorProfile>;
+    projects?: readonly string[];
+    steering?: RadarSteering | null;
+  },
   now: Date,
   opts: { timeoutMs?: number } = {}
 ): Promise<EditorResult<T>> {
@@ -108,7 +113,8 @@ export async function editPicks<T extends RadarPick & { inputsHash: string }>(
       relationship: relationshipFactLines(deep.get(p.contactId)).join("; ") || null,
     };
   });
-  const prompt = buildEditorPrompt(candidates, context.goals);
+  const promptOpts = { projects: context.projects, steering: context.steering };
+  const prompt = buildEditorPrompt(candidates, context.goals, promptOpts);
 
   let called = false;
   const entries = await withAiResultCache<Array<[string, EditorItem]>>(
@@ -116,7 +122,7 @@ export async function editPicks<T extends RadarPick & { inputsHash: string }>(
     // The operation id stays "radar.rerank": its pricing, credits and allowlists already count
     // it, and the editor is the same one call a week the rerank was.
     "radar.rerank",
-    editorCacheKey(candidates, context.goals),
+    editorCacheKey(candidates, context.goals, promptOpts),
     async () => {
       called = true;
       const raw = await completeJson(userId, {

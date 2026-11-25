@@ -95,6 +95,7 @@
       "radarNextAt": null,
       "radarOpenedAt": null,
       "radarPaused": 0,
+      "radarSteering": {},
       "radarWebNextAt": null,
       "recruiterSharing": 0,
       "relationshipEngineEnabled": 1,

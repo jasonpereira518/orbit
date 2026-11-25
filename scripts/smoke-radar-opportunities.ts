@@ -195,7 +195,12 @@ run(async () => {
 
     const free = fakeSearch();
     await runRadarWebForUser(FREE, { search: free.search, fetchPage: f.fetchPage, now: NOW });
-    t.check("Free gets its one event search, and no people or programs", free.asked.join() === "event", free.asked.join());
+    t.check("Free gets a 1-pass taste of event, person, and program searches", [...free.asked].sort().join() === "event,person,program", free.asked.join());
+
+    const forced = fakeSearch();
+    await runRadarWebForUser(PRO, { search: forced.search, fetchPage: f.fetchPage, now: NOW, force: true });
+    t.check("force: true runs an immediate web rescan before 7 days elapse", forced.asked.includes("event") && forced.asked.includes("person"), forced.asked.join());
+    t.check("opportunities receive unified baseScore, bucket, and playType", rows.every((r) => r.score > 0 && (r.bucket === "today" || r.bucket === "soon" || r.bucket === "later") && r.playType !== null));
 
     const off = fakeSearch();
     const offStats = await runRadarWebForUser(OFF, { search: off.search, fetchPage: f.fetchPage, now: NOW });

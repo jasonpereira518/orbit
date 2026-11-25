@@ -365,6 +365,7 @@ export async function MorningBriefingSection({
           paused={b.paused}
           networkStats={b.networkStats ?? bundleResult?.networkStats}
           activeProjectsCount={b.activeProjectsCount}
+          topFinds={b.topFinds}
           items={b.top.map((r) => ({
             id: r.id,
             contactId: r.contactId,
@@ -380,6 +381,9 @@ export async function MorningBriefingSection({
             tier: r.tier,
             avatarUrl: r.avatarUrl,
             suggestedCalendarInvite: r.suggestedCalendarInvite,
+            playType: r.playType,
+            playState: r.playState,
+            secondaryContactName: r.secondaryContactName,
           }))}
         />
       </div>

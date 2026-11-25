@@ -16,7 +16,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { IntentLink } from "@/components/ui/intent-link";
-import { briefingHeadline, briefingSubline, cardLine, type BriefingLanes, type ChangeLine } from "@/lib/radar/briefing";
+import type { ChangeLine, BriefingLanes } from "@/lib/radar/briefing";
+import { briefingHeadline, briefingSubline, cardLine } from "@/lib/radar/briefing";
+import type { OpportunityView } from "@/lib/radar/opportunity-actions";
 import { RadarCollapseButton } from "@/components/radar/radar-dock";
 import { KIND_LABELS } from "@/lib/radar/types";
 import { cn } from "@/lib/utils";
@@ -24,6 +26,8 @@ import type { NetworkStats } from "@/lib/network-stats";
 
 export type MorningBriefingProps = {
   items: RecommendationCardData[];
+  /** High-scoring web / graph finds to highlight alongside people cards. */
+  topFinds?: OpportunityView[];
   /** Everyone on Radar's list. */
   total: number;
   /** Today's moments: the things that won't keep. */
@@ -43,6 +47,7 @@ export type MorningBriefingProps = {
  */
 export function MorningBriefing({
   items,
+  topFinds = [],
   total,
   today,
   lanes,
@@ -106,17 +111,41 @@ export function MorningBriefing({
             </div>
           )}
 
-          {(items.length > 0 || changes.length > 0) && (
+          {(items.length > 0 || topFinds.length > 0 || changes.length > 0) && (
             <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-              {items.length > 0 && (
-                <ul
-                  className={cn("space-y-2", today > 0 && "rounded-xl border border-amber-500/25 bg-amber-500/5 p-2")}
-                  aria-label={today > 0 ? "Won’t keep today" : "This week’s first people"}
-                >
-                  {items.map((rec) => (
-                    <BriefingRow key={rec.id} rec={rec} />
-                  ))}
-                </ul>
+              {(items.length > 0 || topFinds.length > 0) && (
+                <div className="space-y-2.5">
+                  {items.length > 0 && (
+                    <ul
+                      className={cn("space-y-2", today > 0 && "rounded-xl border border-amber-500/25 bg-amber-500/5 p-2")}
+                      aria-label={today > 0 ? "Won’t keep today" : "This week’s first people"}
+                    >
+                      {items.map((rec) => (
+                        <BriefingRow key={rec.id} rec={rec} />
+                      ))}
+                    </ul>
+                  )}
+                  {topFinds.length > 0 && (
+                    <ul className="space-y-1.5" aria-label="Top opportunities">
+                      {topFinds.slice(0, 2).map((find) => (
+                        <li key={find.id}>
+                          <Link
+                            href={`/radar?focus=${encodeURIComponent(find.id)}`}
+                            className="flex items-center justify-between gap-2 rounded-xl border border-border/60 bg-card px-3 py-2 text-sm transition-colors hover:bg-muted/40"
+                          >
+                            <div className="min-w-0">
+                              <span className="font-medium text-ink">{find.title}</span>
+                              {find.why && <p className="truncate text-xs text-muted-foreground">{find.why}</p>}
+                            </div>
+                            <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-3xs font-medium uppercase text-emerald-800 dark:text-emerald-200">
+                              {find.kind}
+                            </span>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               )}
               {changes.length > 0 && (
                 <section aria-labelledby="radar-briefing-changed" className="min-w-0 rounded-xl bg-muted/40 p-3">

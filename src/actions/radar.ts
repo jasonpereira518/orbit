@@ -35,16 +35,18 @@ import {
   type RadarBriefing,
   type RadarPageData,
 } from "@/lib/radar/page-data";
-import { claimRadarLease, ensureRadarRun, loadRadarState, maybeRefreshRadar, refreshRadarForNewContact, runRadarForUser, turnOnRadarForUser } from "@/lib/radar/run";
+import { claimRadarLease, ensureRadarRun, loadRadarState, maybeRefreshRadar, refreshRadarForNewContact, runRadarForUser, triggerReactiveRadarRefresh, turnOnRadarForUser } from "@/lib/radar/run";
+import { runRadarWebForUser } from "@/lib/radar/opportunities";
+import { advanceDoubleOptInIntroForUser, saveRadarSteeringForUser, trackRadarOpportunityForUser } from "@/lib/radar/plays";
 import { rebuildContactEmbedding } from "@/lib/search";
-import { markRecommendationsSeen, stampRadarOpened } from "@/lib/radar/store";
+import { markOpportunitiesSeen, markRecommendationsSeen, stampRadarOpened } from "@/lib/radar/store";
 import { getDb } from "@/db";
 import { userSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { setRadarAutopilotForUser, undoAutopilotForUser } from "@/lib/radar/autopilot";
 import { captureRadarTimeZone } from "@/lib/radar/digest";
 import { TZ_COOKIE } from "@/lib/reminder-due-bucket";
-import { AUTOPILOT_KINDS, KIND_LABELS, isRadarDismissReason, type RecommendationKind } from "@/lib/radar/types";
+import { AUTOPILOT_KINDS, KIND_LABELS, isRadarDismissReason, type RadarPlayState, type RadarSteering, type RecommendationKind } from "@/lib/radar/types";
 import { dismissOpportunityForUser, saveOpportunityForUser } from "@/lib/radar/opportunity-actions";
 import type { NetworkStats } from "@/lib/network-stats";
 
@@ -75,7 +77,9 @@ export async function fetchRadar(): Promise<{ page: RadarPageData; networkStats:
     getNetworkStats(userId).catch(() => null),
   ]);
   const shown = page.recommendations.map((r) => r.id);
+  const shownFinds = page.opportunities.map((o) => o.id);
   after(() => markRecommendationsSeen(userId, shown).catch(() => undefined));
+  after(() => markOpportunitiesSeen(userId, shownFinds).catch(() => undefined));
   // Opening the page is what clears the nav's green "new suggestions" pulse.
   after(() => stampRadarOpened(userId).catch(() => undefined));
   // The zone Radar's Monday email is timed by: the browser's, as the cookie last reported it.
@@ -92,7 +96,9 @@ export async function fetchRadarBriefing(): Promise<RadarBriefing> {
   const userId = await requireUserForReleasedSurface(SURFACE);
   const briefing = await loadRadarBriefing(userId);
   const shown = briefing.top.map((r) => r.id);
+  const shownFinds = (briefing.topFinds ?? []).map((o) => o.id);
   after(() => markRecommendationsSeen(userId, shown).catch(() => undefined));
+  after(() => markOpportunitiesSeen(userId, shownFinds).catch(() => undefined));
   after(() =>
     (briefing.hasRun ? maybeRefreshRadar(userId) : ensureRadarRun(userId).then(() => undefined)).catch(() => undefined)
   );
@@ -349,4 +355,74 @@ export async function setRadarDailyEnabled(enabled: boolean): Promise<RadarActio
   await db.update(userSettings).set({ radarDailyEnabled: enabled ? 1 : 0 }).where(eq(userSettings.userId, userId));
   revalidateRadar();
   return { ok: true, message: enabled ? "Daily 5:00 AM Radar enabled" : "Daily 5:00 AM Radar disabled" };
+}
+
+export type RadarV2Result<T = undefined> =
+  | ({ ok: true; message?: string } & (T extends object ? T : Record<never, never>))
+  | { ok: false; error: string };
+
+/** Save live steering preferences (focus topics, target orgs, cadence mode, play filter) and trigger a fast reactive pass. */
+export async function saveRadarSteering(
+  input: Partial<RadarSteering>
+): Promise<RadarV2Result<{ steering: RadarSteering }>> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  try {
+    const steering = await saveRadarSteeringForUser(userId, input);
+    await triggerReactiveRadarRefresh(userId, { ai: false, budgetMs: 8_000 }).catch(() => false);
+    revalidateRadar();
+    return { ok: true, steering, message: "Radar focus updated" };
+  } catch (err) {
+    return { ok: false, error: friendlyError(err, "Couldn’t update Radar focus — try again?") };
+  }
+}
+
+/** Force-scan external web opportunities + run reactive engine refresh under steering, rate-limited. */
+export async function scanRadarOpportunitiesNow(): Promise<RadarV2Result> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  try {
+    await consumeBucket("radarRefresh", userId, RATE_LIMITS.radarRefresh);
+  } catch (err) {
+    if (isRateLimitedError(err)) return { ok: false, error: err.message };
+    throw err;
+  }
+  const state = await loadRadarState(userId);
+  if (!state || state.paused) return { ok: false, error: "Turn on Radar first" };
+  const webStats = await runRadarWebForUser(userId, { force: true }).catch(() => null);
+  await triggerReactiveRadarRefresh(userId, { ai: true, budgetMs: 25_000 }).catch(() => false);
+  revalidateRadar();
+  if (!webStats) return { ok: false, error: "Couldn’t scan opportunities right now — try again soon" };
+  const found = webStats.written;
+  return {
+    ok: true,
+    message: found > 0 ? `Found ${found} fresh ${found === 1 ? "opportunity" : "opportunities"}` : "Scan complete — Radar is up to date",
+  };
+}
+
+/** Advance a double-opt-in introduction play (`draft_opt_in` -> `awaiting_opt_in` -> `draft_intro` -> `completed`). */
+export async function advanceDoubleOptInIntro(
+  recommendationId: string,
+  step: RadarPlayState["step"]
+): Promise<RadarV2Result<{ playState: RadarPlayState }>> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  const res = await advanceDoubleOptInIntroForUser(userId, recommendationId, step);
+  revalidateRadar();
+  return res.ok ? { ok: true, playState: res.playState } : { ok: false, error: res.message };
+}
+
+/** Save any recommendation or opportunity find to Orbit's Contacts -> Opportunities tab and set a follow-up reminder. */
+export async function trackRadarOpportunity(input: {
+  source: "recommendation" | "opportunity";
+  id: string;
+  dueDays?: number;
+}): Promise<RadarV2Result<{ contactId: string; href: string }>> {
+  const userId = await requireUserForReleasedSurface(SURFACE);
+  try {
+    const res = await trackRadarOpportunityForUser(userId, input);
+    if (!res.ok) return { ok: false, error: res.message };
+    revalidateReminderPaths();
+    revalidateRadar();
+    return { ok: true, contactId: res.contactId, message: res.message, href: res.href };
+  } catch (err) {
+    return { ok: false, error: friendlyError(err, "Couldn’t track that opportunity — try again?") };
+  }
 }

@@ -115,8 +115,8 @@ function pure() {
   t.check("the three paid-default unreleased features default to the paid plans", (["findPeople", "compose", "cloudNotes"] as const).every(
     (f) => plansWithFeature(PLAN_CONFIG, f).join() === "orbit,max,lifetime"
   ));
-  t.check("radar is on every plan, tiered by RADAR_PLAN_LIMITS", plansWithFeature(PLAN_CONFIG, "radar").join() === "free,orbit,max,lifetime" && RADAR_PLAN_LIMITS.free.planSize === 3 && RADAR_PLAN_LIMITS.orbit.planSize === 7 && RADAR_PLAN_LIMITS.max.planSize === 10);
-  t.check("every plan gets a web taste, and Free spends no overnight drafts", PLANS.every((p) => RADAR_PLAN_LIMITS[p].pulsePerMonth > 0 && RADAR_PLAN_LIMITS[p].eventSearchesPerMonth > 0) && RADAR_PLAN_LIMITS.free.draftsPerWeek === 0 && !RADAR_PLAN_LIMITS.free.aiExplanations);
+  t.check("radar is on every plan, tiered by RADAR_PLAN_LIMITS", plansWithFeature(PLAN_CONFIG, "radar").join() === "free,orbit,max,lifetime" && RADAR_PLAN_LIMITS.free.planSize === 4 && RADAR_PLAN_LIMITS.orbit.planSize === 10 && RADAR_PLAN_LIMITS.max.planSize === 15);
+  t.check("every plan gets a web taste and weekly drafts, scaled by tier", PLANS.every((p) => RADAR_PLAN_LIMITS[p].pulsePerMonth > 0 && RADAR_PLAN_LIMITS[p].eventSearchesPerMonth > 0) && RADAR_PLAN_LIMITS.free.draftsPerWeek === 1 && RADAR_PLAN_LIMITS.free.aiExplanations && RADAR_PLAN_LIMITS.orbit.draftsPerWeek === 5 && RADAR_PLAN_LIMITS.max.draftsPerWeek === 8);
   t.check("Lifetime has Pro's Radar limits", JSON.stringify(RADAR_PLAN_LIMITS.lifetime) === JSON.stringify(RADAR_PLAN_LIMITS.orbit));
   t.check("events is on every plan", plansWithFeature(PLAN_CONFIG, "events").join() === "free,orbit,max,lifetime", plansWithFeature(PLAN_CONFIG, "events").join());
 }

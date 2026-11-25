@@ -15,7 +15,16 @@ import { findOrCreateEventByLink } from "@/lib/events/discovery/record";
 import { resolveThemeColor } from "@/lib/events/theme";
 import { createReminderForUser } from "@/lib/reminder-writes";
 import { parsePersonTitle } from "@/lib/radar/person-title";
-import type { RadarDismissReason, RadarEvidence, RadarOpportunityKind } from "@/lib/radar/types";
+import type {
+  RadarAiNote,
+  RadarDismissReason,
+  RadarDraft,
+  RadarEvidence,
+  RadarOpportunityKind,
+  RadarPlayType,
+  RecommendationBucket,
+} from "@/lib/radar/types";
+import { desc } from "drizzle-orm";
 
 const DAY_MS = 86_400_000;
 /** At most this many finds on the page at once; the soonest first. */
@@ -31,12 +40,17 @@ export type OpportunityView = {
   why: string | null;
   startsAt: string | null;
   expiresAt: string | null;
+  score: number;
+  bucket: RecommendationBucket | null;
+  playType: RadarPlayType | null;
+  aiNote: RadarAiNote | null;
+  draft: RadarDraft | null;
   evidence: RadarEvidence[];
   /** Someone the person knows who can introduce them (person finds). */
   introducer: { contactId: string; name: string } | null;
 };
 
-/** Open finds: not saved, dismissed or past, soonest first. One statement, introducer joined in. */
+/** Open finds: not saved, dismissed or past, highest score then soonest first. One statement, introducer joined in. */
 export async function listOpenOpportunities(userId: string, now: Date = new Date(), limit = OPPORTUNITIES_SHOWN): Promise<OpportunityView[]> {
   const db = await getDb();
   const rows = await db
@@ -53,7 +67,7 @@ export async function listOpenOpportunities(userId: string, now: Date = new Date
         or(isNull(radarOpportunities.startsAt), gt(radarOpportunities.startsAt, now))
       )
     )
-    .orderBy(asc(sql`coalesce(${radarOpportunities.startsAt}, ${radarOpportunities.expiresAt})`))
+    .orderBy(desc(radarOpportunities.score), asc(sql`coalesce(${radarOpportunities.startsAt}, ${radarOpportunities.expiresAt})`))
     .limit(limit);
   return rows.map(({ row: r, introName }) => {
     const introId = r.relatedContactIds[0];
@@ -65,6 +79,11 @@ export async function listOpenOpportunities(userId: string, now: Date = new Date
       why: r.why,
       startsAt: r.startsAt?.toISOString() ?? null,
       expiresAt: r.expiresAt?.toISOString() ?? null,
+      score: r.score ?? 0,
+      bucket: r.bucket ?? null,
+      playType: r.playType ?? null,
+      aiNote: r.aiNote ?? null,
+      draft: r.draft ?? null,
       evidence: r.evidence,
       introducer: introId && introName ? { contactId: introId, name: introName } : null,
     };

@@ -32,11 +32,14 @@ import {
   JOB_LEFT_CODE,
   JOB_MOVE_CODE,
   KIND_PRIORITY,
+  LANE_OF_KIND,
   leadReason,
   type RadarAiNote,
   type RadarCalendarInvite,
   type RadarEvidence,
   type RadarModel,
+  type RadarPlayState,
+  type RadarPlayType,
   type RadarProof,
   type RadarReason,
   type RadarSignal,
@@ -69,12 +72,17 @@ export const RADAR_WEIGHTS = {
   actionItemStale: 6,
   // follow_up: a loop in their messages the person owes a reply on.
   openThread: 30,
-  // opportunity
+  // opportunity & graph v2
   jobPosting: 28,
+  warmPath: 34,
+  warmPathMoveBonus: 6,
+  eventLeverage: 30,
+  openOpportunity: 28,
+  semanticMatch: 26,
   // heads_up: a job move. A new employer is news; a new title at the same one, less so.
   jobChange: { joined: 32, left: 24, title_change: 18 },
   // Connect: a link between two of the person's notes.
-  connect: { introduce: 30, ask: 26, share: 22 },
+  connect: { introduce: 36, ask: 32, share: 28 },
   // heads_up: a LinkedIn post the person chose to save with the extension.
   savedPost: 16,
   publicMention: 18,
@@ -88,7 +96,7 @@ export const RADAR_WEIGHTS = {
   postEvent: 26,
   linkedinThreadQuiet: 22,
   // reconnect
-  dormantBase: 18,
+  dormantBase: 16,
   dormantOverdueStep: 7,
   dormantOverdueCap: 14,
   // context, added to every kind a person already has a reason for
@@ -101,6 +109,8 @@ export const RADAR_WEIGHTS = {
   // skills and watched job titles from the LinkedIn export; smaller than goals, which the user typed
   focusFit: 8,
   projectFit: 12,
+  steeringFit: 12,
+  semanticContextBoost: 12,
   // what the person already did or has
   recentTouchPenalty: -25,
   dismissedPenalty: -30,
@@ -114,9 +124,9 @@ export const RADAR_BUCKETS = { today: 50, soon: 32, later: 18 } as const;
 
 export const RADAR_CAPS = {
   /** Live recommendations kept per person-account after a run. */
-  pending: 12,
+  pending: 15,
   /** Per kind, so one busy kind cannot crowd out the rest. */
-  perKind: 4,
+  perKind: 5,
   /** Cards in the page's Today section. */
   today: 5,
 } as const;
@@ -182,6 +192,10 @@ export type RadarContact = {
   focusFit?: number;
   /** Score and title from matching user's active projects. */
   projectFit?: { score: number; projectTitle: string };
+  /** 0..1 semantic similarity across embeddings, memory chunks, and relationship digests. */
+  semanticFit?: number;
+  /** 0..1 match against user's explicit radar_steering topics/roles/orgs. */
+  steeringFit?: number;
   /**
    * Whether the closeness score rests on real evidence (`closeness_evidence` at or above
    * `EVIDENCE_FLOOR`). Every import stamps `last_interaction_at`, so without this a month-old
@@ -219,6 +233,9 @@ export type KindScore = {
   evidence: RadarEvidence[];
   /** The date the most time-bound reason is about, for expiry (a meeting's start). */
   anchorAt: Date | null;
+  secondaryContactId?: string | null;
+  playType?: RadarPlayType | null;
+  playState?: RadarPlayState | null;
 };
 
 export type RadarPick = {
@@ -236,6 +253,9 @@ export type RadarPick = {
   evidence: RadarEvidence[];
   expiresAt: Date;
   suggestedCalendarInvite?: RadarCalendarInvite | null;
+  secondaryContactId?: string | null;
+  playType?: RadarPlayType | null;
+  playState?: RadarPlayState | null;
 };
 
 function daysBetween(later: Date, earlier: Date): number {
@@ -335,14 +355,22 @@ export function emailCardFor(s: EmailEventSignal, now: Date): EmailCard | null {
   };
 }
 
-type Draft = { reasons: RadarReason[]; evidence: RadarEvidence[]; anchorAt: Date | null };
+type Draft = {
+  reasons: RadarReason[];
+  evidence: RadarEvidence[];
+  anchorAt: Date | null;
+  secondaryContactId?: string | null;
+  playType?: RadarPlayType | null;
+  playState?: RadarPlayState | null;
+};
 
 function add(
   drafts: Map<RecommendationKind, Draft>,
   kind: RecommendationKind,
   reason: RadarReason,
   evidence?: RadarEvidence,
-  anchorAt?: Date | null
+  anchorAt?: Date | null,
+  meta?: { secondaryContactId?: string | null; playType?: RadarPlayType | null; playState?: RadarPlayState | null }
 ) {
   if (reason.points < MIN_REASON_POINTS) return;
   let draft = drafts.get(kind);
@@ -354,6 +382,9 @@ function add(
   // Evidence names the reason it backs, so the proof check can find the lead's.
   if (evidence) draft.evidence.push({ ...evidence, code: reason.code });
   if (anchorAt && (!draft.anchorAt || anchorAt < draft.anchorAt)) draft.anchorAt = anchorAt;
+  if (meta?.secondaryContactId && !draft.secondaryContactId) draft.secondaryContactId = meta.secondaryContactId;
+  if (meta?.playType && !draft.playType) draft.playType = meta.playType;
+  if (meta?.playState && !draft.playState) draft.playState = meta.playState;
 }
 
 /** A signal's source as proof: a quote when the card quotes the row, else the record itself. */
@@ -390,8 +421,13 @@ export function scoreContactKinds(
 
   for (const s of signals) {
     const proof = proofFor(s);
-    const put = (kind: RecommendationKind, reason: RadarReason, evidence?: RadarEvidence, anchorAt?: Date | null) =>
-      add(drafts, kind, reason, evidence && { ...evidence, proof }, anchorAt);
+    const put = (
+      kind: RecommendationKind,
+      reason: RadarReason,
+      evidence?: RadarEvidence,
+      anchorAt?: Date | null,
+      meta?: { secondaryContactId?: string | null; playType?: RadarPlayType | null; playState?: RadarPlayState | null }
+    ) => add(drafts, kind, reason, evidence && { ...evidence, proof }, anchorAt, meta);
     switch (s.kind) {
       case "upcoming_meeting": {
         const within48h = s.at.getTime() - now.getTime() <= RADAR_WINDOWS.within48h * DAY_MS;
@@ -470,12 +506,67 @@ export function scoreContactKinds(
       case "connect": {
         const code = `connect_${s.connectType}`;
         const verb = s.connectType === "introduce" ? `Introduce to ${s.other.name}` : s.connectType === "ask" ? `Ask, with ${s.other.name} in mind` : `Share what ${s.other.name} told you`;
-        put(s.connectType, { code, label: `${verb}${s.why ? `: ${s.why}` : ""}`.slice(0, 200), points: W.connect[s.connectType] }, { label: "From your note on them", at: iso(s.at) });
+        const playType: RadarPlayType = s.playType ?? (s.connectType === "introduce" ? "double_opt_in_intro" : s.connectType === "ask" ? "referral_ask" : "reconnect_checkin");
+        const playState: RadarPlayState | null =
+          s.connectType === "introduce"
+            ? { step: "draft_opt_in", secondaryContactId: s.other.contactId, secondaryContactName: s.other.name }
+            : null;
+        put(
+          s.connectType,
+          { code, label: `${verb}${s.why ? `: ${s.why}` : ""}`.slice(0, 200), points: W.connect[s.connectType] },
+          { label: "From your note on them", at: iso(s.at) },
+          null,
+          { secondaryContactId: s.other.contactId, playType, playState }
+        );
         // The other side's note, proven against the other person.
         const otherProof: RadarProof | undefined = s.other.source.quote
           ? { type: "quote", table: s.other.source.table, id: s.other.source.id, quote: s.other.source.quote }
           : undefined;
         drafts.get(s.connectType)?.evidence.push({ label: `From your note on ${s.other.name}`, at: null, code, proof: otherProof, aboutContactId: s.other.contactId });
+        break;
+      }
+      case "warm_path": {
+        const points = W.warmPath + (s.viaMove ? W.warmPathMoveBonus : 0);
+        put(
+          "warm_path",
+          { code: "warm_path", label: s.reasonText.slice(0, 200), points },
+          { label: s.viaMove ? `Career move · ${s.org}` : `Experience · ${s.org}`, at: iso(s.at) },
+          null,
+          { playType: "warm_intro" }
+        );
+        break;
+      }
+      case "event_leverage": {
+        put(
+          "event_leverage",
+          { code: "event_leverage", label: s.reasonText.slice(0, 200), points: W.eventLeverage },
+          { label: `Event: ${s.eventTitle}`, at: iso(s.at) },
+          s.at,
+          { playType: "meeting_prep" }
+        );
+        break;
+      }
+      case "open_opportunity": {
+        put(
+          "opportunity",
+          { code: "open_opportunity", label: `Open ${s.oppKind}: ${s.label}`.slice(0, 200), points: W.openOpportunity },
+          { label: "Open opportunity", at: iso(s.at) },
+          null,
+          { playType: "referral_ask" }
+        );
+        break;
+      }
+      case "semantic_match": {
+        const pts = Math.round(W.semanticMatch * Math.min(1, Math.max(0.4, s.similarity)));
+        const tag = s.projectTitle ? `Project match (${s.projectTitle})` : "Strong match with your focus";
+        const detail = s.matchedLabels.length ? `: ${s.matchedLabels.join(", ")}` : "";
+        put(
+          "opportunity",
+          { code: "semantic_match", label: `${tag}${detail}`.slice(0, 200), points: pts },
+          { label: s.source?.table === "memory_chunks" ? "From your notes" : "From their profile", at: iso(s.at) },
+          null,
+          { playType: "referral_ask" }
+        );
         break;
       }
       case "open_thread": {
@@ -649,6 +740,14 @@ export function scoreContactKinds(
         points: Math.min(contact.projectFit.score, 18),
       });
     }
+    const semPoints = Math.round(W.semanticContextBoost * Math.min(1, Math.max(0, contact.semanticFit ?? 0)));
+    if (semPoints >= 4) {
+      reasons.push({ code: "semantic_fit", label: "Deep alignment with what you’re working on", points: semPoints });
+    }
+    const steerPoints = Math.round(W.steeringFit * Math.min(1, Math.max(0, contact.steeringFit ?? 0)));
+    if (steerPoints >= 4) {
+      reasons.push({ code: "steering_match", label: "Matches your Radar steering focus", points: steerPoints });
+    }
     if (touchedRecently && (kind === "reach_out" || kind === "reconnect")) {
       reasons.push({ code: "touched_recently", label: "You spoke recently", points: W.recentTouchPenalty });
     }
@@ -661,7 +760,17 @@ export function scoreContactKinds(
     const baseScore = clampScore(reasons.reduce((sum, r) => sum + r.points, 0));
     const score = learnedScore(reasons, kind, model);
     reasons.sort((a, b) => b.points - a.points || a.code.localeCompare(b.code));
-    out.push({ kind, score, baseScore, reasons, evidence: draft.evidence, anchorAt: draft.anchorAt });
+    out.push({
+      kind,
+      score,
+      baseScore,
+      reasons,
+      evidence: draft.evidence,
+      anchorAt: draft.anchorAt,
+      secondaryContactId: draft.secondaryContactId ?? null,
+      playType: draft.playType ?? null,
+      playState: draft.playState ?? null,
+    });
   }
 
   return out.sort(compareKindScores);
@@ -701,18 +810,10 @@ export function expiryFor(kind: RecommendationKind, anchorAt: Date | null, now: 
   return new Date(now.getTime() + RADAR_WINDOWS.expiry * DAY_MS);
 }
 
-/**
- * The winning kind for one person, with the runner-up's best base reason carried as a
- * zero-point "also" line. Null when nothing clears the lowest bucket.
- */
-export function pickWinner(contactId: string, kinds: readonly KindScore[], now: Date): RadarPick | null {
-  const ranked = [...kinds].sort(compareKindScores);
-  const winner = ranked[0];
-  if (!winner) return null;
+function buildPickFromKind(contactId: string, winner: KindScore, runnerUp: KindScore | undefined, now: Date): RadarPick | null {
   const bucket = bucketFor(winner.score);
   if (!bucket) return null;
   const reasons = [...winner.reasons];
-  const runnerUp = ranked[1];
   const also = runnerUp?.reasons.find(
     (r) => r.points > 0 && !CONTEXT_CODES.has(r.code) && !REDUNDANT_ALSO[winner.kind]?.has(r.code)
   );
@@ -727,7 +828,50 @@ export function pickWinner(contactId: string, kinds: readonly KindScore[], now: 
     // The lead reason's evidence first, so the two kept always include the one that proves it.
     evidence: leadFirst(winner.evidence, leadReason(reasons)?.code).slice(0, 2),
     expiresAt: expiryFor(winner.kind, winner.anchorAt, now),
+    secondaryContactId: winner.secondaryContactId ?? null,
+    playType: winner.playType ?? null,
+    playState: winner.playState ?? null,
   };
+}
+
+/**
+ * The winning kind for one person, with the runner-up's best base reason carried as a
+ * zero-point "also" line. Null when nothing clears the lowest bucket.
+ */
+export function pickWinner(contactId: string, kinds: readonly KindScore[], now: Date): RadarPick | null {
+  const ranked = [...kinds].sort(compareKindScores);
+  const winner = ranked[0];
+  if (!winner) return null;
+  return buildPickFromKind(contactId, winner, ranked[1], now);
+}
+
+const SECONDARY_OPPORTUNITY_MIN_SCORE = 36;
+
+/**
+ * Radar v2 multi-slot selector: allows one Relationship/Timing card (`follow_up` lane) AND
+ * one Opportunity/Connect card (`opportunities` or `connect` lane) per contact when the
+ * second clears `SECONDARY_OPPORTUNITY_MIN_SCORE`, so a routine meeting never hides an
+ * opportunity or warm intro.
+ */
+export function pickContactCards(contactId: string, kinds: readonly KindScore[], now: Date): RadarPick[] {
+  const ranked = [...kinds].sort(compareKindScores);
+  const primary = ranked[0];
+  if (!primary) return [];
+  const firstPick = buildPickFromKind(contactId, primary, ranked[1], now);
+  if (!firstPick) return [];
+
+  const primaryIsFollowUp = LANE_OF_KIND[primary.kind] === "follow_up";
+  const secondary = ranked.find((k) => {
+    if (k.kind === primary.kind) return false;
+    const isFollowUp = LANE_OF_KIND[k.kind] === "follow_up";
+    return primaryIsFollowUp ? !isFollowUp : isFollowUp;
+  });
+
+  if (secondary && secondary.score >= SECONDARY_OPPORTUNITY_MIN_SCORE) {
+    const secondPick = buildPickFromKind(contactId, secondary, undefined, now);
+    if (secondPick) return [firstPick, secondPick];
+  }
+  return [firstPick];
 }
 
 function leadFirst(evidence: readonly RadarEvidence[], code: string | undefined): RadarEvidence[] {

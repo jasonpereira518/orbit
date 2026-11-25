@@ -5,6 +5,8 @@ export const KIND_STYLES: Record<RecommendationKind, string> = {
   prep: "bg-sky-500/15 text-sky-800 dark:text-sky-200",
   heads_up: "bg-fuchsia-500/15 text-fuchsia-800 dark:text-fuchsia-200",
   follow_up: "bg-violet-500/15 text-violet-800 dark:text-violet-200",
+  warm_path: "bg-cyan-500/15 text-cyan-800 dark:text-cyan-200",
+  event_leverage: "bg-lime-500/15 text-lime-800 dark:text-lime-200",
   opportunity: "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200",
   reach_out: "bg-orange-500/15 text-orange-800 dark:text-orange-200",
   reconnect: "bg-amber-500/15 text-amber-800 dark:text-amber-200",

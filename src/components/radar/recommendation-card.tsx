@@ -2,7 +2,8 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { CalendarPlus, Clock, Copy, MoreHorizontal, PenLine, Sparkles } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { BookmarkPlus, CalendarPlus, CheckCircle2, Clock, Copy, MessageSquare, MoreHorizontal, PenLine, Sparkles, Users } from "lucide-react";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { ClosenessTierBadge } from "@/components/dashboard/closeness-tier-badge";
 import {
@@ -20,7 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { IntentLink } from "@/components/ui/intent-link";
 import { AiKeyNotice } from "@/components/ai-key-notice";
-import { explainRecommendationAction } from "@/actions/radar";
+import { advanceDoubleOptInIntro, explainRecommendationAction, trackRadarOpportunity } from "@/actions/radar";
 import { companyBrandText } from "@/lib/company-brand";
 import { friendlyError } from "@/lib/errors";
 import { aiDenialFromMessage } from "@/lib/ai-access-copy";
@@ -34,6 +35,8 @@ import {
   type RadarCalendarInvite,
   type RadarDraft,
   type RadarEvidence,
+  type RadarPlayState,
+  type RadarPlayType,
   type RadarReason,
   type RecommendationBucket,
   type RecommendationKind,
@@ -57,6 +60,7 @@ export type RecommendationCardData = {
   kind: RecommendationKind;
   /** "today": a moment that won't keep (`week.ts`), shown in the Today strip. */
   bucket?: RecommendationBucket | null;
+  score?: number;
   reasons: RadarReason[];
   evidence: RadarEvidence[];
   aiNote: RadarAiNote | null;
@@ -66,6 +70,10 @@ export type RecommendationCardData = {
   draft?: RadarDraft | null;
   /** Suggested calendar invite for 1-click execution */
   suggestedCalendarInvite?: RadarCalendarInvite | null;
+  secondaryContactId?: string | null;
+  secondaryContactName?: string | null;
+  playType?: RadarPlayType | null;
+  playState?: RadarPlayState | null;
   contactName: string;
   title: string | null;
   company: string | null;
@@ -89,11 +97,14 @@ export function RecommendationCard({
   /** Focus mode's card: `s`, `d`, `z` and `x` act on it. */
   shortcuts?: boolean;
 }) {
+  const router = useRouter();
   const actions = useRecommendationActions(rec);
   const { draftOpen, setDraftOpen } = actions;
   const [writing, start] = useTransition();
-  const pending = actions.pending || writing;
-  const [note, setNote] = useState<{ why: string; opener: string } | null>(rec.aiNote);
+  const [playPending, startPlay] = useTransition();
+  const pending = actions.pending || writing || playPending;
+  const [note, setNote] = useState<{ why: string; opener: string; nextStep?: string; talkingPoints?: string[] } | null>(rec.aiNote);
+  const [playStep, setPlayStep] = useState<RadarPlayState["step"] | undefined>(rec.playState?.step);
   // Kept with the `aiAvailable` it was seen under, so the notice resets when access changes
   // (a key added, credits refilled) without a setState in an effect.
   const [refusal, setRefusal] = useState<{ reason: AiAccessDenial; aiAvailable: boolean } | null>(null);
@@ -132,7 +143,51 @@ export function RecommendationCard({
       }
     });
 
-  const schedule = actions.schedule;
+    const schedule = actions.schedule;
+  const firstName = rec.contactName.split(/\s+/)[0] || rec.contactName;
+  const secondaryFirst = rec.secondaryContactName?.split(/\s+/)[0] || rec.secondaryContactName;
+  const isDoubleOptIn = rec.playType === "double_opt_in_intro" && Boolean(rec.secondaryContactName);
+
+  const advancePlay = (next: RadarPlayState["step"]) =>
+    startPlay(async () => {
+      try {
+        const res = await advanceDoubleOptInIntro(rec.id, next);
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
+        setPlayStep(next);
+        toast.success(
+          next === "awaiting_opt_in"
+            ? "Marked awaiting reply — 4-day follow-up set"
+            : next === "completed"
+              ? "Intro completed"
+              : "Intro step updated"
+        );
+        router.refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, "Couldn’t update intro step — try again?"));
+      }
+    });
+
+  const trackOpportunity = () =>
+    startPlay(async () => {
+      try {
+        const res = await trackRadarOpportunity({ source: "recommendation", id: rec.id });
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
+        if (res.message) toast.success(res.message);
+        router.refresh();
+      } catch (err) {
+        toast.error(friendlyError(err, "Couldn’t track opportunity — try again?"));
+      }
+    });
+
+  const askOrbitPrompt = encodeURIComponent(
+    `Help me prepare for reaching out to ${rec.contactName}${rec.company ? ` (${rec.company})` : ""} about: ${rec.aiAngle ?? lead?.label ?? KIND_LABELS[rec.kind]}`
+  );
 
   return (
     // Folds away on resolve, and grows back when Undo brings it back: the repo's 0fr→1fr
@@ -160,6 +215,18 @@ export function RecommendationCard({
                 {rec.draft && (
                   <span className="rounded-full bg-primary/10 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-primary">
                     Draft ready
+                  </span>
+                )}
+                {rec.secondaryContactName && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-teal-500/15 px-2 py-0.5 text-3xs font-medium text-teal-800 dark:text-teal-200">
+                    <Users className="size-3" aria-hidden />
+                    {rec.secondaryContactId ? (
+                      <IntentLink href={`/contacts/${rec.secondaryContactId}`} className="hover:underline">
+                        Pair: {rec.secondaryContactName}
+                      </IntentLink>
+                    ) : (
+                      <span>Pair: {rec.secondaryContactName}</span>
+                    )}
                   </span>
                 )}
               </div>
@@ -205,13 +272,25 @@ export function RecommendationCard({
                 </p>
               )}
 
-              {note && (note.why || note.opener) ? (
+              {note && (note.why || note.opener || note.nextStep || (note.talkingPoints && note.talkingPoints.length > 0)) ? (
                 <div className="mt-3 rounded-lg bg-muted/50 p-2.5 text-sm">
                   {note.why && (
                     <p className="flex gap-1.5 text-ink/90">
                       <Sparkles className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden />
                       {note.why}
                     </p>
+                  )}
+                  {note.nextStep && (
+                    <p className="mt-1.5 text-xs font-medium text-ink/85">
+                      Next step: <span className="font-normal text-muted-foreground">{note.nextStep}</span>
+                    </p>
+                  )}
+                  {note.talkingPoints && note.talkingPoints.length > 0 && (
+                    <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
+                      {note.talkingPoints.map((tp) => (
+                        <li key={tp}>{tp}</li>
+                      ))}
+                    </ul>
                   )}
                   {note.opener && (
                     <div className="mt-1.5 flex items-start justify-between gap-2">
@@ -245,6 +324,68 @@ export function RecommendationCard({
                   </button>
                 ) : null
               ) : null}
+
+                {isDoubleOptIn && (
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5 rounded-lg border border-teal-500/25 bg-teal-500/5 px-2.5 py-2 text-xs">
+                    <span className="font-medium text-teal-900 dark:text-teal-200">
+                      Double opt-in play
+                    </span>
+                    <span className="text-muted-foreground">·</span>
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => advancePlay("draft_opt_in")}
+                      className={cn(
+                        "rounded px-2 py-0.5 transition-colors",
+                        !playStep || playStep === "draft_opt_in"
+                          ? "bg-teal-600/15 font-medium text-teal-900 dark:text-teal-200"
+                          : "text-muted-foreground hover:text-ink"
+                      )}
+                    >
+                      1. Ask {firstName}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => advancePlay("awaiting_opt_in")}
+                      className={cn(
+                        "rounded px-2 py-0.5 transition-colors",
+                        playStep === "awaiting_opt_in"
+                          ? "bg-teal-600/15 font-medium text-teal-900 dark:text-teal-200"
+                          : "text-muted-foreground hover:text-ink"
+                      )}
+                    >
+                      2. Awaiting reply
+                    </button>
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => advancePlay("draft_intro")}
+                      className={cn(
+                        "rounded px-2 py-0.5 transition-colors",
+                        playStep === "draft_intro"
+                          ? "bg-teal-600/15 font-medium text-teal-900 dark:text-teal-200"
+                          : "text-muted-foreground hover:text-ink"
+                      )}
+                    >
+                      3. Intro {secondaryFirst}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => advancePlay("completed")}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded px-2 py-0.5 transition-colors",
+                        playStep === "completed"
+                          ? "bg-emerald-600/15 font-medium text-emerald-800 dark:text-emerald-200"
+                          : "text-muted-foreground hover:text-ink"
+                      )}
+                    >
+                      <CheckCircle2 className="size-3" aria-hidden />
+                      4. Done
+                    </button>
+                  </div>
+                )}
 
               <div className="mt-3 flex flex-wrap items-center gap-1.5 pointer-coarse:gap-3">
                 {rec.suggestedCalendarInvite && (
@@ -308,6 +449,14 @@ export function RecommendationCard({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-52">
                     <DropdownMenuItem render={<Link href={`/contacts/${rec.contactId}`} />}>Open contact</DropdownMenuItem>
+                    <DropdownMenuItem render={<Link href={`/chat?q=${askOrbitPrompt}`} />}>
+                      <MessageSquare className="size-3.5" aria-hidden />
+                      Ask Orbit about this
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={trackOpportunity}>
+                      <BookmarkPlus className="size-3.5" aria-hidden />
+                      Track opportunity
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem variant="destructive" onClick={actions.never}>
                       Not for this person

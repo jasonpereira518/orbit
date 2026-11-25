@@ -18,7 +18,9 @@ export const RECOMMENDATION_KINDS = [
   "prep",
   "heads_up",
   "follow_up",
+  "warm_path",
   "opportunity",
+  "event_leverage",
   "reach_out",
   "reconnect",
   // Connect lane: links between the person's notes and the people they know.
@@ -29,8 +31,8 @@ export const RECOMMENDATION_KINDS = [
 export type RecommendationKind = (typeof RECOMMENDATION_KINDS)[number];
 
 /**
- * The kinds autopilot may act on. Not the Connect kinds: an introduction or an ask involves a
- * second person, so it only ever happens when the person chooses it.
+ * The kinds autopilot may act on. Not the Connect or multi-party kinds: an introduction,
+ * warm-path ask, or event leverage play involves another person or context, so the human chooses it.
  */
 export const AUTOPILOT_KINDS = ["prep", "heads_up", "follow_up", "opportunity", "reach_out", "reconnect"] as const satisfies readonly RecommendationKind[];
 
@@ -38,7 +40,9 @@ export const KIND_PRIORITY: Record<RecommendationKind, number> = {
   prep: 6,
   heads_up: 5,
   follow_up: 4,
+  warm_path: 4,
   opportunity: 3,
+  event_leverage: 3,
   reach_out: 2,
   reconnect: 1,
   introduce: 3,
@@ -51,7 +55,9 @@ export const KIND_LABELS: Record<RecommendationKind, string> = {
   prep: "Coming up",
   heads_up: "Heads-up",
   follow_up: "You owe them",
+  warm_path: "Warm path",
   opportunity: "Opportunity",
+  event_leverage: "At this event",
   reach_out: "Reach out",
   reconnect: "Reconnect",
   introduce: "Introduce",
@@ -64,7 +70,9 @@ export const KIND_SECTION_TITLES: Record<RecommendationKind, string> = {
   prep: "Before you see them",
   heads_up: "Something changed",
   follow_up: "Loops to close",
+  warm_path: "Warm paths",
   opportunity: "Opportunities",
+  event_leverage: "People at your events",
   reach_out: "Waiting on you",
   reconnect: "Drifting",
   introduce: "People to connect",
@@ -95,7 +103,42 @@ export const LANE_OF_KIND: Record<RecommendationKind, RadarLane> = {
   introduce: "connect",
   ask: "connect",
   share: "connect",
+  warm_path: "opportunities",
   opportunity: "opportunities",
+  event_leverage: "opportunities",
+};
+
+/** Play execution patterns for Radar v2 cards. */
+export const RADAR_PLAY_TYPES = [
+  "warm_intro",
+  "double_opt_in_intro",
+  "meeting_prep",
+  "referral_ask",
+  "congrats_pivot",
+  "close_loop",
+  "event_rsvp",
+  "program_apply",
+  "reconnect_checkin",
+] as const;
+export type RadarPlayType = (typeof RADAR_PLAY_TYPES)[number];
+
+/** Stateful execution progress for multi-step plays such as double-opt-in introductions. */
+export type RadarPlayState = {
+  step: "draft_opt_in" | "awaiting_opt_in" | "draft_intro" | "completed";
+  optInSentAt?: string;
+  introSentAt?: string;
+  secondaryContactId?: string;
+  secondaryContactName?: string;
+};
+
+/** User-defined steering preferences controlling what Radar v2 hunts for. */
+export type RadarSteering = {
+  topics?: string[];
+  targetRoles?: string[];
+  targetOrgs?: string[];
+  avoidTopics?: string[];
+  horizonDays?: number;
+  cadenceMode?: "reactive" | "weekly";
 };
 
 export const RECOMMENDATION_BUCKETS = ["today", "soon", "later"] as const;
@@ -208,7 +251,12 @@ export type RadarProofTable =
   | "email_events"
   | "contact_signals"
   | "ai_suggestions"
-  | "memory_chunks";
+  | "memory_chunks"
+  | "contact_experiences"
+  | "target_companies"
+  | "user_projects"
+  | "event_attendees"
+  | "contact_briefs";
 
 /**
  * Why a piece of evidence can be trusted (`src/lib/radar/verify.ts`). Built by code from rows
@@ -257,7 +305,15 @@ export type RadarEvidence = {
 };
 
 /** The optional AI line, cached against the inputs it was written from. */
-export type RadarAiNote = { why: string; opener: string; inputsHash: string; generatedAt: string };
+export type RadarAiNote = {
+  why: string;
+  opener: string;
+  inputsHash: string;
+  generatedAt: string;
+  nextStep?: string;
+  talkingPoints?: string[];
+  playType?: RadarPlayType;
+};
 
 /**
  * A message written for a card ahead of time, so acting on it is review-and-send. Cached
@@ -405,7 +461,45 @@ type RadarSignalFact =
       at: Date;
       connectType: "introduce" | "ask" | "share";
       why: string;
+      playType?: RadarPlayType;
+      optInTarget?: "a" | "b";
       other: { contactId: string; name: string; source: RadarSignalSource };
+    }
+  /** A structural warm path via target companies, career moves, or past experience. */
+  | {
+      kind: "warm_path";
+      contactId: string;
+      at: Date;
+      org: string;
+      reasonText: string;
+      isTarget: boolean;
+      viaMove?: boolean;
+    }
+  /** An upcoming event where a known contact is high-leverage for goals/projects/targets. */
+  | {
+      kind: "event_leverage";
+      contactId: string;
+      at: Date;
+      eventId: string;
+      eventTitle: string;
+      reasonText: string;
+    }
+  /** An open contact_opportunity without a near due date that aligns with user intent. */
+  | {
+      kind: "open_opportunity";
+      contactId: string;
+      at: Date;
+      oppKind: string;
+      label: string;
+    }
+  /** Semantic match between user's goals/projects and contact's embeddings/memory chunks. */
+  | {
+      kind: "semantic_match";
+      contactId: string;
+      at: Date;
+      similarity: number;
+      matchedLabels: string[];
+      projectTitle?: string | null;
     }
   /** A LinkedIn post of theirs the person saved with the extension. */
   | {

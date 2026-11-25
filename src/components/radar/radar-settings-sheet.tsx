@@ -10,17 +10,19 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import {
   removeRadarPushSubscription,
   saveRadarPushSubscription,
+  saveRadarSteering,
   setRadarAutopilot,
   setRadarCaptureLinkedin,
   setRadarDigest,
   setRadarMomentEmail,
   setRadarPaused,
   type RadarActionResult,
+  type RadarV2Result,
 } from "@/actions/radar";
 import { SW_PATH } from "@/lib/browser-notifications";
 import { friendlyError } from "@/lib/errors";
 import type { RadarSettingsView } from "@/lib/radar/page-data";
-import { AUTOPILOT_KINDS, KIND_LABELS } from "@/lib/radar/types";
+import { AUTOPILOT_KINDS, KIND_LABELS, type RadarSteering } from "@/lib/radar/types";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
@@ -241,7 +243,10 @@ export function RadarSettingsSheet({ settings }: { settings: RadarSettingsView }
   const [pending, start] = useGuardedTransition();
   const [state, setState] = useState(settings);
 
-  const save = (apply: (s: RadarSettingsView) => RadarSettingsView, run: () => Promise<RadarActionResult>) =>
+  const save = (
+    apply: (s: RadarSettingsView) => RadarSettingsView,
+    run: () => Promise<RadarActionResult | RadarV2Result<{ steering: RadarSteering }>>
+  ) =>
     start(async () => {
       const before = state;
       setState(apply(state));
@@ -249,7 +254,7 @@ export function RadarSettingsSheet({ settings }: { settings: RadarSettingsView }
         const result = await run();
         if (!result.ok) {
           setState(before);
-          toast.error(result.message);
+          toast.error("error" in result ? result.error : result.message);
           return;
         }
         if (result.message) toast.success(result.message);
@@ -284,6 +289,19 @@ export function RadarSettingsSheet({ settings }: { settings: RadarSettingsView }
                 on={!state.paused}
                 disabled={pending}
                 onChange={(on) => save((s) => ({ ...s, paused: !on }), () => setRadarPaused(!on))}
+              />
+              <SwitchRow
+                id="radar-reactive-cadence"
+                label="Reactive continuous refresh"
+                hint="Update Radar continuously when emails, events, or goals change instead of freezing once a week."
+                on={(state.steering?.cadenceMode ?? "reactive") === "reactive"}
+                disabled={pending}
+                onChange={(reactive) =>
+                  save(
+                    (s) => ({ ...s, steering: { ...s.steering, cadenceMode: reactive ? "reactive" : "weekly" } }),
+                    () => saveRadarSteering({ cadenceMode: reactive ? "reactive" : "weekly" })
+                  )
+                }
               />
             </section>
 

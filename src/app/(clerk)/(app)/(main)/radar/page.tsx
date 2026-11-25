@@ -27,11 +27,17 @@ async function RadarBody({ searchParams }: { searchParams: Promise<Params> }) {
           contactId: r.contactId,
           kind: r.kind,
           bucket: r.bucket,
+          score: r.score,
           reasons: r.reasons,
           evidence: r.evidence,
           aiNote: r.aiNote,
           aiAngle: r.aiAngle,
           draft: r.draft,
+          suggestedCalendarInvite: r.suggestedCalendarInvite,
+          secondaryContactId: r.secondaryContactId,
+          secondaryContactName: r.secondaryContactName,
+          playType: r.playType,
+          playState: r.playState,
           contactName: r.contactName,
           title: r.title,
           company: r.company,
@@ -63,6 +69,8 @@ async function RadarBody({ searchParams }: { searchParams: Promise<Params> }) {
         opportunities={page.opportunities}
         weekBuiltAt={page.weekBuiltAt ? page.weekBuiltAt.toISOString() : null}
         coldStart={page.coldStart}
+        momentum={page.momentum}
+        steeringContext={page.steeringContext}
       />
       {networkStats && (
         <aside className="min-w-0">

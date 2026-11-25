@@ -1,14 +1,15 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { differenceInCalendarDays, format } from "date-fns";
-import { Trophy, UserPlus } from "lucide-react";
+import { BookmarkPlus, MessageSquare, Trophy, UserPlus } from "lucide-react";
 import { FollowUpDraftSheetLazy, preloadFollowUpDraftSheet } from "@/components/follow-up/follow-up-draft-sheet-lazy";
 import { Button } from "@/components/ui/button";
 import { DismissMenu } from "@/components/radar/dismiss-menu";
 import { ProofChips } from "@/components/radar/proof-chips";
-import { dismissRadarOpportunity, saveRadarOpportunity } from "@/actions/radar";
+import { dismissRadarOpportunity, saveRadarOpportunity, trackRadarOpportunity } from "@/actions/radar";
 import { friendlyError } from "@/lib/errors";
 import { parsePersonTitle } from "@/lib/radar/person-title";
 import type { OpportunityView } from "@/lib/radar/opportunity-actions";
@@ -42,6 +43,14 @@ export function OpportunityCard({ find }: { find: OpportunityView }) {
     });
 
   const save = () => run(() => saveRadarOpportunity(find.id), "Couldn’t save that just now — try again?");
+  const track = () =>
+    run(
+      async () => {
+        const r = await trackRadarOpportunity({ source: "opportunity", id: find.id });
+        return r.ok ? r : { ok: false, message: r.error };
+      },
+      "Couldn’t track that opportunity — try again?"
+    );
   const dismiss = (reason: RadarDismissReason) =>
     run(async () => {
       const r = await dismissRadarOpportunity(find.id, reason);
@@ -53,11 +62,15 @@ export function OpportunityCard({ find }: { find: OpportunityView }) {
   const deadline = find.kind === "program" && find.expiresAt ? new Date(find.expiresAt) : null;
   const daysLeft = deadline ? differenceInCalendarDays(deadline, new Date()) : null;
   const introFirst = find.introducer?.name.split(/\s+/)[0] ?? "";
+  const askOrbitPrompt = encodeURIComponent(
+    `Evaluate how to act on this ${find.kind}: "${person ? person.fullName : find.title}"${find.why ? ` — ${find.why}` : ""}`
+  );
 
   return (
     <div
+      id={`radar-opp-${find.id}`}
       className={cn(
-        "grid transition-[grid-template-rows,opacity] duration-slow ease-house motion-reduce:transition-none",
+        "grid scroll-mt-24 transition-[grid-template-rows,opacity] duration-slow ease-house motion-reduce:transition-none",
         gone ? "pointer-events-none grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
       )}
     >
@@ -83,6 +96,11 @@ export function OpportunityCard({ find }: { find: OpportunityView }) {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="font-medium text-ink">{person ? person.fullName : find.title}</h3>
+                {find.bucket === "today" && (
+                  <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-amber-800 dark:text-amber-200">
+                    Timely
+                  </span>
+                )}
                 {person && (
                   <span className="rounded-full bg-muted px-2 py-0.5 text-3xs font-medium uppercase tracking-wide text-muted-foreground">
                     Not in your network
@@ -121,6 +139,17 @@ export function OpportunityCard({ find }: { find: OpportunityView }) {
                 <Button type="button" size="sm" variant={person ? "outline" : "default"} className="h-8" disabled={pending} onClick={save}>
                   {SAVE_LABEL[find.kind]}
                 </Button>
+                <Button type="button" size="sm" variant="outline" className="h-8 gap-1" disabled={pending} onClick={track}>
+                  <BookmarkPlus className="size-3.5" aria-hidden />
+                  Track
+                </Button>
+                <Link
+                  href={`/chat?q=${askOrbitPrompt}`}
+                  className="tap-target inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-ink"
+                >
+                  <MessageSquare className="size-3.5" aria-hidden />
+                  Ask Orbit
+                </Link>
               </div>
             </div>
             <DismissMenu label={`Hide ${person ? person.fullName : find.title}`} disabled={pending} onDismiss={dismiss} />
