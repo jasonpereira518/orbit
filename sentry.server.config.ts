@@ -17,6 +17,9 @@ Sentry.init({
   // Errors are the point; a light trace sample keeps the free tier's quota for them.
   tracesSampleRate: 0.1,
   sendDefaultPii: false,
+  // A request with a malformed `next-router-state-tree` header (a bot, a stale client) — Next
+  // answers it with a 400; nothing of Orbit's to fix (ORBIT-16).
+  ignoreErrors: ["The router state header was sent but could not be parsed"],
   // Calendar, scan and MCP URLs carry their credential in the path (src/lib/sentry-scrub.ts).
   beforeSend: scrubSentryEvent,
   beforeSendTransaction: scrubSentryEvent,

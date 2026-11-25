@@ -606,7 +606,7 @@ async function chatClaimsSection() {
   ]);
   await db.insert(interactions).values(claim(OTHER, m2.id, other.id, new Date()));
 
-  const loaded = await getChatThread(thread.id);
+  const loaded = (await getChatThread(thread.id))!;
   const expected = {
     [m1.id]: { [who.id]: old.toISOString(), [other.id]: old.toISOString() },
     [m2.id]: { [who.id]: old.toISOString() },

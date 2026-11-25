@@ -25,6 +25,8 @@ async function fetchProgress(): Promise<RadarRunProgress | null> {
  *
  * Once on mount it checks whether a run is already going, which is how landing on /radar
  * mid-run shows the bar. Polls over `fetch`: a Server Action would queue behind the refresh.
+ * Paused while the tab is hidden (nobody is watching the bar, and a run that never ends would
+ * otherwise poll forever); one read on coming back catches up.
  */
 export function useRadarRunProgress(onFinished: (status: RadarRunProgress["status"]) => void) {
   const [snap, setSnap] = useState<RadarRunProgress | null>(null);
@@ -70,10 +72,17 @@ export function useRadarRunProgress(onFinished: (status: RadarRunProgress["statu
       }
     };
     void tick();
-    const id = setInterval(() => void tick(), POLL_MS);
+    const id = setInterval(() => {
+      if (document.visibilityState !== "hidden") void tick();
+    }, POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       live = false;
       clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [mode]);
 

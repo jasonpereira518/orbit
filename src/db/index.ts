@@ -2250,6 +2250,15 @@ CREATE TABLE IF NOT EXISTS email_events (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS email_events_rule_uidx ON email_events(thread_row_id, kind) WHERE source = 'rule';
 CREATE INDEX IF NOT EXISTS email_events_user_idx ON email_events(user_id, occurred_at);
+CREATE TABLE IF NOT EXISTS recruiting_overrides (
+  user_id text NOT NULL,
+  company_key text NOT NULL,
+  hidden_at timestamptz,
+  stage text,
+  stage_at timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, company_key)
+);
 CREATE TABLE IF NOT EXISTS ignored_people (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id text NOT NULL,
@@ -3256,9 +3265,12 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 249 = contacts.sort_key ignores parenthesised text, so "Briana (Simmons) Medley" sorts under M
 // (UX walkthrough Task 19). Scanned every remote ref on Nov 18 2026: main (merged draft_edits, 248)
 // is the highest, so this takes 249.
-// 250 = Radar v2 opportunity engine: user_settings.radar_steering, recommendations.secondary_contact_id /
+// 250 = the Recruiting board: recruiting_overrides (a company hidden as "Not a job", or a stage set
+// by hand), keyed by user and company. Built as 241; renumbered to 250 on Nov 23 2026 when main
+// reached 249. Scanned every remote ref that day: none above 249.
+// 251 = Radar v2 opportunity engine: user_settings.radar_steering, recommendations.secondary_contact_id /
 // play_type / play_state / pinned_until, and radar_opportunities unified scoring/impression/draft/outcome columns.
-export const SCHEMA_VERSION = 250;
+export const SCHEMA_VERSION = 251;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -4045,6 +4057,12 @@ export type SchemaFailure = { statement: string; message: string };
  * is recorded for the caller to act on (the build-time migration refuses to deploy on any);
  * without one it is logged, which is all a runtime cold start can do.
  */
+/** A Postgres error carries a five-character SQLSTATE; transport and quota failures do not. */
+export function isSqlError(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === "string" && /^[0-9A-Z]{5}$/.test(code);
+}
+
 async function runStatements(
   run: StatementRunner,
   statements: string[],
@@ -4057,6 +4075,10 @@ async function runStatements(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (BENIGN_DDL_FAILURE.test(message)) continue;
+      // No SQLSTATE means the database itself is unreachable (a Neon 402 quota, a fetch
+      // failure), so no later statement can succeed either. Stop instead of pushing hundreds of
+      // statements at a refusing DB on every cold start; the caller retries the whole pass.
+      if (!isSqlError(err)) throw err;
       const head = statement.trim().split("\n")[0].slice(0, 140);
       if (failed) failed.push({ statement: head, message });
       else console.error(`[db] ${label} failed: ${head}\n`, message);

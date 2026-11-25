@@ -51,6 +51,11 @@ export async function POST(req: NextRequest) {
   const eventId =
     req.headers.get("svix-id") ?? req.headers.get("webhook-id") ?? null;
 
+  // No delivery id means no Svix headers at all: a scanner or a stray GET-turned-POST, never
+  // Clerk. Turned away before verification so it is neither reported nor written to the
+  // ledger (ORBIT-X); a real delivery with a bad signature still takes the path below.
+  if (!eventId) return new Response("Missing webhook headers", { status: 400 });
+
   let evt;
   try {
     evt = await verifyWebhook(req);

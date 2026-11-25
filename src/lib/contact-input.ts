@@ -2,6 +2,7 @@ import { isLinkedInProfileUrl } from "@/lib/identity/linkedin";
 import { z } from "zod";
 import type { ContactInput } from "@/lib/contact-writes";
 import { MAX_LIST_ITEMS, MAX_TAGS, TEXT_LIMITS, cleanText, cleanTextList } from "@/lib/input/text";
+import { safeHttpUrl } from "@/lib/safe-links";
 
 /**
  * The server-side input contract for contacts.
@@ -60,6 +61,11 @@ function optionalText(max: number) {
 
 export { isLinkedInProfileUrl };
 
+/** A website link safe to store and render: http(s) only, no credentials (audit EC-URL-1). */
+export function isSafeWebsiteUrl(url: string) {
+  return safeHttpUrl(url) !== null;
+}
+
 const baseShape = {
   fullName: trimmedMax(LIMITS.name).refine((v) => v.length > 0, {
     message: "Name is required",
@@ -81,7 +87,9 @@ const baseShape = {
     { message: "That doesn't look like a LinkedIn profile URL" }
   ),
   xHandle: optionalText(LIMITS.handle),
-  website: optionalText(LIMITS.url),
+  website: optionalText(LIMITS.url).refine((v) => v === undefined || isSafeWebsiteUrl(v), {
+    message: "That website link doesn’t look right — use an http or https address",
+  }),
 };
 
 /**
@@ -174,7 +182,17 @@ export function normalizeContactInput(
     };
   }
 
-  return { ok: true, value: { ...input, fullName: name.data.fullName } };
+  // The one exception to "left exactly as supplied": a link with a scheme that executes
+  // (`javascript:`, `data:`) is dropped rather than stored, so an import can never plant one.
+  // The row still lands; only the unsafe link is left out.
+  const value: ContactInput = { ...input, fullName: name.data.fullName };
+  if (typeof value.website === "string" && value.website.trim() && !isSafeWebsiteUrl(value.website)) {
+    value.website = undefined;
+  }
+  if (typeof value.linkedinUrl === "string" && value.linkedinUrl.trim() && !safeHttpUrl(value.linkedinUrl)) {
+    value.linkedinUrl = undefined;
+  }
+  return { ok: true, value };
 }
 
 /**

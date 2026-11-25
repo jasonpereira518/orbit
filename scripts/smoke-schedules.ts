@@ -68,7 +68,34 @@ for (let t = Date.parse("2026-11-29T00:00:00Z"); t < Date.parse("2026-12-06T00:0
 }
 check("every job is listed on a tick mark, so it runs at the minute it says", offMark.length === 0, offMark.slice(0, 3).join(", "));
 const hourlyAt = (minute: string) => table.filter((j) => j.cron === `${minute} * * * *`).length;
-check("the hourly jobs are split between :00 and :30", hourlyAt("0") === 3 && hourlyAt("30") === 3, `${hourlyAt("0")} / ${hourlyAt("30")}`);
+check("the hourly jobs are split between :00 and :30", hourlyAt("0") === 5 && hourlyAt("30") === 5, `${hourlyAt("0")} / ${hourlyAt("30")}`);
+// Each job is a function invocation even when idle, and Vercel Hobby caps Fluid Active CPU: only
+// what a person or an alert waits on runs every tick, and no tick starts more than ten (it was eleven or twelve).
+const everyTick = table.filter((j) => j.cron === "*/30 * * * *").map((j) => j.id).sort();
+check("only ops-sweep, sync-run and email-drain run every tick",
+  JSON.stringify(everyTick) === JSON.stringify(["email-drain", "ops-sweep", "sync-run"]), everyTick.join(", "));
+let busiestTick = 0;
+let busiestAt = "";
+for (let t = Date.parse("2026-11-29T00:00:00Z"); t < Date.parse("2026-12-06T00:00:00Z"); t += TICK_MINUTES * 60_000) {
+  const n = dueJobs(new Date(t)).length;
+  if (n > busiestTick) [busiestTick, busiestAt] = [n, new Date(t).toISOString()];
+}
+check("no tick in a week starts more than ten jobs", busiestTick <= 10, `${busiestTick} at ${busiestAt}`);
+// The email attachment sweep's Blob listing is metered: the route lists it once a day, not every hourly run.
+check("process-stalled lists Blob orphans only at 03:00 UTC",
+  /sweepEmailAttachments\(new Date\(\), 200, \{ listOrphans: new Date\(\)\.getUTCHours\(\) === 3 \}\)/.test(route));
+// The routes that stand down on an empty queue check before they open a ledger row.
+for (const [path, guard] of [
+  ["src/app/api/email/drain/route.ts", "hasDueEmailSends"],
+  ["src/app/api/webhooks/outbound/drain/route.ts", "hasWebhookWork"],
+  ["src/app/api/connectors/outbox/drain/route.ts", "hasDueOutbox"],
+  ["src/app/api/cloud-notes/run/route.ts", "hasDueSources"],
+  ["src/app/api/credits/notices/route.ts", "loadCreditNoticeCandidates"],
+] as const) {
+  const src = readFileSync(path, "utf8").slice(readFileSync(path, "utf8").indexOf("export async function POST"));
+  const at = src.indexOf(`${guard}(`);
+  check(`${path} checks ${guard} before startCronRun`, at !== -1 && at < src.indexOf('startCronRun("'));
+}
 const MOVED_FROM_GITHUB = [
   "/api/ops/sweep", "/api/imports/process-stalled", "/api/webhooks/outbound/drain", "/api/connectors/outbox/drain",
   "/api/email/drain", "/api/credits/notices", "/api/sync/run", "/api/jobs/feed/sweep", "/api/work-history/sweep",
@@ -90,8 +117,8 @@ for (let t = weekStart; t < weekStart + 7 * 86_400_000; t += TICK_MINUTES * 60_0
   for (const job of dueJobs(new Date(t))) starts.set(job.id, (starts.get(job.id) ?? 0) + 1);
 }
 const perWeek: Record<string, number> = {
-  "ops-sweep": 336, "sync-run": 336, "email-intel": 336, "cloud-notes": 336, "process-stalled": 168, "radar-run": 168,
-  "radar-web": 168, "radar-digest": 48, "ops-rollup": 7, "billing-reconcile": 7, "weekly-digest": 1, "contacts-upkeep": 1,
+  "ops-sweep": 336, "sync-run": 336, "email-drain": 336, "email-intel": 168, "cloud-notes": 168, "webhooks-drain": 168,
+  "connectors-outbox": 168, "credit-notices": 84, "process-stalled": 168, "radar-run": 168, "radar-web": 168, "radar-digest": 48, "ops-rollup": 7, "billing-reconcile": 7, "weekly-digest": 1, "contacts-upkeep": 1,
 };
 for (const [id, n] of Object.entries(perWeek)) check(`a week of ticks starts ${id} ${n} times`, starts.get(id) === n, String(starts.get(id)));
 // A tick a minute or two late, or early, still stands for its own window: nothing repeats or goes missing.

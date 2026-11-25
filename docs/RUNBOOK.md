@@ -14,6 +14,21 @@ What to do when something is wrong, and how the routine things are done. Short o
 | Deep probe | `curl -H "Authorization: Bearer $HEALTH_TOKEN" /api/health` — a wrong bearer answers 401; `?token=` is refused in production |
 | Which code is live | `/api/health` → `sha` (compare with `main`) |
 
+### What an uptime monitor may poll
+
+The database is on Neon Free and suspends after five idle minutes. Anything polled more often
+than that must not reach it, or the compute never sleeps and the month's hours run out. That is
+how production went down in November 2026 (a monitor on the waitlist root, once a minute).
+
+- **App host:** poll `/api/health`, at any interval. A healthy answer is served from the CDN and
+  re-checked against the database only just after each scheduler tick, while the tick has it
+  awake anyway (`healthCacheControl` in `src/lib/health.ts`).
+- **Waitlist host:** poll `/waitlist/icon.png`, a static file.
+- **Never** a page: `/`, the waitlist root, `/sign-in`. On the app host every page request reads
+  the stealth switch from the database, and the waitlist page reads the poll.
+- Between ticks the probe can read `ok` for up to 32 minutes after the database dies. The sweep's
+  heartbeat (below) is what catches a dead database or a dead scheduler.
+
 ## Deploy
 
 Push to `main`. CI (`typecheck · lint · build`, `smoke suite`) must be green; Vercel then
@@ -75,6 +90,25 @@ Thirty minutes, not faster, because the database is on Neon Free (100 compute-ho
 month): two bursts an hour let the compute sleep in between. The Better Stack heartbeat is
 pinged by each completed sweep, so set its period to 30 min with at least 15 min grace; a
 quiet heartbeat means the tick stopped arriving, the call fails, or production is down.
+
+What runs when (UTC; `src/lib/schedules.ts` is the source, `scripts/smoke-schedules.ts` pins it).
+Each job is its own function invocation, so only what a person or an alert waits on runs every
+tick; the Vercel Hobby plan caps Fluid Active CPU.
+
+| Cadence | Jobs |
+| --- | --- |
+| Every tick (:00, :30) | `ops-sweep`, `sync-run`, `email-drain` (queued and scheduled sends) |
+| Hourly :00 | `work-history`, `name-sweep`, `radar-web`, `webhooks-drain`, `cloud-notes` |
+| Hourly :30 | `process-stalled`, `radar-run`, `jobs-feed`, `connectors-outbox`, `email-intel` |
+| :30 of every even hour | `credit-notices` |
+| Sun and Mon, hourly :00 | `radar-digest` |
+| Daily / weekly / monthly | `ops-rollup` 00:30, `speech-usage` 05:30, `billing-reconcile` 06:30, `weekly-digest` Mon 14:00, `contacts-upkeep` the 1st 03:30 |
+
+`email-drain`, `webhooks-drain`, `connectors-outbox`, `credit-notices` and `cloud-notes` answer
+`{"idle": true}` and write no `cron_runs` row when nothing is due, so a quiet ledger for them is
+normal. `email-intel` always writes one (its "stopped running" alert reads it). The email
+attachment sweep inside `process-stalled` lists Blob storage only at 03:30 UTC (it is metered);
+the rest of it runs hourly.
 
 1. `/admin/health` → "Ops sweep" tile. Quiet for over 75 min: Upstash console → QStash →
    Logs, filter on `orbit-tick`. A 401 means `CRON_SECRET` in Vercel no longer matches the

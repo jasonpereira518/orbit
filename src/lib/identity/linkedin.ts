@@ -10,6 +10,7 @@
  * `linkedinSlug` must stay equal to the `linkedin_slug` generated column in `src/db/index.ts`
  * (a SQL spelling of the same rule, which is NOT edited from here).
  */
+import { safeHttpUrl } from "@/lib/safe-links";
 
 export const LINKEDIN_WWW_ORIGIN = "https://www.linkedin.com";
 
@@ -41,11 +42,10 @@ export function canonicalLinkedInProfileUrl(slug: string): string {
 export function isLinkedInProfileUrl(url: string): boolean {
   const trimmed = url.trim();
   if (!trimmed) return false;
-  try {
-    const parsed = new URL(trimmed.startsWith("http") ? trimmed : `https://${trimmed}`);
-    const host = parsed.hostname.toLowerCase();
-    return host === "linkedin.com" || host.endsWith(".linkedin.com");
-  } catch {
-    return /linkedin\.com\//i.test(trimmed);
-  }
+  // http(s) only, no credentials (`safeHttpUrl`). The unparseable fallback that used to
+  // accept anything containing "linkedin.com/" let `javascript:…//linkedin.com/x` through.
+  const safe = safeHttpUrl(trimmed);
+  if (!safe) return false;
+  const host = new URL(safe).hostname.toLowerCase();
+  return host === "linkedin.com" || host.endsWith(".linkedin.com");
 }

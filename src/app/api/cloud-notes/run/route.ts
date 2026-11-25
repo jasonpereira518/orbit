@@ -1,5 +1,5 @@
 /**
- * Cloud notes: every 30 minutes, check each watched Drive/OneDrive for new meeting notes.
+ * Cloud notes: hourly, check each watched Drive/OneDrive for new meeting notes.
  *
  * Driven by QStash (scripts/qstash-schedules.ts), the only scheduler. Self-continues
  * when a claim came back full or the budget ran out, the same shape as `/api/radar/run`. An
@@ -7,7 +7,7 @@
  * could reach the tab hold a watched drive at all (the grant is asked for from inside it).
  */
 import { NextResponse, after } from "next/server";
-import { runCloudNotesPass } from "@/lib/cloud-notes/scan";
+import { hasDueSources, runCloudNotesPass } from "@/lib/cloud-notes/scan";
 import { finishCronRun, startCronRun } from "@/lib/cron-runs";
 import { internalFetch, isInternalRequest } from "@/lib/internal-auth";
 import { reportAndContinue, reportError } from "@/lib/report-error";
@@ -21,6 +21,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  // No drive due (usually none are connected): no ledger rows.
+  if (!(await hasDueSources(new Date()))) return NextResponse.json({ ok: true, idle: true });
   const handle = await startCronRun("cloud-notes.run");
   try {
     if ((await getHiddenSurfaceKeys()).has(CLOUD_NOTES_SURFACE_KEY)) {

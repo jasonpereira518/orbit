@@ -12,12 +12,16 @@
  * Run: npx tsx scripts/smoke-recruiter-triage.ts
  */
 import type { GmailHeaderSummary } from "../src/lib/gmail";
+import { firmFromEmail, parseFromHeader } from "../src/lib/recruiter-detect";
 import { mergeStage, type RecruiterStage } from "../src/lib/recruiter-stages";
 import {
   TRIAGE_ACCEPT,
   TRIAGE_REJECT,
+  atsCompanyOf,
   classifySenderKind,
   deriveAtsStage,
+  isAtsVendorDomain,
+  isNonJobApplication,
   isBulkMail,
   triageThread,
   type SenderKind,
@@ -280,6 +284,74 @@ check(
   "re-reading the same rejection is stable",
   mergeStage({ stage: "rejected", at: d(5) }, { stage: "applied", at: d(1) }).stage === "rejected"
 );
+
+console.log("\na cold email nobody answered is not an exchange");
+const unanswered = triageThread({
+  userEmail: ME,
+  headers: [
+    header({
+      from: ME,
+      to: "Priya Raman <priya@example.com>",
+      subject: "Following up",
+      snippet: "Hi Priya, just following up on my note from last week",
+    }),
+  ],
+});
+check(
+  "\"you replied\" needs an inbound message to reply to",
+  unanswered.decision !== "classify" && !unanswered.reasons.includes("you replied"),
+  JSON.stringify(unanswered)
+);
+
+console.log("\ncompanies from automated mail");
+const companyCases: Array<[string, { from: string; subject: string; text?: string }, string | null]> = [
+  ["display name around the company", { from: "Stripe Recruiting <no-reply@greenhouse.io>", subject: "Thank you for applying!" }, "Stripe"],
+  ["the subject names it", { from: "no-reply@us.greenhouse-mail.io", subject: "Thank you for applying to Datadog" }, "Datadog"],
+  ["a Workday tenant, never Myworkday", { from: "Workday <mastercard@myworkday.com>", subject: "Thank you for applying!" }, "Mastercard"],
+  ["an iCIMS tenant reads as an acronym", { from: "amd@talent.icims.com", subject: "Your application" }, "AMD"],
+  ["a person sending through Greenhouse is not a company", { from: "Jane Smith <no-reply@greenhouse.io>", subject: "Following up" }, null],
+  ["a role address on the company's own domain", { from: "Careers <careers@stripe.com>", subject: "We received your application" }, "Stripe"],
+  ["a subject ending \"at X\"", { from: "Lever <no-reply@hire.lever.co>", subject: "Software Engineer Intern at Plaid" }, "Plaid"],
+  ["a job title is cut, not filed as the company", { from: "no-reply@ashbyhq.com", subject: "Your application to the Software Engineer Intern role" }, null],
+  ["\"via\" names the company first", { from: "Plaid via Lever <no-reply@hire.lever.co>", subject: "Next steps" }, "Plaid"],
+  ["a vendor's own name is never the company", { from: "Workday <noreply@myworkday.com>", subject: "Account created" }, null],
+  ["an assessment invite", { from: "HackerRank <support@hackerrankforwork.com>", subject: "Stripe has invited you to take a test" }, "Stripe"],
+  ["the candidate's name opening a subject is not the company", { from: "no-reply@ashbyhq.com", subject: "Jason - Update from Abridge" }, "Abridge"],
+  ["the body names it when the subject does not", { from: "no-reply@ashbyhq.com", subject: "An update", text: "Thank you for your application to Ramp. Unfortunately" }, "Ramp"],
+];
+for (const [label, mail, expected] of companyCases) {
+  const actual = atsCompanyOf({ from: mail.from, subject: mail.subject, text: mail.text ?? "" });
+  check(label, actual === expected, `expected ${expected}, got ${actual}`);
+}
+
+console.log("\nFrom headers");
+const bareFrom = parseFromHeader("no-reply@ashbyhq.com");
+check("a bare address parses whole", bareFrom?.email === "no-reply@ashbyhq.com", JSON.stringify(bareFrom));
+const namedFrom = parseFromHeader('"Doe, Jane" <Jane.Doe@acme.com>');
+check(
+  "a quoted \"Last, First\" display name is formatted and the address lowercases",
+  namedFrom?.name === "Jane Doe" && namedFrom.email === "jane.doe@acme.com",
+  JSON.stringify(namedFrom)
+);
+check("talent.capitalone.com is Capital One's, not Talent's", firmFromEmail("abigail@talent.capitalone.com") === "Capitalone");
+check("a two-part suffix is skipped", firmFromEmail("jobs@bbc.co.uk") === "Bbc");
+check("free mail is no firm", firmFromEmail("someone@googlemail.com") === null);
+
+console.log("\nthe non-job gate");
+check(
+  "a credit-card application is not a job",
+  isNonJobApplication("Chase <no-reply@chase.com> Your application for the Sapphire card has been received")
+);
+check("neither is an apartment", isNonJobApplication("Your rental application has been received"));
+check(
+  "a job application is",
+  !isNonJobApplication("We received your application for the Software Engineer position")
+);
+check(
+  "and so is one with no job word at all — a dropped real stage is invisible, a wrong card is one click",
+  !isNonJobApplication("Stripe <no-reply@stripe.com> Thank you for applying to Stripe")
+);
+check("ATS vendors are matched by domain suffix", isAtsVendorDomain("us.greenhouse-mail.io") && !isAtsVendorDomain("stripe.com"));
 
 if (failures > 0) {
   console.log(`\n${failures} triage check(s) failed`);

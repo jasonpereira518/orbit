@@ -228,6 +228,7 @@
 @source "../lib/ics.ts";
 @source "../lib/identity/email.ts";
 @source "../lib/identity/linkedin.ts";
+@source "../lib/idle-gate.ts";
 @source "../lib/imports/export-upload.ts";
 @source "../lib/imports/linkedin-export-files.ts";
 @source "../lib/input/text.ts";

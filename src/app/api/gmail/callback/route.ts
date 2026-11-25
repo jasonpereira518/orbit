@@ -11,7 +11,10 @@ import {
 } from "@/lib/gmail";
 import { isDemoMode } from "@/lib/auth";
 import { deleteEventConnection } from "@/lib/events/connections";
-import { missingGooglePurposes, serializeGooglePurposes } from "@/lib/google-scopes";
+import { hasGmailReadScope, missingGooglePurposes, serializeGooglePurposes } from "@/lib/google-scopes";
+import { isDemoWorkspace } from "@/lib/demo-workspace";
+import { enableEmailIntel } from "@/lib/email-intel/store";
+import { getEntitlements } from "@/lib/entitlements";
 import { ERROR_SOURCES, recordErrorEvent } from "@/lib/error-events";
 import { classifyOAuthFailure, PROFILE_FETCH_RULE } from "@/lib/oauth-failure";
 import { dropCloudNoteSource, syncCloudNoteSource } from "@/lib/cloud-notes/sources";
@@ -118,6 +121,20 @@ export async function GET(request: Request) {
     // Cloud notes: an account switch points the cursor at someone else's drive.
     if (switchedFrom) await dropCloudNoteSource(sessionUserId, "google");
     await syncCloudNoteSource(sessionUserId, "google", connection?.scopes);
+
+    // Connecting Gmail from the Recruiting page IS turning the board on: the card beside the
+    // button says what Email insights reads, so a second switch afterwards would only be a
+    // second click before anything shows. From Settings the person still allows access and then
+    // flips the switch themselves — the returnTo is what tells the two apart.
+    if (
+      purposes.includes("email_intel") &&
+      returnTo?.startsWith("/recruiters") &&
+      hasGmailReadScope(connection?.scopes) &&
+      (await getEntitlements(sessionUserId)).canUseRecruiters &&
+      !(await isDemoWorkspace(sessionUserId))
+    ) {
+      await enableEmailIntel(sessionUserId);
+    }
 
     // An armed connection is due this instant; without the kick it waits for the next
     // scheduled tick (up to ~30 minutes late), which for someone connecting during

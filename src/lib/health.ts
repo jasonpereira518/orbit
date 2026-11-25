@@ -11,7 +11,8 @@ import { TimeoutError, withTimeout } from "@/lib/async";
 /**
  * The health probe behind `GET /api/health`.
  *
- * Polled by the external uptime monitor and by the GitHub Actions scheduler, so it has
+ * Polled by the external uptime monitor and by the GitHub Actions scheduler (a healthy
+ * anonymous answer is served from the CDN between ticks, see `healthCacheControl`), so it has
  * three obligations: answer 503 for the two things that make the whole app wrong (the
  * database is unreachable, or the schema is BEHIND the code), never hang past the
  * monitor's own timeout, and never tell an anonymous caller anything about
@@ -63,6 +64,32 @@ export type HealthReport = {
 };
 
 const DEFAULT_TIMEOUT_MS = 4_000;
+
+/** The scheduler ticks at :00 and :30 (`src/lib/schedules.ts`). */
+const TICK_SECONDS = 30 * 60;
+const AFTER_TICK_SECONDS = 2 * 60;
+
+/**
+ * `Cache-Control` for `GET /api/health`.
+ *
+ * Uptime monitors poll the anonymous view, some every minute, and every uncached answer is a
+ * function run plus a statement on Neon. A query a minute means the Free compute never reaches
+ * its five idle minutes, never suspends, and runs out of hours mid-month: that is how
+ * production went down in November 2026. So a healthy anonymous answer is cached on the CDN
+ * until two minutes after the next tick. The re-check then lands while the tick already has
+ * the database awake, and a monitor costs nothing in between, whatever its interval.
+ *
+ * Never cached: the deep view, and any answer that is not `ok`. A monitor must hear "down" or
+ * "degraded" from the function itself, and stop hearing it the moment it clears.
+ *
+ * The price: a database that dies between ticks still reads `ok` here for up to 32 minutes.
+ * The sweep's heartbeat (30 min period, see docs/RUNBOOK.md) covers that window.
+ */
+export function healthCacheControl(view: { deep: boolean; status: HealthReport["status"] }, now: Date): string {
+  if (view.deep || view.status !== "ok") return "no-store";
+  const sinceTick = Math.floor(now.getTime() / 1000) % TICK_SECONDS;
+  return `public, s-maxage=${TICK_SECONDS - sinceTick + AFTER_TICK_SECONDS}`;
+}
 
 /** The recorded schema version, via one statement on the real database. */
 async function probeSchemaVersion(): Promise<{ recorded: number | null }> {

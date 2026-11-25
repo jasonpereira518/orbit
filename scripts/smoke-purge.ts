@@ -215,6 +215,8 @@ async function seed() {
     summary: "Applied",
     evidenceQuote: "We have received your application.",
   });
+  // The person's corrections to the Recruiting board: a company named in that mail.
+  await db.insert(schema.recruitingOverrides).values({ userId: USER, companyKey: "stripe", hiddenAt: now });
 
   const [interaction] = await db
     .insert(schema.interactions)

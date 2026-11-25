@@ -226,6 +226,10 @@ const appProxy = configured
  * naming it in the address bar of someone who must never see it.
  */
 export default function proxy(req: NextRequest, event: NextFetchEvent) {
+  // The uptime monitor's probe, answered from the CDN (`healthCacheControl`). It must not cost a
+  // Clerk run and the stealth read (a Neon statement) each time: stealth passes every API path,
+  // and the route reads no session.
+  if (req.nextUrl.pathname === "/api/health") return NextResponse.next();
   if (isWaitlistHostHeader(req.headers.get("host"))) return withPathname(req);
   return appProxy(req, event);
 }
@@ -240,7 +244,15 @@ export const config = {
     // by type the browser commits to that URL and never falls back to the <img>. That is
     // exactly how `avif` broke every planet on the marketing hero. Add new static
     // extensions here when you add them to public/.
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|avif|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
+    //
+    // The second alternative (`txt|xml|json`, anchored to the END of the path) is here for
+    // the opposite reason: crawlers and bots (`/robots.txt`, `/sitemap.xml`, `/ads.txt`,
+    // `/package.json`, …) are most of the requests that carry
+    // no session, and each used to pay a full Clerk middleware run for a file or a 404 that
+    // needs none. Only `robots.ts` and `sitemap.ts` serve such paths, and neither reads the
+    // session or `x-pathname`. API routes are unaffected: the `/(api|trpc)` entry below
+    // matches them whatever their extension (`/api/v1/openapi.json` still runs the proxy).
+    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|avif|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)|[^?]*\\.(?:txt|xml|json)$).*)",
     "/(api|trpc)(.*)",
     "/__clerk/:path*",
   ],
