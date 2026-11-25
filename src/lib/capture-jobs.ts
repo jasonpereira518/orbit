@@ -719,6 +719,32 @@ export async function recordCaptureDecisionRow(
   return row ?? null;
 }
 
+/** Multiple cards decided at once (e.g. Keep all remaining). Atomic batch merge. */
+export async function recordCaptureDecisionsBulkRow(
+  userId: string,
+  id: string,
+  decisionsMap: Record<string, CaptureDecision>
+): Promise<CaptureJobRow | null> {
+  const db = await getDb();
+  const peoplePatch = JSON.stringify(decisionsMap);
+  const [row] = await db
+    .update(captureJobs)
+    .set({
+      decisions: sql`coalesce(${captureJobs.decisions}, '{}'::jsonb) || jsonb_build_object('people', coalesce(${captureJobs.decisions}->'people', '{}'::jsonb) || ${peoplePatch}::jsonb)`,
+      status: "reviewing",
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(captureJobs.id, id),
+        eq(captureJobs.userId, userId),
+        inArray(captureJobs.status, ["ready", "reviewing"])
+      )
+    )
+    .returning();
+  return row ?? null;
+}
+
 /** The summary's non-person choices: which dated commitments and meeting items to keep. */
 export async function recordCaptureChoicesRow(
   userId: string,

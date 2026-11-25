@@ -55,7 +55,7 @@ export function IntroRequestDialog({
       toast.success("Intro request email copied to clipboard!");
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      toast.error("Couldn’t copy — select the text instead");
+      toast.error("Couldn’t copy that email");
     }
   }
 
@@ -69,7 +69,7 @@ export function IntroRequestDialog({
       <DialogContent className="max-w-lg p-6 rounded-2xl">
         <DialogHeader className="space-y-1.5">
           <div className="flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-success/10 text-success">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
               <UserCheck className="h-4 w-4" />
             </span>
             <DialogTitle className="text-lg font-semibold text-ink">
@@ -85,7 +85,7 @@ export function IntroRequestDialog({
         <div className="rounded-xl border border-border/80 bg-muted/40 p-3 space-y-1 text-xs">
           <div className="flex items-center justify-between">
             <span className="font-medium text-ink">{introPath.introducerName}</span>
-            <span className="rounded-full bg-success/10 text-success px-2 py-0.5 text-3xs font-medium">
+            <span className="rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 text-3xs font-medium">
               {introPath.introFeasibility === "high" ? "High response likelihood" : "Warm path"}
             </span>
           </div>
@@ -126,7 +126,7 @@ export function IntroRequestDialog({
             className="text-xs gap-1.5 rounded-xl"
           >
             {copied ? (
-              <Check className="h-3.5 w-3.5 text-success" />
+              <Check className="h-3.5 w-3.5 text-emerald-600" />
             ) : (
               <Copy className="h-3.5 w-3.5" />
             )}

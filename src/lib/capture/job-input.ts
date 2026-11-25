@@ -75,6 +75,22 @@ const captureChoicesSchema = z.object({
 
 export const recordCaptureChoicesSchema = z.object({ jobId: z.string(), choices: captureChoicesSchema });
 
+export const captureDecisionSchema = z.object({
+  decision: z.enum(["accept", "reject", "skip"]),
+  index: z.number(),
+  mergeContactId: z.string().nullable(),
+  relationshipScore: z.number(),
+  closenessChosen: z.boolean().optional(),
+  tagNames: z.array(z.string()),
+  edits: z.record(z.string(), z.unknown()).optional(),
+  decidedAt: z.string(),
+});
+
+export const recordCaptureDecisionsBulkSchema = z.object({
+  jobId: z.string(),
+  decisions: z.record(z.string(), captureDecisionSchema),
+});
+
 export const discardCaptureJobSchema = z.object({
   jobId: z.string(),
   opts: z.object({ stopping: z.boolean().optional() }).optional(),

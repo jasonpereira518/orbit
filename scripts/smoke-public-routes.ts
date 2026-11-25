@@ -15,11 +15,12 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createRouteMatcher } from "@clerk/nextjs/server";
+import { NextRequest } from "next/server";
 import robots from "../src/app/robots";
 import sitemap from "../src/app/sitemap";
 import { PUBLIC_ROUTES } from "../src/lib/public-routes";
 import { BOTID_PATH_PREFIX, WAITLIST_ALLOWED_PATHS } from "../src/lib/waitlist-host";
-import { config as proxyConfig } from "../src/proxy";
+import proxy, { config as proxyConfig } from "../src/proxy";
 
 const MARKETING_DIRS = ["src/app/(site)", "src/app/(clerk)/(marketing)"];
 const PUBLIC_DIR = "public";
@@ -76,7 +77,7 @@ const isPublic = createRouteMatcher([...PUBLIC_ROUTES]);
 const check = (path: string) =>
   isPublic({ nextUrl: { pathname: path } } as Parameters<typeof isPublic>[0]);
 
-function main() {
+async function main() {
   const routes = MARKETING_DIRS.flatMap((dir) => marketingRoutes(dir)).sort();
   console.log(`Marketing routes found: ${routes.join(", ")}\n`);
 
@@ -228,6 +229,19 @@ function main() {
   console.log(`\n  ${matcherProblems.length === 0 ? "ok  " : "FAIL"} bot paths skip the proxy; app, API and Clerk paths still run it`);
   crawlerProblems.push(...matcherProblems);
 
+  // The uptime probe passes straight through. Every other request leaves with its pathname
+  // forwarded (`withPathname`), which is how to tell that Clerk and the stealth read, a
+  // database statement, ran for it: a monitor polling /api/health must not cause either.
+  const forwarded = async (path: string) =>
+    (await proxy(new NextRequest(`https://app.test${path}`), {} as never))?.headers.has("x-middleware-request-x-pathname") ?? false;
+  const probeProblems = [
+    ...((await forwarded("/api/health")) ? ["/api/health still runs the full proxy"] : []),
+    ...((await forwarded("/api/healthz")) ? [] : ["/api/healthz skips the proxy"]),
+    ...((await forwarded("/api/v1/contacts")) ? [] : ["/api/v1/contacts skips the proxy"]),
+  ];
+  console.log(`  ${probeProblems.length === 0 ? "ok  " : "FAIL"} the health probe passes through the proxy untouched; other API paths do not`);
+  crawlerProblems.push(...probeProblems);
+
   const guardedOk = leaked.length === 0;
 
   if (gated.length > 0) {
@@ -263,4 +277,7 @@ function main() {
   console.log("\nAll marketing routes are publicly reachable.");
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

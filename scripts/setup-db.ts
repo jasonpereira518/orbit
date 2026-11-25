@@ -62,6 +62,7 @@ import { sql } from "drizzle-orm";
   "contact_signals",
   "email_threads",
   "email_events",
+  "recruiting_overrides",
 ] as const;
 
 async function main() {

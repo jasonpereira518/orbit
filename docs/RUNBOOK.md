@@ -14,6 +14,21 @@ What to do when something is wrong, and how the routine things are done. Short o
 | Deep probe | `curl -H "Authorization: Bearer $HEALTH_TOKEN" /api/health` — a wrong bearer answers 401; `?token=` is refused in production |
 | Which code is live | `/api/health` → `sha` (compare with `main`) |
 
+### What an uptime monitor may poll
+
+The database is on Neon Free and suspends after five idle minutes. Anything polled more often
+than that must not reach it, or the compute never sleeps and the month's hours run out. That is
+how production went down in November 2026 (a monitor on the waitlist root, once a minute).
+
+- **App host:** poll `/api/health`, at any interval. A healthy answer is served from the CDN and
+  re-checked against the database only just after each scheduler tick, while the tick has it
+  awake anyway (`healthCacheControl` in `src/lib/health.ts`).
+- **Waitlist host:** poll `/waitlist/icon.png`, a static file.
+- **Never** a page: `/`, the waitlist root, `/sign-in`. On the app host every page request reads
+  the stealth switch from the database, and the waitlist page reads the poll.
+- Between ticks the probe can read `ok` for up to 32 minutes after the database dies. The sweep's
+  heartbeat (below) is what catches a dead database or a dead scheduler.
+
 ## Deploy
 
 Push to `main`. CI (`typecheck · lint · build`, `smoke suite`) must be green; Vercel then

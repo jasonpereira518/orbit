@@ -4,6 +4,8 @@ import { and, desc, eq, inArray, lte, sql, type SQL } from "drizzle-orm";
 import crypto from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
+import { z } from "zod";
+import { parseInput } from "@/lib/action";
 import { getDb, runAtomicWrite, type AtomicStatement } from "@/db";
 import {
   interactions,
@@ -49,8 +51,6 @@ import { searchPeopleWithBrightData, getBrightDataConfig, type PeopleSearchCrite
 import { getOutreachFlowSuggestions } from "@/lib/outreach-suggestions";
 import { runCampaignDeepSearch } from "@/lib/campaign-deep-search";
 import { generateLinkedInBrowserUsePrompt, type LinkedInBrowserTarget } from "@/lib/browser-use";
-import { z } from "zod";
-import { parseInput } from "@/lib/action";
 import { gmailProvider } from "@/lib/email/providers/gmail";
 import { outlookProvider } from "@/lib/email/providers/outlook";
 import { loadWritingInstructions } from "@/lib/writing-instructions-store";
@@ -1779,34 +1779,18 @@ export async function searchPeopleWithBrightDataAction(criteria: PeopleSearchCri
   return searchPeopleWithBrightData(userId, criteria);
 }
 
-/** The browser sends these; nothing else is read. `filterProjectId` is a user_projects id. */
-const discoveryOptionsSchema = z
-  .object({
-    limit: z.number().int().min(1).max(100).optional(),
-    filterProjectId: z.string().uuid().optional(),
-    requireMutual: z.boolean().optional(),
-    onlyEvents: z.boolean().optional(),
-    fresh: z.boolean().optional(),
-    includeExternal: z.boolean().optional(),
-  })
-  .strict();
-
-/** Names and context that end up in a drafted email: plain strings, capped. */
-const introDraftParamsSchema = z
-  .object({
-    introducerFirstName: z.string().trim().min(1).max(100),
-    candidateFullName: z.string().trim().min(1).max(200),
-    candidateTitle: z.string().max(200).nullish(),
-    candidateCompany: z.string().max(200).nullish(),
-    relationshipContext: z.string().trim().min(1).max(500),
-    projectTitle: z.string().max(200).nullish(),
-    sharedTopic: z.string().max(200).nullish(),
-  })
-  .strict();
-
 /**
  * Runs the advanced multi-factor people discovery engine
  */
+const discoveryOptionsSchema = z.object({
+  limit: z.number().int().min(1).max(100).optional(),
+  filterProjectId: z.string().max(100).optional(),
+  requireMutual: z.boolean().optional(),
+  onlyEvents: z.boolean().optional(),
+  fresh: z.boolean().optional(),
+  includeExternal: z.boolean().optional(),
+}) satisfies z.ZodType<DiscoveryOptions>;
+
 export async function discoverPeopleAdvancedAction(options: DiscoveryOptions = {}) {
   const userId = await requireOutreachUser();
   const parsed = parseInput(discoveryOptionsSchema, options, "outreach.discover-people-advanced");
@@ -1814,12 +1798,22 @@ export async function discoverPeopleAdvancedAction(options: DiscoveryOptions = {
   return discoverPeopleAdvanced(userId, parsed.value);
 }
 
+const introDraftSchema = z.object({
+  introducerFirstName: z.string().max(200),
+  candidateFullName: z.string().max(200),
+  candidateTitle: z.string().max(300).nullish(),
+  candidateCompany: z.string().max(300).nullish(),
+  relationshipContext: z.string().max(2000),
+  projectTitle: z.string().max(300).nullish(),
+  sharedTopic: z.string().max(300).nullish(),
+}) satisfies z.ZodType<IntroDraftParams>;
+
 /**
  * Generates an introduction request draft to a mutual 1st-degree contact
  */
 export async function generateIntroDraftAction(params: IntroDraftParams) {
   await requireOutreachUser();
-  const parsed = parseInput(introDraftParamsSchema, params, "outreach.generate-intro-draft");
+  const parsed = parseInput(introDraftSchema, params, "outreach.generate-intro-draft");
   if (!parsed.ok) throw new UserFacingError(parsed.error);
   return generateIntroRequestDraft(parsed.value);
 }
