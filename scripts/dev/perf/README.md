@@ -15,6 +15,7 @@ comparisons are claims.
 | `webhook-drain-bench.ts` | One webhook endpoint that hangs to the attempt timeout next to a healthy one: tick time and healthy deliveries. |
 | `page-bench.mjs <url>` | Every route, cold (fresh Chrome profile) and warm: TTFB, FCP, LCP, CLS, TBT, time to hydrated, requests, bytes. `--profile=desktop\|mobile` (mobile is 4x CPU, 150 ms RTT, 1.6 Mbps). Each load has a 60 s deadline. |
 | `search-bench.mjs <url>` | Contacts search, from the last keystroke to settled results, plus the server's document time per query. |
+| `contacts-search-bench.ts` | Contacts search on the server, at a seeded size: the frozen one-shot search next to the lexical first page and the page as it now runs (first page + enrichment started together). Asserts every round that the final order and exact total equal the one-shot search's. Pass a COPY of a `seed-sizes.ts` directory as `ORBIT_PGLITE_DIR`; `ORBIT_SIM_DB_LATENCY_MS=20` models production's HTTP round trips. |
 | `inp-bench.mjs <url>` | Event Timing (INP-style) for typing, menus, ⌘K and clicks under CPU throttle. |
 | `compare.mjs` | Before/after table from `page-bench` outputs; several files per side are medianed. |
 | `bundle-attribution.mjs <route>` | Which packages and modules make up a route's first-load JS. Needs a build with `productionBrowserSourceMaps: true`. `--minus=/other` shows only what the route adds. |

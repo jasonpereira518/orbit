@@ -164,6 +164,31 @@ export type ContactsPage = {
   nextCursor: string | null;
   /** Total matching the filters. Only computed for the first page; null when continuing. */
   total: number | null;
+  /**
+   * Set on a first-page search answered in `lexical` mode: these are the literal matches, in
+   * the order the full search would put them, and the exact total, the matches found by meaning
+   * or work history, and their "why" labels are still to come from `/api/contacts/search-enrich`.
+   */
+  searchPending?: boolean;
+};
+
+/**
+ * What the background pass adds to a lexical first page (`enrichContactsSearch`). Applying it
+ * with `mergeSearchEnrichment` gives exactly the page the one-shot hybrid search used to return.
+ */
+export type ContactsSearchEnrichment = {
+  /** The exact total, as the one-shot search counted it (literal and meaning matches). */
+  total: number;
+  /**
+   * The final first page, best first. Null when the lexical page already is the final one
+   * (nothing widened it and the ranking does not move any row), so the client keeps its list.
+   */
+  order: string[] | null;
+  /** Only the rows in `order` the client did not already have (it sends the ids it holds). */
+  rows: ContactListRow[];
+  /** Contact id -> why it matched, for the non-obvious matches (work history, meaning). */
+  matchReasons: Record<string, string>;
+  nextCursor: string | null;
 };
 
 export type ContactPickerOption = {

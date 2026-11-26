@@ -16,7 +16,7 @@ import { run } from "./smoke/_env";
 import { eq } from "drizzle-orm";
 import { getDb } from "../src/db";
 import { contacts } from "../src/db/schema";
-import { listContactsPage } from "../src/lib/contacts-page-query";
+import { enrichContactsSearch, listContactsPage } from "../src/lib/contacts-page-query";
 import { findAvatarBackfillCandidates, countAvatarBackfillCandidates } from "../src/lib/avatar-backfill";
 import { findNameCollisions } from "../src/lib/duplicate-review";
 import { scaleContactRows } from "./lib/scale-fixture";
@@ -32,15 +32,18 @@ function check(label: string, ok: boolean, detail = "") {
 /**
  * Ceilings: today's depths. Before the DB-6/DB-15 fix (the count awaited after the page, the
  * lexical arms awaited after the embedding) this meter read 2, 2 and 5 for the three
- * contacts paths. After lexical-only search (no hybrid `rankContacts`, no search-path
- * `count(*)`): prefix/phrase search are page then tags (2). The skipped count used to run
- * beside the page and mask the tags round trip in this meter; wall-clock settle is still
- * lower without waiting on hybrid + count (see docs/audits/2026-11-24-perceived-speed.md).
+ * contacts paths.
  */
 const PATHS: Array<{ name: string; max: number; run: () => Promise<unknown> }> = [
   { name: "contacts first page", max: 1, run: () => listContactsPage(USER, { limit: 50 }) },
-  { name: "contacts search 'hop' (prefix)", max: 2, run: () => listContactsPage(USER, { q: "ho", limit: 50 }) },
-  { name: "contacts search 'engineer at acme'", max: 2, run: () => listContactsPage(USER, { q: "engineer at acme", limit: 50 }) },
+  { name: "contacts search 'hop' (prefix)", max: 1, run: () => listContactsPage(USER, { q: "ho", limit: 50 }) },
+  { name: "contacts search 'engineer at acme'", max: 3, run: () => listContactsPage(USER, { q: "engineer at acme", limit: 50 }) },
+  // The lexical-first page the contacts route paints: no ranking in front of it, no count
+  // beside it, and the tags ride in the page statement, so it is ONE round trip.
+  { name: "contacts search 'engineer at acme' (lexical first page)", max: 1, run: () => listContactsPage(USER, { q: "engineer at acme", limit: 50 }, { search: "lexical" }) },
+  // Its enrichment, off the critical path: ranking beside the literal count, then the widened
+  // page beside the count of what the widening added.
+  { name: "contacts search enrichment 'engineer at acme'", max: 4, run: () => enrichContactsSearch(USER, { q: "engineer at acme", limit: 50, sort: "relevance" }, { have: [] }) },
   { name: "duplicates name scan", max: 1, run: () => findNameCollisions(USER, 99) },
   {
     name: "avatar backfill probe",

@@ -12,6 +12,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useEffectEvent,
   useTransition,
   type KeyboardEvent,
   type MouseEvent,
@@ -22,7 +23,8 @@ import { CalendarClock, Trash2, Users } from "lucide-react";
 import { DUR_MS } from "@/lib/motion";
 import { toast } from "@/lib/toast";
 import { deleteContact, listContactsPage } from "@/actions/contacts";
-import { CONTACTS_PAGE_SIZE, type ContactSort } from "@/lib/contacts-page";
+import { mergeSearchEnrichment } from "@/lib/contacts-search-merge";
+import { CONTACTS_PAGE_SIZE, type ContactSort, type ContactsSearchEnrichment } from "@/lib/contacts-page";
 import { ContactAvatar } from "@/components/contacts/contact-avatar";
 import { CompanyRoleLine } from "@/components/contacts/company-role-line";
 import { ContactAvatarPreview } from "@/components/contacts/contact-preview-card";
@@ -203,6 +205,7 @@ export function ContactsList({
   filters,
   availableLetters: serverLetters,
   activeLetter: seekLetter,
+  enrichment = null,
 }: {
   initialItems: ContactListItem[];
   initialCursor: string | null;
@@ -210,6 +213,14 @@ export function ContactsList({
   filters: ContactsListFilters;
   availableLetters: string[];
   activeLetter: string | null;
+  /**
+   * Set when `initialItems` are a search's literal matches only (`listContactsPage`'s
+   * `search: "lexical"`). Resolves, in the same response stream, to the rest of the search: the
+   * exact total, the matches found by meaning or work history, their labels and the final
+   * order — or to null when that did not happen (superseded, failed), and the literal list
+   * stands. Folded in without a navigation or a request.
+   */
+  enrichment?: Promise<ContactsSearchEnrichment | null> | null;
 }) {
   const [contacts, setContacts] = useState(initialItems);
   const [cursor, setCursor] = useState(initialCursor);
@@ -219,7 +230,13 @@ export function ContactsList({
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [draftContact, setDraftContact] = useState<{ id: string; name: string } | null>(null);
   const [activeLetter, setActiveLetter] = useState<string | null>(seekLetter);
+  // Exact total from the background pass; the server's `total` is null until then.
+  const [searchTotal, setSearchTotal] = useState<number | null>(null);
+  // The background pass is out: "load more" waits for it, because the cursor on screen belongs
+  // to the literal page and the pass may replace it.
+  const [enriching, setEnriching] = useState(enrichment !== null);
   const [pending, start] = useTransition();
+  const listRef = useRef<HTMLUListElement>(null);
   const router = useRouter();
   const exitTimer = useRef<number | null>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -242,7 +259,56 @@ export function ContactsList({
     setCursor(initialCursor);
     setLoadError(false);
     setExitingId(null);
+    setSearchTotal(null);
+    setEnriching(enrichment !== null);
   }
+
+  /**
+   * How many rows from the top must not move: through the one under the pointer or holding
+   * focus, and — once the page has been scrolled — through the last one in view. Enrichment
+   * reorders the rest; it never shuffles what a hand is already on.
+   */
+  const heldRowCount = () => {
+    const root = listRef.current;
+    if (!root) return 0;
+    const rows = Array.from(root.querySelectorAll<HTMLElement>("[data-contact-id]"));
+    let held = 0;
+    const anchor =
+      root.querySelector<HTMLElement>("[data-contact-id]:hover") ??
+      (document.activeElement instanceof HTMLElement
+        ? document.activeElement.closest<HTMLElement>("[data-contact-id]")
+        : null);
+    if (anchor && root.contains(anchor)) held = rows.indexOf(anchor) + 1;
+    if (window.scrollY > 24) {
+      const visible = rows.filter((r) => r.getBoundingClientRect().top < window.innerHeight).length;
+      held = Math.max(held, visible);
+    }
+    return held;
+  };
+
+  const applyEnrichment = useEffectEvent((result: ContactsSearchEnrichment | null) => {
+    if (result) {
+      const held = heldRowCount();
+      setContacts((prev) => mergeSearchEnrichment(prev, result, held));
+      if (result.order) setCursor(result.nextCursor);
+      setSearchTotal(result.total);
+    }
+    setEnriching(false);
+  });
+
+  // The enrichment arrives as a promise in the response stream. Leaving or retyping unmounts
+  // or replaces this list, and a result that lands after that is discarded, never applied.
+  useEffect(() => {
+    if (!enrichment) return;
+    let current = true;
+    enrichment.then(
+      (result) => current && applyEnrichment(result),
+      () => current && applyEnrichment(null)
+    );
+    return () => {
+      current = false;
+    };
+  }, [enrichment]);
 
   useEffect(() => {
     return () => {
@@ -274,7 +340,7 @@ export function ContactsList({
   }, []);
 
   const loadMore = useCallback(async () => {
-    if (!cursor || loadingMore) return;
+    if (!cursor || loadingMore || enriching) return;
     setLoadingMore(true);
     try {
       const next = await listContactsPage({
@@ -298,7 +364,7 @@ export function ContactsList({
     } finally {
       setLoadingMore(false);
     }
-  }, [cursor, filters, loadingMore]);
+  }, [cursor, filters, loadingMore, enriching]);
 
   // Fetch the next page slightly before the sentinel is actually visible, so scrolling does
   // not stall at the bottom waiting for a round trip.
@@ -434,7 +500,9 @@ export function ContactsList({
     }, DUR_MS.slow);
   }
 
-  if (contacts.length === 0 && !hasActiveFilters(filters) && !(total && total > 0)) {
+  const shownTotal = searchTotal ?? total;
+
+  if (contacts.length === 0 && !hasActiveFilters(filters) && !(shownTotal && shownTotal > 0)) {
     // A brand-new network, not a search that came up empty: telling someone with no
     // contacts to "clear search" sent them looking for a filter that wasn't there. (`total`
     // guards a letter seek past the last name, or a page whose rows were all just deleted.)
@@ -457,6 +525,16 @@ export function ContactsList({
     );
   }
 
+  if (contacts.length === 0 && enriching) {
+    // No literal match yet, and the pass that also looks by meaning and work history is still
+    // out: say that rather than flashing "no contacts match" and then filling in.
+    return (
+      <div className="p-10 text-center text-muted-foreground" role="status">
+        Looking for more matches…
+      </div>
+    );
+  }
+
   if (contacts.length === 0) {
     return (
       <div className="p-10 text-center text-muted-foreground">
@@ -476,7 +554,7 @@ export function ContactsList({
   return (
     <TooltipProvider>
       <>
-        <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl">
+        <ul ref={listRef} className="divide-y divide-border/60 overflow-hidden rounded-2xl">
           {sections.map((section) => (
             <li key={section.letter ?? "all"} className="list-none">
               {section.letter !== null && (
@@ -522,7 +600,7 @@ export function ContactsList({
               type="button"
               variant="outline"
               size="sm"
-              disabled={loadingMore}
+              disabled={loadingMore || enriching}
               onClick={() => void loadMore()}
             >
               {loadError
@@ -533,10 +611,10 @@ export function ContactsList({
             </Button>
           </div>
         ) : (
-          total !== null &&
-          contacts.length < total && (
+          shownTotal !== null &&
+          contacts.length < shownTotal && (
             <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-              Showing {contacts.length.toLocaleString()} of {total.toLocaleString()}
+              Showing {contacts.length.toLocaleString()} of {shownTotal.toLocaleString()}
             </div>
           )
         )}
@@ -717,6 +795,7 @@ const ContactRow = memo(function ContactRow({
       {...(isTourLead ? tourAnchor("contacts.row") : {})}
       // Hover counts as having seen them: the mark fades (as does focusing the link).
       onMouseEnter={seeMarked}
+      data-contact-id={c.id}
       data-new-from-import={marked ? "" : undefined}
       className={cn(
         // content-visibility skips layout/paint for offscreen

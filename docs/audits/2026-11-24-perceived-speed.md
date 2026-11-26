@@ -113,17 +113,65 @@ The harness named soft-nav without hover as the real gap. Idle daily-route prefe
 
 ---
 
-## Follow-up: contacts search settle (lexical list)
+## Follow-up: contacts search — first results fast, complete results unchanged
 
-Same method (prod demo build, 10k fixture, `ORBIT_SIM_DB_LATENCY_MS=20`). Change: `listContactsPage` is lexical-only (no `await rankContacts`), skips `count(*)` when `q` is set, and the contacts page no longer awaits letters/plan/schools before starting the list.
+The first cut of this follow-up (#747) made the `/contacts?q=` list lexical-only and dropped the
+count, which bought settle time by removing meaning matches, work-history matches, their "why"
+labels, relevance order and the exact total. This revision keeps all of it and splits the search in
+two **steps that stream in one response**:
 
-### search-bench at 10k
+1. **First results** — `listContactsPage(…, { search: "lexical" })`: the literal matches, ordered as
+   the one-shot search orders them, in ONE statement (tags ride in the page query; no ranking, no
+   count in front of it).
+2. **Complete results** — `enrichContactsSearch`, started beside the page query and streamed as a
+   promise prop (`ContactsList` folds it in; the subtitle swaps "Showing matches" for "N people
+   match"): the matches found by meaning/work history, their labels, the final relevance order, the
+   exact total (literal count + the few ranked-only contacts), one analytics event with that total.
+   Folding it in keeps the rows under the pointer/focus (and everything in view once scrolled) in place.
 
-| Query | Settled before | Settled after | Server before | Server after |
-|---|---:|---:|---:|---:|
-| ai | 303 | **256** | ~97 | **85** |
-| sarah | 459 | **291** (−37%) | ~298 | **120** (−60%) |
-| engineer at acme | 605 | **402** (−34%) | ~414 | **203** (−51%) |
-| zzzz-no-match | 478 | **295** (−38%) | ~296 | **132** (−55%) |
+Held to the original by `scripts/smoke-contacts-search-enrichment.ts` against a frozen copy of the
+one-shot implementation (`scripts/lib/legacy-contacts-page.ts`): 640 query × sort × filter × ranker
+combinations, paging through to the end, the exact total, cursors, labels, analytics and supersession.
 
-`sarah` lands at ~debounce (150) + lexical server (~120). Tradeoff: meaning-only matches no longer widen the `/contacts` list (still available via ⌘K / chat).
+Also: a finished ranking is cached 15 s (`rankContactsCached`), so Back, a refresh, a retyped query and
+"load more" neither re-run the retrieval arms nor show the two-step reorder (the page is final on first
+paint). A newer, different search by the same account stops the older enrichment at its next step.
+
+### Plan fix found on the way
+
+At 50k contacts a broad query ("engineer at acme", 2,940 matches) hash-joined the matched ids against a
+**sequential scan of every contact**, running the non-person regex filters on all 50,000 rows, in both
+the page and the count. `contactSearchIdsCondition` now reads `id = any(array(…))`, which drives from the
+matched ids (EXPLAIN ANALYZE at 50k: page 588 → 95 ms, count 236 → 59 ms; narrow queries unchanged).
+`scripts/dev/perf/contacts-search-explain.ts` reproduces it.
+
+### Server-side search bench (`scripts/dev/perf/contacts-search-bench.ts`, median of 5, ms)
+
+`orig` = the one-shot search as it was before this work (hybrid ranking awaited, exact count): the
+first AND last paint of the old page. `first`/`complete` = this revision (first paint / list exactly
+equal to the one-shot result). Every round asserts the final order and total equal the one-shot's.
+`ORBIT_SIM_DB_LATENCY_MS=20` models production's one HTTPS round trip per statement.
+
+| contacts | query | matches | orig | **first** | complete |
+|---|---|---:|---:|---:|---:|
+| 1k | sarah | 4 | 109 | **32** | 94 |
+| 1k | engineer at acme | 83 | 124 | **40** | 117 |
+| 10k | sarah | 4 | 225 | **71** | 234 |
+| 10k | engineer at acme | 587 | 310 | **98** | 354 |
+| 10k | zzzz-no-match | 0 | 227 | **85** | 209 |
+| 50k | sarah | 4 | 245 | **38** | 111 |
+| 50k | engineer at acme | 2,940 | 454 | **103** | 406 |
+| 50k | marcus | 3 | 289 | **60** | 190 |
+
+Queries under 3 characters (`ai`) never ranked; they are unchanged (≈50 ms).
+
+How to read it: **time to first results drops 2–4×** at every size. **Time to complete is about the
+same as the one-shot** here, not better: PGlite is one connection, so the page query and the
+enrichment queue behind each other and the extra page query is pure added work (up to ~+30% at 10k
+raw-DB). On production's HTTP driver the statements run concurrently, so complete should land at the
+one-shot's time or earlier (no count round trip, ranking started beside the page) — not measured: this
+run has no Neon access and no embedding provider, so the semantic arm (a LOWER bound on hybrid cost) is
+absent. Repeats of a search are final on first paint.
+
+Not verified: a real-LinkedIn/real-embedding run, the browser-level `search-bench.mjs` on a production
+build, and Neon timings.

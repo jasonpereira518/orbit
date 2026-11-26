@@ -93,7 +93,7 @@ function contactSearchIdsCondition(q: string, userId: string, like: string, lowe
     lowered.length >= 4
       ? sql` or lower(c.full_name) % ${lowered} or lower(coalesce(c.company, '')) % ${lowered}`
       : sql``;
-  return sql`${contacts.id} in (
+  return sql`${contacts.id} = any(array(
     select c.id from contacts c
      where c.user_id = ${userId} and c.search_tsv @@ websearch_to_tsquery('simple', ${q})
     union
@@ -107,7 +107,7 @@ function contactSearchIdsCondition(q: string, userId: string, like: string, lowe
     select ct.contact_id from contact_tags ct
       join tags t on t.id = ct.tag_id
      where t.user_id = ${userId} and lower(t.name) like ${like}
-  )`;
+  ))`;
 }
 
 export type NamePolicyRow = {

@@ -1,9 +1,12 @@
 import { pageVisibilityGate } from "@/components/coming-soon/page-gate";
 import { Suspense } from "react";
 import Link from "next/link";
-import type { ContactSort } from "@/lib/contacts-page";
+import type { ContactSort, ContactsSearchEnrichment } from "@/lib/contacts-page";
 import { Copy, Plus } from "lucide-react";
-import { listContactLetters, listContactSchoolOptions, listContactsPage } from "@/actions/contacts";
+import { listContactLetters, listContactSchoolOptions } from "@/actions/contacts";
+import { requireUserId } from "@/lib/auth";
+import { ENRICHMENT_EMBED_TIMEOUT_MS, peekRankedContacts } from "@/lib/contact-ranking";
+import { enrichLatestContactsSearch, listContactsPage } from "@/lib/contacts-page-query";
 import {
   CONTACTS_PAGE_SIZE,
   isContactSort,
@@ -87,7 +90,45 @@ export default async function ContactsPage({
   // Kick the list query first and never await letters / plan / schools in this function —
   // they used to serialize ahead of every `?q=` navigation under a contended DB. Suspense
   // below lets the list race them.
-  const pagePromise = listContactsPage({ ...filters, limit: CONTACTS_PAGE_SIZE });
+  // A search paints from its literal matches (`search: "lexical"`: one statement, no ranking in
+  // front of it). The rest of the one-shot search — the matches found by meaning and work
+  // history, their labels, the exact count, the final order — is computed beside it and
+  // streams in the same response, so there is no second request: `ContactsList` folds it in
+  // when it lands, and the subtitle swaps "Showing matches" for the exact count. The ranking
+  // starts as soon as the page query has been issued (a separate round trip on production's
+  // HTTP driver, queued behind it on a single connection) rather than after the first paint.
+  const userIdPromise = requireUserId();
+  const q3 = (params.q?.trim().length ?? 0) >= 3;
+  // If this very search was ranked a moment ago (a refresh, Back, a retyped query) the ranking
+  // is in hand: run the one-shot search on it, and the page is final on its first paint — no
+  // second step, no reorder. `peeked` is null otherwise, and the two-step path runs.
+  const searchPlanPromise = userIdPromise.then((userId) => ({
+    userId,
+    peeked: q3 ? peekRankedContacts(userId, params.q!.trim(), 80, { embedTimeoutMs: ENRICHMENT_EMBED_TIMEOUT_MS }) : null,
+  }));
+  const pagePromise = searchPlanPromise.then(({ userId, peeked }) =>
+    listContactsPage(
+      userId,
+      { ...filters, limit: CONTACTS_PAGE_SIZE },
+      peeked ? { rank: async () => peeked } : { search: "lexical" }
+    )
+  );
+  // Only when the page is lexical (3+ characters, no ranking in hand).
+  const enrichmentPromise: Promise<ContactsSearchEnrichment | null> | null = q3
+    ? searchPlanPromise
+        .then(({ userId, peeked }) =>
+          peeked
+            ? null
+            : enrichLatestContactsSearch(
+                userId,
+                { ...filters, limit: CONTACTS_PAGE_SIZE },
+                // Only the rows the lexical page lacks cross the wire.
+                { have: pagePromise.then((page) => page.items.map((i) => i.id)) }
+              )
+        )
+        // A superseded or failed enrichment is "no enrichment": the lexical list stands.
+        .catch(() => null)
+    : null;
   const lettersPromise = listContactLetters();
   const planPromise = getPlanOverview();
   const schoolsPromise = listContactSchoolOptions();
@@ -127,6 +168,7 @@ export default async function ContactsPage({
             pagePromise={pagePromise}
             filtersActive={filtersActive}
             searching={searching}
+            enrichmentPromise={enrichmentPromise}
           />
         </Suspense>
       }
@@ -169,6 +211,7 @@ export default async function ContactsPage({
             schoolsPromise={schoolsPromise}
             lettersPromise={lettersPromise}
             pagePromise={pagePromise}
+            enrichmentPromise={enrichmentPromise}
             listKey={listKey}
             activeLetter={params.letter ?? null}
           />
@@ -198,6 +241,7 @@ async function FiltersWithChrome({
   schoolsPromise,
   lettersPromise,
   pagePromise,
+  enrichmentPromise,
   listKey,
   activeLetter,
 }: {
@@ -217,6 +261,7 @@ async function FiltersWithChrome({
   schoolsPromise: ReturnType<typeof listContactSchoolOptions>;
   lettersPromise: ReturnType<typeof listContactLetters>;
   pagePromise: Promise<PageResult>;
+  enrichmentPromise: Promise<ContactsSearchEnrichment | null> | null;
   listKey: string;
   activeLetter: string | null;
 }) {
@@ -237,6 +282,7 @@ async function FiltersWithChrome({
           filters={filters}
           letters={letters}
           activeLetter={activeLetter}
+          enrichmentPromise={enrichmentPromise}
         />
       </Suspense>
     </ContactsFilters>
@@ -247,13 +293,24 @@ async function ContactsSubtitle({
   pagePromise,
   filtersActive,
   searching,
+  enrichmentPromise,
 }: {
   pagePromise: Promise<PageResult>;
   filtersActive: boolean;
   searching: boolean;
+  enrichmentPromise: Promise<ContactsSearchEnrichment | null> | null;
 }) {
   const page = await pagePromise;
-  // Searches skip `count(*)` — no exact total. Don't claim "Your network" while filtering.
+  // A lexical first page has no exact count yet: it arrives with the enrichment.
+  if (page.searchPending && enrichmentPromise) {
+    return (
+      <Suspense fallback="Showing matches">
+        <EnrichedSubtitle enrichmentPromise={enrichmentPromise} />
+      </Suspense>
+    );
+  }
+  // A cursor page has no total, and neither does a search the one-shot way: don't claim
+  // "Your network" while filtering.
   if (page.total === null) {
     return searching || filtersActive ? "Showing matches" : "Your network";
   }
@@ -265,16 +322,30 @@ async function ContactsSubtitle({
   }`;
 }
 
+/** "N people match", once the exact count is known; "Showing matches" if it never is. */
+async function EnrichedSubtitle({
+  enrichmentPromise,
+}: {
+  enrichmentPromise: Promise<ContactsSearchEnrichment | null>;
+}) {
+  const enrichment = await enrichmentPromise;
+  if (!enrichment) return "Showing matches";
+  const { total } = enrichment;
+  return `${total.toLocaleString()} ${total === 1 ? "person" : "people"} match`;
+}
+
 async function ContactsListBody({
   pagePromise,
   filters,
   letters,
   activeLetter,
+  enrichmentPromise,
 }: {
   pagePromise: Promise<PageResult>;
   filters: ContactsListFilters;
   letters: Awaited<ReturnType<typeof listContactLetters>>;
   activeLetter: string | null;
+  enrichmentPromise: Promise<ContactsSearchEnrichment | null> | null;
 }) {
   const page = await pagePromise;
   return (
@@ -282,6 +353,7 @@ async function ContactsListBody({
       initialItems={page.items}
       initialCursor={page.nextCursor}
       total={page.total}
+      enrichment={page.searchPending ? enrichmentPromise : null}
       filters={filters}
       availableLetters={letters}
       activeLetter={activeLetter}
