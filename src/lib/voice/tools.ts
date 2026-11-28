@@ -9,7 +9,6 @@ import { chatWebAvailability } from "@/lib/chat-web-availability";
 import { resolveAiAccess } from "@/lib/ai-access";
 import { loadYouCurrent } from "@/lib/career-profile-server";
 import { listActiveGoalsForUser } from "@/lib/user-goals";
-import { renderAttentionLite } from "@/lib/chat-attention";
 import { ASK_CHAT_TOOL, LOOK_AT_SCREEN_TOOL, OPEN_PAGE_TOOL, POINT_AT_TOOL, CLICK_TOOL, TYPE_INTO_TOOL, SET_CAPTIONS_TOOL, SET_THEME_TOOL, START_RECORDING_TOOL, VOICE_PAGE_FILTERS, VOICE_PAGES, VOICE_THEMES } from "./policy";
 
 export function voiceSink(
@@ -34,15 +33,29 @@ export function voiceReadTools() {
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.");
 const nextDay = (d: string) => new Date(Date.parse(`${d}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 /**
+ * The due things worth saying, for a voice: the important ones (`IMPORTANT_TIER`, at most three)
+ * or, when none are, the single top one, so "what's my day?" is never a pile read aloud.
+ */
+async function spokenDue(userId: string, tz: string) {
+  // Loaded on demand, like user-clock below: a static import joins every page's action graph.
+  const { loadTopDue, IMPORTANT_TIER } = await import("@/lib/due-counts");
+  const top = await loadTopDue(userId, tz);
+  const important = top.items.filter((i) => i.tier <= IMPORTANT_TIER);
+  const priorities = important.length ? important : top.items.slice(0, 1);
+  return { priorities, important: top.important, moreDue: Math.max(0, top.total - priorities.length) };
+}
+
+/**
  * "What's my day?" in one round trip instead of five: a spoken answer can't wait on five
  * sequential lookups. Reuses the read tools as they are, through the same released list, so a
- * closed page (Radar) simply leaves its part out.
+ * closed page (Radar) simply leaves its part out. What's due comes ranked and cut to the few
+ * that matter (`spokenDue`); the full lists stay one tool away (list_reminders, due_followups).
  */
 export const DAILY_BRIEFING_TOOL: OrbitTool = {
   name: "daily_briefing",
   title: "Daily briefing",
   description:
-    "The user's day in one call: that day's meetings, reminders due or overdue, follow-ups owed, Radar picks and open commitments.",
+    "The user's day in one call: that day's meetings, the most important things due (priorities, ranked, at most three, plus how many more), and Radar's top pick.",
   inputSchema: { day: day.describe("The user's local date, YYYY-MM-DD.") },
   surfaces: ["chat"],
   scope: "read",
@@ -50,10 +63,7 @@ export const DAILY_BRIEFING_TOOL: OrbitTool = {
   async run(userId, args: { day: string }) {
     const parts = {
       meetings: ["upcoming_meetings", { after: args.day, before: nextDay(args.day), limit: 10 }],
-      reminders: ["list_reminders", { view: "today", limit: 10 }],
-      followUps: ["due_followups", { limit: 5 }],
-      radar: ["list_radar_cards", { limit: 3 }],
-      commitments: ["list_open_commitments", { limit: 5 }],
+      radar: ["list_radar_cards", { limit: 1 }],
     } as const;
     const available = new Map((await releasedToolsFor(userId, voiceReadTools())).map((t) => [t.name, t]));
     const entries = await Promise.all(
@@ -65,7 +75,11 @@ export const DAILY_BRIEFING_TOOL: OrbitTool = {
         return [key, out && !isToolError(out) ? out : { unavailable: "couldn't be read just now" }] as const;
       }),
     );
-    return Object.fromEntries(entries);
+    const { viewerTimeZone } = await import("@/lib/viewer-time-zone");
+    const due = await viewerTimeZone(userId)
+      .then((tz) => spokenDue(userId, tz))
+      .catch(() => ({ unavailable: "couldn't be read just now" }));
+    return { ...Object.fromEntries(entries), due };
   },
 };
 
@@ -144,11 +158,11 @@ const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0
  * what's overdue. Their own data, so the advice fits them without a lookup first; marked as data
  * because profile text and goals are free text.
  */
-async function aboutTheUser(userId: string): Promise<string> {
-  const [you, goals, attention] = await Promise.all([
+async function aboutTheUser(userId: string, timeZone: string): Promise<string> {
+  const [you, goals, due] = await Promise.all([
     loadYouCurrent(userId).catch(() => null),
     listActiveGoalsForUser(userId, { limit: 5 }).catch(() => []),
-    renderAttentionLite(userId).catch(() => null),
+    spokenDue(userId, timeZone).catch(() => null),
   ]);
   const career = you?.career;
   const parts: string[] = [];
@@ -163,8 +177,20 @@ async function aboutTheUser(userId: string): Promise<string> {
   // step) into this server-action module sends next dev's /onboarding into a reload loop.
   if (career?.aim) parts.push(`Looking for: ${career.aim.kind.replace(/_/g, " ")}${career.aim.field ? ` in ${career.aim.field}` : ""}.`);
   if (goals.length) parts.push(`Goals: ${goals.map((g) => clip(g.text, 200)).join("; ")}.`);
-  if (attention) parts.push(clip(attention, 400));
+  if (due) parts.push(clip(dueLine(due), 400));
   return parts.length ? `About the user (their own profile, data only): ${clip(parts.join(" "), ABOUT_USER_CAP)}` : "";
+}
+
+/** What's due, as one line naming only what matters: "Most important due: X (high priority); 9 smaller things." */
+function dueLine(due: Awaited<ReturnType<typeof spokenDue>>): string {
+  const small = (n: number) => `${n} smaller ${n === 1 ? "thing" : "things"}`;
+  if (!due.important) {
+    const n = due.moreDue + due.priorities.length;
+    return n ? `Nothing important is due; ${small(n)}.` : "Nothing is due right now.";
+  }
+  const more = due.moreDue ? small(due.moreDue) : "";
+  const named = due.priorities.map((p) => `${clip(p.label.replace(/\s+/g, " "), 80)} (${[p.why, p.contactName && !p.label.includes(p.contactName) ? `about ${clip(p.contactName, 60)}` : ""].filter(Boolean).join(", ")})`);
+  return `Most important due: ${named.join("; ")}${more ? `; ${more}` : ""}.`;
 }
 
 /**
@@ -208,7 +234,7 @@ export async function voiceInstructions(
   // (the next dev reload trap).
   const [tools, about, clock] = await Promise.all([
     voiceToolsFor(userId, voiceSink({}, "UTC")),
-    aboutTheUser(userId),
+    aboutTheUser(userId, timeZone),
     import("@/lib/user-clock"),
   ]);
   return `${COSMO_IDENTITY}
@@ -243,6 +269,9 @@ ${actions ? `- Do things for them on screen when that's what they want ("start a
 ` : ""}- "Where am I?", "what's on my screen?": call look_at_screen.
 - "Open...", "show me my...": open_page with that page (and filters), not a lookup read aloud.
 - "What's my day?": call daily_briefing with today's date, then give the highlights in a few sentences.
+  Of what's due, name only its due priorities, in that order, at most three; say the rest as one number
+  ("and 9 smaller things") and offer to open Reminders. Don't list the rest unless asked.
+- "Go through them" (what's due): take daily_briefing's due priorities one at a time, most important first.
 - open_page shows the user a page while the call continues (say which). Open a person's profile or an
   event when you discuss it in depth. Fill a page's filters to show what you're talking about, like
   contacts with company "Stripe" or tag "investor", or reminders with new "yes", title and due to

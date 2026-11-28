@@ -12,7 +12,8 @@ import type { VoiceMode } from "@/lib/voice/contracts";
 export type NudgeInput = {
   nextMeeting: { eventId: string; title: string; startIso: string; people: string[] } | null;
   unloggedMeeting: { eventId: string; title: string; people: string[] } | null;
-  dueCount: number;
+  /** Important due things only (`getDueCounts().important`); the bell keeps the full count. */
+  importantDue: number;
   radarNew: number;
 };
 export type Nudge = {
@@ -38,12 +39,12 @@ export function nudgeInput(pulse: {
   nextMeeting: NudgeInput["nextMeeting"];
   unloggedMeeting: NudgeInput["unloggedMeeting"];
   radarNew: number;
-  panel: { dueCount: number };
+  panel: { importantDueCount: number };
 }): NudgeInput {
   return {
     nextMeeting: pulse.nextMeeting,
     unloggedMeeting: pulse.unloggedMeeting,
-    dueCount: pulse.panel.dueCount,
+    importantDue: pulse.panel.importantDueCount,
     radarNew: pulse.radarNew,
   };
 }
@@ -67,13 +68,12 @@ export function allNudges(input: NudgeInput, now: number): Nudge[] {
       interject: `Heads up: you meet ${who} in ${mins} minutes. Want a quick prep?`,
     });
   }
-  if (input.dueCount > 0) {
-    const n = plural(input.dueCount, "thing", "things");
+  if (input.importantDue > 0) {
     all.push({
       id: "due",
       kind: "due",
-      chip: `${n} due`,
-      opener: `Hi, I’m Cosmo. You have ${n} due. Want to go through them?`,
+      chip: `${input.importantDue} important`,
+      opener: `Hi, I’m Cosmo. You have ${plural(input.importantDue, "important thing", "important things")} due. Want to go through them?`,
       interject: null,
     });
   }
