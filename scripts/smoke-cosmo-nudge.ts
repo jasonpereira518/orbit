@@ -9,18 +9,19 @@ import { allNudges, isResumeInterrupting, isStopInterrupting, mayInterject, nudg
 
 const t = checker();
 const now = Date.parse("2026-11-13T15:00:00Z");
-const empty: NudgeInput = { nextMeeting: null, unloggedMeeting: null, dueCount: 0, radarNew: 0 };
+const empty: NudgeInput = { nextMeeting: null, unloggedMeeting: null, importantDue: 0, radarNew: 0 };
 const meeting = { eventId: "e1", title: "Coffee", startIso: "2026-11-13T15:12:00Z", people: ["Ada Lovelace"] };
 
 t.check("nothing to say: no nudge", pickNudge(empty, now, new Set()) === null);
-const soon = pickNudge({ ...empty, nextMeeting: meeting, dueCount: 3, radarNew: 2 }, now, new Set());
+const soon = pickNudge({ ...empty, nextMeeting: meeting, importantDue: 3, radarNew: 2 }, now, new Set());
 t.check("a meeting soon beats everything else", soon?.kind === "meeting" && soon.chip.includes("Ada") && soon.chip.includes("12"), JSON.stringify(soon));
 t.check("its opener offers prep, in Cosmo's voice", Boolean(soon?.opener.startsWith("Hi, I’m Cosmo") && soon.opener.includes("prep")), soon?.opener ?? "");
 t.check("a meeting soon may interrupt", Boolean(soon?.interject));
-const due = pickNudge({ ...empty, nextMeeting: meeting, dueCount: 3 }, now, new Set([soon!.id]));
-t.check("dismissed: the next one shows", due?.kind === "due" && due.chip === "3 things due", JSON.stringify(due));
+const due = pickNudge({ ...empty, nextMeeting: meeting, importantDue: 3 }, now, new Set([soon!.id]));
+t.check("dismissed: the next one shows", due?.kind === "due" && due.chip === "3 important", JSON.stringify(due));
 t.check("things due never interrupt a call", !due?.interject);
-t.check("one thing due is singular", pickNudge({ ...empty, dueCount: 1 }, now, new Set())?.chip === "1 thing due");
+t.check("one important thing is singular", pickNudge({ ...empty, importantDue: 1 }, now, new Set())?.opener.includes("1 important thing due") === true);
+t.check("only small things due: no due nudge, so the quieter ones get a turn", pickNudge({ ...empty, importantDue: 0, radarNew: 1 }, now, new Set())?.kind === "radar");
 const debrief = pickNudge({ ...empty, unloggedMeeting: { eventId: "e2", title: "Sync", people: [] } }, now, new Set());
 t.check("a meeting with no note asks how it went, by title when nobody is known", debrief?.kind === "debrief" && debrief.chip.includes("Sync"), JSON.stringify(debrief));
 t.check("radar is the quietest", pickNudge({ ...empty, radarNew: 4 }, now, new Set())?.chip === "4 new on Radar");
@@ -29,9 +30,9 @@ t.check("names are cleaned and capped before they are spoken", Boolean(hostile &
 
 // The opener a call starts with is rebuilt on the server from its own pulse; the browser only
 // names which nudge it showed, and an id the server doesn't have opens with the plain greeting.
-const pulse = { nextMeeting: meeting, unloggedMeeting: null, radarNew: 0, panel: { dueCount: 2 } };
+const pulse = { nextMeeting: meeting, unloggedMeeting: null, radarNew: 0, panel: { importantDueCount: 2 } };
 const fromServer = allNudges(nudgeInput(pulse), now);
-t.check("the server finds the nudge the chip showed", fromServer.find((n) => n.id === "due")?.opener.includes("2 things due") === true);
+t.check("the server finds the nudge the chip showed", fromServer.find((n) => n.id === "due")?.opener.includes("2 important things due") === true);
 t.check("an id it doesn't have is nothing", fromServer.find((n) => n.id === "meeting:forged") === undefined);
 
 const calm = { off: false, mode: "listening" as const, confirmOpen: false, userSpeaking: false, now, lastAt: 0, count: 0, page: "/contacts", lastPage: null };

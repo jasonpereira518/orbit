@@ -2947,6 +2947,7 @@
       }
     ],
     "dueCount": 8,
+    "importantDueCount": 2,
     "dueBreakdown": {
       "reminders": 3,
       "followUps": 5

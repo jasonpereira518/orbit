@@ -237,7 +237,7 @@ export async function loadNotificationPanel(
     tzPromise,
     // Skipped by the desktop poll (`dueCounts: false`), which reads only `items`.
     opts.dueCounts === false
-      ? Promise.resolve({ reminders: 0, followUps: 0, total: 0 })
+      ? Promise.resolve({ reminders: 0, followUps: 0, total: 0, important: 0 })
       : tzPromise.then((z) => getDueCounts(userId, z, now)),
   ]);
   const radarRow = radarRows
@@ -472,6 +472,9 @@ export async function loadNotificationPanel(
   return {
     items,
     dueCount,
+    // Of `dueCount`'s reminders and follow-ups, the ones that matter most (`IMPORTANT_TIER`):
+    // all Cosmo's due nudge speaks of, so a pile of small things never opens a call.
+    importantDueCount: due.important,
     dueBreakdown: { reminders: due.reminders, followUps: due.followUps },
     totalCount: items.length,
     // Drives the extension promo in the panel: paid plans get an install link,

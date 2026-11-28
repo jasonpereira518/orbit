@@ -14,6 +14,11 @@ Deepgram-managed OpenAI model thinks) and **ElevenLabs as an alternative**. Desi
 - **Nudge chip:** when something is worth a word (a meeting soon, things due, a meeting with no
   note, new on Radar; `src/lib/cosmo/nudge.ts`) the orb glows and shows one chip, dismissable
   for the day. A call started from it opens with that topic, worded by the server.
+- **What's due, out loud:** Cosmo names only the important things due, at most three, and says
+  the rest as a number. Important means a critical or high reminder, or a follow-up with someone
+  in the inner circle or marked high priority (`IMPORTANT_TIER` in `src/lib/due-counts.ts`). The
+  due chip counts only those, so a pile of small things never opens a call; the bell still counts
+  everything.
 - **A call:** clicking the orb starts one in the day's Cosmo thread (remembered per device).
   Chat's mic button starts one in the open thread. The call survives navigation: off Chat it
   is the docked bar with cards, errors and optional captions; on Chat, in the call's thread,

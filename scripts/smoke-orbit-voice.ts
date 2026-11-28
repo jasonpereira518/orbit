@@ -273,8 +273,11 @@ async function main() {
       if (provider === "deepgram") {
         const briefing = JSON.parse((await callVoiceTool(USER, start.sessionId, "daily_briefing", { day: "2026-11-12" })).result);
         const data = briefing.untrusted_crm_data ?? briefing;
-        for (const key of ["meetings", "reminders", "followUps", "commitments"])
+        for (const key of ["meetings", "due", "radar"])
           assert.ok(key in data, `daily_briefing returns ${key}`);
+        // Ranked and cut for a voice: the few that matter, then a number for the rest.
+        assert.ok(Array.isArray(data.due.priorities) && data.due.priorities.length <= 3, "daily_briefing names at most three due things");
+        assert.ok(!("reminders" in data) && !("commitments" in data), "daily_briefing no longer hands over the raw piles");
       }
       const hidden = await callVoiceTool(USER, start.sessionId, "get_contact", {
         contactId: other.id,
