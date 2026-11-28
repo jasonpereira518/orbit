@@ -56,7 +56,7 @@
     "@vercel/blob": "^2.9.0",
     "@vercel/oidc": "^4.0.9",
     "@vercel/speed-insights": "^2.1.0",
-    "@xyflow/react": "^12.12.1",
+    "@xyflow/react": "^13.0.3",
     "botid": "^1.5.13",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
