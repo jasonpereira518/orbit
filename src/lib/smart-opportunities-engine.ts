@@ -18,7 +18,6 @@ import {
   contacts,
   interactions,
   smartOpportunities,
-  userGoals,
   type SmartOpportunity,
   type SmartOpportunityContactExcerpt,
   type SmartOpportunityImpact,
@@ -231,6 +230,22 @@ export function synthesizeOpportunitiesHeuristic(
         }
       }
 
+      // Check offering A -> needs B or offering B
+      if (!matchDescription) {
+        for (const off of offeringPatterns) {
+          const m = aText.match(off.regex);
+          if (m && m[1]) {
+            const phrase = m[1].toLowerCase().trim();
+            if (bText.toLowerCase().includes(phrase.slice(0, 15))) {
+              oppType = "introduction";
+              matchDescription = `${a.fullName} offers ${off.label} in ${m[1].trim()}, relevant to ${b.fullName}.`;
+              excerptA = m[0];
+              break;
+            }
+          }
+        }
+      }
+
       // If we still don't have a specific description but both have company/domain synergy
       if (!matchDescription && commonTopics.length > 0) {
         matchDescription = `${a.fullName} (${a.company || "domain"}) and ${b.fullName} (${b.company || "domain"}) share adjacent focus on ${commonTopics.join(", ")}.`;
@@ -373,7 +388,23 @@ Return a JSON array of synthesized opportunities with this exact schema:
 
     const goalsById = new Map(goals.map((g) => [g.id, g.text]));
 
-    return parsed.map((item: any) => ({
+    type RawOpportunityItem = {
+      title?: string;
+      opportunity_type?: string;
+      goal_id?: string;
+      synthesis_rationale?: string;
+      suggested_action?: string;
+      confidence_score?: number;
+      impact_score?: string;
+      related_contact_ids?: string[];
+      contact_excerpts?: Array<{
+        contact_id?: string;
+        contact_name?: string;
+        excerpt?: string;
+      }>;
+    };
+
+    return parsed.map((item: RawOpportunityItem) => ({
       title: String(item.title || "Cross-network Opportunity"),
       opportunityType: (item.opportunity_type as SmartOpportunityType) || "introduction",
       goalId: item.goal_id && goalsById.has(item.goal_id) ? item.goal_id : null,
@@ -384,7 +415,7 @@ Return a JSON array of synthesized opportunities with this exact schema:
       impactScore: (item.impact_score as SmartOpportunityImpact) || "high",
       relatedContactIds: Array.isArray(item.related_contact_ids) ? item.related_contact_ids : [],
       contactExcerpts: Array.isArray(item.contact_excerpts)
-        ? item.contact_excerpts.map((ex: any) => ({
+        ? item.contact_excerpts.map((ex) => ({
             contactId: String(ex.contact_id || ""),
             contactName: String(ex.contact_name || ""),
             excerpt: String(ex.excerpt || ""),

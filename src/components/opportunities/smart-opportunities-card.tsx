@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, Loader2, RefreshCw, Sparkles, Target, Users, X } from "lucide-react";
+import { Check, Loader2, RefreshCw, Sparkles, Users, X } from "lucide-react";
 import type { SmartOpportunity, SmartOpportunityType } from "@/db/schema";
 import { acceptSmartOpportunity, dismissSmartOpportunity, generateSmartOpportunitiesAction } from "@/actions/smart-opportunities";
 import { Badge } from "@/components/ui/badge";

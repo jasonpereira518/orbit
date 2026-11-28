@@ -9,9 +9,9 @@
  * 5. Lifecycle state transitions (open -> accepted/dismissed).
  */
 
-import assert from "node:assert";
+import "./smoke/_env";
 import { getDb } from "@/db";
-import { contacts, interactions, smartOpportunities, userGoals } from "@/db/schema";
+import { smartOpportunities } from "@/db/schema";
 import {
   addGoalForUser,
   listActiveGoalsForUser,

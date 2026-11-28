@@ -107,6 +107,7 @@ import {
   recruiterScanState,
   reminderLists,
   reminders,
+  smartOpportunities,
   speechUsage,
   suggestedReminders,
   tags,
@@ -498,9 +499,10 @@ const STEPS: Record<DataCategory, CategoryStep> = {
     },
   },
   goals: {
-    exports: [own(userGoals)],
-    counts: [userGoals],
+    exports: [own(userGoals), own(smartOpportunities)],
+    counts: [userGoals, smartOpportunities],
     run: async (db, userId) => {
+      await db.delete(smartOpportunities).where(eq(smartOpportunities.userId, userId));
       await db.delete(userGoals).where(eq(userGoals.userId, userId));
     },
   },

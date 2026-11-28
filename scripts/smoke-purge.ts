@@ -81,6 +81,17 @@ async function seed() {
   await db.insert(schema.contactTags).values({ contactId: contact.id, tagId: tag.id });
 
   await db.insert(schema.userGoals).values({ userId: USER, text: "meet more people" });
+  await db.insert(schema.smartOpportunities).values({
+    userId: USER,
+    itemHash: "smoke-purge-opp-hash",
+    title: "Intro Ada to Charles",
+    opportunityType: "introduction",
+    status: "suggested",
+    synthesisRationale: "Shared interests in analytical engines",
+    suggestedAction: "Email Ada introducing Charles",
+    confidenceScore: 90,
+    impactScore: "high",
+  });
   await db.insert(schema.chatMemories).values({ userId: USER, text: "raising a seed round" });
 
   const [feedbackRow] = await db
