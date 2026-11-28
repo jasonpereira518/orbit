@@ -1921,6 +1921,57 @@ export const contactOpportunities = pgTable(
   ]
 );
 
+export type SmartOpportunityType =
+  | "introduction"
+  | "collaboration"
+  | "deal"
+  | "knowledge_share"
+  | "advisory"
+  | "other";
+
+export type SmartOpportunityStatus = "open" | "in_progress" | "accepted" | "dismissed";
+export type SmartOpportunityImpact = "critical" | "high" | "medium";
+
+export type SmartOpportunityContactExcerpt = {
+  contactId: string;
+  contactName: string;
+  excerpt: string;
+};
+
+/**
+ * Higher-order opportunities that synthesize notes, topics and ideas across MULTIPLE contacts
+ * together with the user's active goals and progress.
+ */
+export const smartOpportunities = pgTable(
+  "smart_opportunities",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: text("user_id").notNull(),
+    goalId: uuid("goal_id").references(() => userGoals.id, { onDelete: "set null" }),
+    title: text("title").notNull(),
+    opportunityType: text("opportunity_type").$type<SmartOpportunityType>().notNull(),
+    status: text("status").$type<SmartOpportunityStatus>().default("open").notNull(),
+    synthesisRationale: text("synthesis_rationale").notNull(),
+    suggestedAction: text("suggested_action").notNull(),
+    confidenceScore: integer("confidence_score").default(80).notNull(),
+    impactScore: text("impact_score").$type<SmartOpportunityImpact>().default("high").notNull(),
+    relatedContactIds: jsonb("related_contact_ids").$type<string[]>().default([]).notNull(),
+    contactExcerpts: jsonb("contact_excerpts").$type<SmartOpportunityContactExcerpt[]>().default([]).notNull(),
+    itemHash: text("item_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("smart_opportunities_user_status_idx").on(t.userId, t.status),
+    index("smart_opportunities_user_goal_idx").on(t.userId, t.goalId),
+    uniqueIndex("smart_opportunities_user_item_hash_uidx").on(t.userId, t.itemHash),
+  ]
+);
+
+export type SmartOpportunity = typeof smartOpportunities.$inferSelect;
+export type NewSmartOpportunity = typeof smartOpportunities.$inferInsert;
+
 export type MeetingSessionStatus = "recording" | "ended" | "analyzed" | "saved" | "discarded";
 export type MeetingSegmentEngine = "deepgram" | "whisper" | "gemini" | "silent";
 

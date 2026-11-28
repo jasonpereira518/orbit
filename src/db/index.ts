@@ -490,6 +490,27 @@ CREATE INDEX IF NOT EXISTS contact_opportunities_user_contact_idx ON contact_opp
 CREATE INDEX IF NOT EXISTS contact_opportunities_user_status_due_idx ON contact_opportunities(user_id, status, due_date);
 CREATE INDEX IF NOT EXISTS contact_opportunities_status_kind_idx ON contact_opportunities(status, kind);
 CREATE UNIQUE INDEX IF NOT EXISTS contact_opportunities_user_item_hash_uidx ON contact_opportunities(user_id, item_hash);
+CREATE TABLE IF NOT EXISTS smart_opportunities (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id text NOT NULL,
+  goal_id uuid REFERENCES user_goals(id) ON DELETE SET NULL,
+  title text NOT NULL,
+  opportunity_type text NOT NULL,
+  status text NOT NULL DEFAULT 'open',
+  synthesis_rationale text NOT NULL,
+  suggested_action text NOT NULL,
+  confidence_score integer NOT NULL DEFAULT 80,
+  impact_score text NOT NULL DEFAULT 'high',
+  related_contact_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  contact_excerpts jsonb NOT NULL DEFAULT '[]'::jsonb,
+  item_hash text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  closed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS smart_opportunities_user_status_idx ON smart_opportunities(user_id, status);
+CREATE INDEX IF NOT EXISTS smart_opportunities_user_goal_idx ON smart_opportunities(user_id, goal_id);
+CREATE UNIQUE INDEX IF NOT EXISTS smart_opportunities_user_item_hash_uidx ON smart_opportunities(user_id, item_hash);
 CREATE TABLE IF NOT EXISTS contact_briefs (
   contact_id uuid PRIMARY KEY REFERENCES contacts(id) ON DELETE CASCADE,
   user_id text NOT NULL,
@@ -3163,75 +3184,6 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 215 = chat_threads.pinned_at (a conversation pinned to the top of the history list).
 // 216 = chat_messages.attachments (the names and read text of files attached to a question).
 // 217 = chat_memories (new table: things the person asked Orbit to remember across chats).
-// 218 = Radar flagship redesign (built as 209; renumbered above main's 217): active projects
-// extraction (user_projects table), daily 5am local-time runner toggle
-// (user_settings.radar_daily_enabled, radar_auto_projects, radar_discovery_enabled),
-// prospective people discovery (recommendations.discovered_person), and 1-click calendar invites
-// (recommendations.suggested_calendar_invite).
-//
-// 219 = the feedback rework, in one bump (built as 209 + 210, renumbered to 213 on Nov 9 2026
-// and to 219 on Nov 10 when main reached 217 — radar_flagship_redesign took 218 — since a
-// preview database stamped above a branch's number skips its DDL):
-// feedback.triage (jsonb) — the AI triage pass's summary, severity and duplicate-of, see
-// src/lib/feedback-triage.ts; and the feedback conversation — feedback_messages (new table)
-// plus feedback.thanks_credits / user_read_at / operator_read_at, see src/lib/feedback-thread.ts;
-// and the thank-you gift — feedback_messages.credits (on the reply that carried it) and
-// feedback.thanks_seen_at (null while still wrapped); and feedback.subject (the subject line a
-// new message to the operator starts with); and feedback.user_typing_at / operator_typing_at
-// (each side's last keystroke, for the typing dots — a serverless deploy has no shared memory
-// to hold them in); and feedback_screenshots.message_id (a screenshot sent later in the
-// conversation belongs to that message, not the opening report).
-//
-// 220 = Jev on Orbit's key for work-history searches (docs/superpowers/specs/
-// 2026-11-10-jev-work-history-design.md): contacts.work_history_jev_skipped_at — set when Jev
-// skipped a re-check or vetoed a verify search, so the next run is never gated again. Scanned
-// every remote ref and local worktree on Nov 11 2026: 219 was the highest claimed anywhere.
-// 221 = opt-in Orbit Voice settings and account-scoped, bounded voice sessions.
-// 222 = runtime voice provider configuration, health and session usage metadata.
-//
-// 224 = Radar revision foundations (Radar PR 2, docs/superpowers/specs/2026-11-10-radar-analyst-design.md):
-// radar_opportunities (the Opportunities lane: events, people to meet, openings, programs, with
-// no contact row until saved), push_subscriptions (web push, one per browser), and
-// user_settings.radar_web_next_at / radar_moment_last_day (the web lane's schedule and the
-// same-day email's claim). Built as 221; moved to 224 on Nov 11 2026 because uncommitted Radar
-// activation work (worktree radar-activation-animation-3caf1e) also holds 221 and the
-// contact-sharing branch holds 223.
-// 225 = Radar off by default: user_settings.radar_enabled_at — null until the person presses
-// "Turn on Radar". Radar runs only when it is set and radar_paused = 0 (src/lib/radar/run.ts).
-// Built as 221; moved to 225 on Nov 11 2026 to stack on the Radar revision (224); contact
-// sharing holds 223. Scanned every remote ref and local worktree: 224 was the highest claimed.
-// 228 = Radar's "new suggestions" pulse: user_settings.radar_opened_at — when the person last
-// opened /radar; pending cards created after it make the nav icon pulse. Scanned every remote
-// ref and local worktree on Nov 11 2026: contact sharing holds 226 and 227.
-// 231 = Radar run progress: radar_runs.stage / progress / detail, written as a run moves through
-// its stages so "Refresh now" can show how much is done. Scanned every remote ref on Nov 12 2026:
-// custom constellations holds 229 and the Orbit Card / planet PR (#635) holds 230.
-// 234 = Radar same-day email switch: user_settings.radar_moment_email_enabled (1 = on), the
-// person's own off switch for the email Radar sends when a Today item won't keep (PR 9b).
-// Scanned remote refs on Nov 12 2026: custom constellations (youthful-herschel) holds 232 and
-// the Orbit Card / planet PR (#635) will need 233, so this takes 234.
-// 235 = user_settings.bright_data_api_key_encrypted + bright_data_zone
-// 237 = reminder priority and goal progress (cut from #609, which also proposed a Smart
-// Opportunities table that Radar's Connect lane replaced): reminders and suggested_reminders get
-// priority / category / timing_rationale / importance_reason (+ a (user_id, priority, status)
-// index each), and user_goals gets progress / category / updated_at. Built as 209/210 on #609;
-// renumbered on Nov 12 2026 above main's 235 and claude/email-avatar-cache's 236.
-// 238 = the email photo pool (admin refresh plan, PR 2): email_avatars (global, keyed by sha256 of
-// the lowercased trimmed address; public Gravatar lookups only) and contacts_email_lower_idx.
-// Built as 236; renumbered to 238 on Nov 12 2026 when main reached 237 (reminder priority).
-// 242 = Cosmo instant changes (Cosmo PR 9): orbit_voice_sessions.cosmo / tainted_by /
-// auto_applied. Scanned every remote ref on Nov 12 2026: main 238, radar-pr12b-drop 239, four
-// contact branches 240, recruiter-board-v2 241, so this takes 242.
-// 243 = field sources (contact-info accuracy plan, PR 1): contacts.field_sources (where each
-// sourced field's value came from, `@/lib/contact-fields`) and contact_changes ("Changed by
-// Orbit" + field suggestions; the names plan's PR3 adds its kinds to the same table). Scanned
-// every remote ref and local worktree on Nov 12 2026: claude/radar-pr12b-drop holds 239. Built as
-// 240; renumbered to 243 on Nov 13 2026 when main reached 242 (Cosmo).
-// 244 = writing style profile (message-format plan, PR 2): user_settings.writing_style_profile /
-// writing_style_profile_updated_at, learned from sent mail (`@/lib/writing-style-profile`).
-// Scanned every remote ref on Nov 13 2026: main and eight branches hold 243, so this takes 244.
-// 245 = sequence threading (message-format plan, PR 3): outreach_messages.rfc_message_id /
-// provider_thread_id, so a follow-up replies in step 1's thread. Stacked on 244 (PR 2).
 // 246 = Radar PR 12b: drops what Radar's revision retired. external_sources, external_items and
 // external_item_companies (the global news sweep, cut in Radar PR 1), recommendations.
 // discovered_person and user_settings.radar_discovery_enabled (the arXiv/GitHub discovery, cut
@@ -3251,7 +3203,9 @@ CREATE TABLE IF NOT EXISTS metrics_daily (
 // 250 = the Recruiting board: recruiting_overrides (a company hidden as "Not a job", or a stage set
 // by hand), keyed by user and company. Built as 241; renumbered to 250 on Nov 23 2026 when main
 // reached 249. Scanned every remote ref that day: none above 249.
-export const SCHEMA_VERSION = 250;
+// 251 = smart opportunities table for cross-contact note synthesis aligned with personal goals & progress.
+// Scanned remote refs on Nov 25 2026: main holds 250, none higher.
+export const SCHEMA_VERSION = 251;
 // outbound_webhook_deliveries.claimed_by / claimed_until (the drain's claim, M-03) and
 // interest_list_signups.referral_tier_mailed (the highest referral tier a referrer has been
 // mailed, claimed with a conditional update so a tier two concurrent joins cross is mailed once,
@@ -5816,6 +5770,28 @@ const alters = [
   // LinkedIn deep read PR 2 (schema 247): how you met and the kind of relationship, each quoted.
   `ALTER TABLE relationship_digests ADD COLUMN IF NOT EXISTS origin jsonb`,
   `ALTER TABLE relationship_digests ADD COLUMN IF NOT EXISTS relationship jsonb`,
+  // Schema v248: smart opportunities from cross-contact note synthesis and goal progress
+  `CREATE TABLE IF NOT EXISTS smart_opportunities (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id text NOT NULL,
+    goal_id uuid REFERENCES user_goals(id) ON DELETE SET NULL,
+    title text NOT NULL,
+    opportunity_type text NOT NULL,
+    status text NOT NULL DEFAULT 'open',
+    synthesis_rationale text NOT NULL,
+    suggested_action text NOT NULL,
+    confidence_score integer NOT NULL DEFAULT 80,
+    impact_score text NOT NULL DEFAULT 'high',
+    related_contact_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+    contact_excerpts jsonb NOT NULL DEFAULT '[]'::jsonb,
+    item_hash text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    closed_at timestamptz
+  )`,
+  `CREATE INDEX IF NOT EXISTS smart_opportunities_user_status_idx ON smart_opportunities(user_id, status)`,
+  `CREATE INDEX IF NOT EXISTS smart_opportunities_user_goal_idx ON smart_opportunities(user_id, goal_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS smart_opportunities_user_item_hash_uidx ON smart_opportunities(user_id, item_hash)`,
 ];
 
 /**
