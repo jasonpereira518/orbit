@@ -20,6 +20,7 @@ import {
   queueCaptureJob,
   recordCaptureChoices,
   recordCaptureDecision,
+  recordCaptureDecisionsBulk,
   saveCaptureJob,
 } from "@/actions/capture-jobs";
 import { analyzeMeetingSession, type MeetingAnalysis } from "@/actions/meetings";
@@ -492,6 +493,24 @@ export function CaptureFlow({
     [job]
   );
 
+  const applyDecisionsBulk = useCallback(
+    (decisionsMap: Record<string, CaptureDecision>) => {
+      if (!job) return;
+      const people = { ...(job.decisions.people ?? {}), ...decisionsMap };
+      const decisions: CaptureDecisions = { ...job.decisions, people };
+      seedCaptureJob({ ...job, decisions, status: "reviewing", updatedAt: new Date().toISOString() }, { force: true });
+      void recordCaptureDecisionsBulk(job.id, decisionsMap).then((res) => {
+        if (!res.ok) {
+          toast.error(res.error);
+          void refreshCaptureJob();
+          return;
+        }
+        seedCaptureJob(res.job, { force: true });
+      });
+    },
+    [job]
+  );
+
   const startOver = useCallback(async () => {
     const id = job?.id;
     clearCaptureJob();
@@ -697,6 +716,7 @@ export function CaptureFlow({
               index={reviewIndex}
               preferredContactId={initialContactId}
               onDecide={applyDecision}
+              onDecideBulk={applyDecisionsBulk}
               onBack={(key) => applyDecision(key, null)}
               onStartOver={() => void startOver()}
             />

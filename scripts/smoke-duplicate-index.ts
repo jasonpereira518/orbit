@@ -26,6 +26,7 @@ import {
   normalizePhone,
   nameSimilarity,
   DUPLICATE_MERGE_CONFIDENCE,
+  DUPLICATE_REVIEW_CONFIDENCE,
 } from "../src/lib/duplicates";
 import type { Contact } from "../src/db/schema";
 
@@ -192,7 +193,7 @@ function expectMatch(
 {
   const seed = contact({ fullName: "John Smith", company: "Acme" });
   const matches = matchAgainst([seed], { fullName: "Jon Smith", company: "Acme" });
-  expectMatch(matches, "Similar name + company", 0.87, "fuzzy across first-token buckets");
+  expectMatch(matches, "Similar name + company", 0.8, "fuzzy across first-token buckets");
   if (nameSimilarity("Jon Smith", "John Smith") < 0.88) {
     throw new Error("fixture broken: these names are not similar enough to reach the tier");
   }
@@ -202,7 +203,7 @@ function expectMatch(
 {
   const seed = contact({ fullName: "Katherine Johnson", title: "Mathematician" });
   const matches = matchAgainst([seed], { fullName: "Katherine Johnsen", title: "Mathematician" });
-  expectMatch(matches, "Similar name + title", 0.85, "fuzzy across last-token buckets");
+  expectMatch(matches, "Similar name + title", 0.75, "fuzzy across last-token buckets");
 }
 
 // 9. A contact sitting in two buckets (both name tokens starting the same) must still be
@@ -212,6 +213,37 @@ function expectMatch(
   const matches = matchAgainst([seed], { fullName: "Sam Sample", company: "Acme" });
   if (matches.length !== 1) {
     throw new Error(`double-bucket contact reported ${matches.length} times, expected 1`);
+  }
+}
+
+// 9b. A similar-sounding name is a question, never an answer. Whole-name edit distance
+//     cannot tell a typo from a different person: "Rob Martinez" / "Bob Martinez" score 0.92
+//     and "Anna Lopez" / "Ana Lopez" 0.89, and both used to clear DUPLICATE_MERGE_CONFIDENCE
+//     with a shared company and fold two people into one. They must still be OFFERED (above
+//     the review floor) but never reach the line write paths merge on.
+{
+  const cases: [string, string][] = [
+    ["Bob Martinez", "Rob Martinez"],
+    ["Ana Lopez", "Anna Lopez"],
+    ["Sara Lee", "Sarah Lee"],
+  ];
+  for (const [existing, incoming] of cases) {
+    const seed = contact({ fullName: existing, company: "Acme", title: "Engineer" });
+    for (const probe of [
+      { fullName: incoming, company: "Acme" },
+      { fullName: incoming, title: "Engineer" },
+    ]) {
+      const hit = matchAgainst([seed], probe).find((m) => m.contact.id === seed.id);
+      if (!hit) throw new Error(`${incoming} / ${existing}: expected to be offered for review, got nothing`);
+      if (hit.confidence >= DUPLICATE_MERGE_CONFIDENCE) {
+        throw new Error(
+          `${incoming} auto-merges into ${existing} at ${hit.confidence}: a name that only looks similar must stay below ${DUPLICATE_MERGE_CONFIDENCE}`
+        );
+      }
+      if (hit.confidence < DUPLICATE_REVIEW_CONFIDENCE) {
+        throw new Error(`${incoming} / ${existing}: ${hit.confidence} is below the review floor`);
+      }
+    }
   }
 }
 
@@ -356,7 +388,8 @@ function expectMatch(
     { fullName: "Person20 Batch20", company: "Company 20", title: "Senior Engineer" },
     { fullName: "Person25 Batch20", linkedinUrl: li("p25"), company: "Company 25", title: "Senior Engineer" }
   );
-  if (!noProfile || noProfile.confidence !== 0.85) throw new Error(`no profile on one side should be unchanged: ${JSON.stringify(noProfile)}`);
+  // (0.75 is the plain "Similar name + title" tier; the profile rule above did not touch it.)
+  if (!noProfile || noProfile.confidence !== 0.75) throw new Error(`no profile on one side should be unchanged: ${JSON.stringify(noProfile)}`);
   const sameProfile = top(
     { fullName: "A B", linkedinUrl: li("ab") },
     { fullName: "Someone Else", linkedinUrl: li("ab") }

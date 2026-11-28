@@ -7,6 +7,7 @@ import { Bell, Calendar, MessageSquare, Network, Plug, Send, Star } from "lucide
 import { setPollStars } from "@/actions/waitlist-poll";
 import { usePassProgress, type PassProgress } from "@/lib/interest-progress-store";
 import { EASE_HOUSE, SPRING_SOFT } from "@/lib/motion";
+import { isIdle, onResume, touch } from "@/lib/idle-gate";
 import { pulseStarfield } from "@/lib/starfield-events";
 import { cn } from "@/lib/utils";
 import { onPass } from "@/lib/waitlist-pass-events";
@@ -202,11 +203,13 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
     flush();
   }
 
-  // Live results: every 60 s while the tab is visible and the poll is near the screen.
+  // Live results: every 60 s while the tab is visible, in use (`idle-gate`) and the poll is near
+  // the screen.
   useEffect(() => {
     if (!near) return;
     const tick = async () => {
-      if (document.visibilityState !== "visible" || inFlight.current || Date.now() < holdPollUntil.current) return;
+      if (document.visibilityState !== "visible" || isIdle()) return;
+      if (inFlight.current || Date.now() < holdPollUntil.current) return;
       try {
         const res = await fetch("/api/waitlist-poll/results");
         if (!res.ok) return;
@@ -219,11 +222,16 @@ export function FeaturePoll({ initial, me }: { initial: FeaturePollInitial; me: 
       }
     };
     const id = window.setInterval(() => void tick(), 60_000);
-    const onVisible = () => void tick();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") touch(); // Showing the tab counts as being there.
+      void tick();
+    };
     document.addEventListener("visibilitychange", onVisible);
+    const offResume = onResume(() => void tick());
     return () => {
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
+      offResume();
     };
   }, [near, setServerBoth]);
 

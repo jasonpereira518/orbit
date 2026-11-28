@@ -226,6 +226,10 @@ const appProxy = configured
  * naming it in the address bar of someone who must never see it.
  */
 export default function proxy(req: NextRequest, event: NextFetchEvent) {
+  // The uptime monitor's probe, answered from the CDN (`healthCacheControl`). It must not cost a
+  // Clerk run and the stealth read (a Neon statement) each time: stealth passes every API path,
+  // and the route reads no session.
+  if (req.nextUrl.pathname === "/api/health") return NextResponse.next();
   if (isWaitlistHostHeader(req.headers.get("host"))) return withPathname(req);
   return appProxy(req, event);
 }

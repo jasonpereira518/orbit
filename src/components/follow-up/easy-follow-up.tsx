@@ -21,6 +21,7 @@ const PRESETS = [
   { days: 3, label: "3d" },
   { days: 7, label: "7d" },
   { days: 14, label: "14d" },
+  { days: 30, label: "30d" },
 ] as const;
 
 export function EasyFollowUp({
